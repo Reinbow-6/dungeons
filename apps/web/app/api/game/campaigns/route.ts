@@ -156,9 +156,11 @@ export async function GET(req: Request) {
 }
 
 const CreateCampaignBodySchema = z.object({
-  presetId: z.enum(["pc_kael", "pc_brenna", "pc_lira"]).default("pc_kael"),
+  presetId: z
+    .enum(["pc_kael", "pc_brenna", "pc_lira", "pc_seraphina", "pc_theron"])
+    .default("pc_kael"),
   mode: z.enum(["digital", "hybrid"]).default("digital"),
-  ruleset: z.enum(["5e-lite", "5e-full"]).default("5e-lite"),
+  ruleset: z.enum(["5e-lite", "5e-full"]).default("5e-full"),
   title: z.string().min(1).max(80).optional(),
 });
 

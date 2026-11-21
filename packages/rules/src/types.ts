@@ -162,6 +162,23 @@ export const SpellSlotPoolSchema = z.object({
 });
 export type SpellSlotPool = z.infer<typeof SpellSlotPoolSchema>;
 
+export const HitDieTypeSchema = z.enum(['d6', 'd8', 'd10', 'd12']);
+export type HitDieType = z.infer<typeof HitDieTypeSchema>;
+
+export const HitDicePoolSchema = z.object({
+  die: HitDieTypeSchema,
+  current: z.number().int().min(0),
+  max: z.number().int().min(1),
+});
+export type HitDicePool = z.infer<typeof HitDicePoolSchema>;
+
+export const DeathSavesSchema = z.object({
+  successes: z.number().int().min(0).max(3),
+  failures: z.number().int().min(0).max(3),
+  stable: z.boolean(),
+});
+export type DeathSaves = z.infer<typeof DeathSavesSchema>;
+
 export const CharacterSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -182,6 +199,10 @@ export const CharacterSchema = z.object({
   exhaustionLevel: z.number().int().min(0).max(6).default(0),
   inventory: z.array(InventoryItemSchema),
   spellSlots: z.record(z.string(), SpellSlotPoolSchema),
+  spellcastingAbility: AbilitySchema.optional(),
+  knownSpells: z.array(z.string().min(1)).optional(),
+  hitDice: HitDicePoolSchema.optional(),
+  deathSaves: DeathSavesSchema.optional(),
   concentratingOn: z.string().nullable(),
   resistances: z.array(z.string().min(1)).optional(),
   authority: CharacterAuthoritySchema,

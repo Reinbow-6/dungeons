@@ -136,29 +136,45 @@ interface RawSpell {
   name: string;
   level: number;
   school?: { name?: string };
+  classes?: Array<{ index?: string; name?: string }>;
   casting_time?: string;
   ritual?: boolean;
   range?: string;
   components?: string[];
   duration?: string;
   concentration?: boolean;
+  attack_type?: string;
+  damage?: {
+    damage_type?: { index?: string };
+    damage_at_slot_level?: Record<string, string>;
+  };
   description: string;
 }
 
 const SPELLS: SrdSpell[] = (spellsRaw as unknown as RawSpell[]).map((raw) => {
   const tr = SPELL_TRANSLATIONS_ES[raw.index];
+  const attackType =
+    raw.attack_type === 'melee' || raw.attack_type === 'ranged'
+      ? raw.attack_type
+      : null;
   return {
     index: raw.index,
     name: raw.name,
     nameEs: tr?.nameEs ?? raw.name,
     level: raw.level,
     school: raw.school?.name ?? 'Unknown',
+    classes: (raw.classes ?? [])
+      .map((c) => c.index ?? c.name?.toLowerCase() ?? '')
+      .filter(Boolean),
     castingTime: raw.casting_time ?? 'Action',
     ritual: Boolean(raw.ritual),
     range: raw.range ?? 'Self',
     components: raw.components ?? [],
     duration: raw.duration ?? 'Instantaneous',
     concentration: Boolean(raw.concentration),
+    attackType,
+    damageType: raw.damage?.damage_type?.index ?? null,
+    damageAtSlotLevel: raw.damage?.damage_at_slot_level ?? null,
     description: raw.description,
     descriptionEs: tr?.descriptionEs ?? raw.description,
     rulesetVersion: SRD_VERSION,

@@ -6,7 +6,12 @@ import {
   type RulesetProfile,
 } from "@dungeons/rules";
 
-export type CharacterPresetId = "pc_kael" | "pc_brenna" | "pc_lira";
+export type CharacterPresetId =
+  | "pc_kael"
+  | "pc_brenna"
+  | "pc_lira"
+  | "pc_seraphina"
+  | "pc_theron";
 
 export interface CharacterPresetInfo {
   id: CharacterPresetId;
@@ -39,10 +44,32 @@ export const CHARACTER_PRESETS: CharacterPresetInfo[] = [
     summaryEs:
       "Engaño/Persuasión +4 · Sigilo/Investigación +5 (genera tensión con exploradores)",
   },
+  {
+    id: "pc_seraphina",
+    name: "Seraphina Voss",
+    species: "Humana",
+    className: "Clériga",
+    summaryEs:
+      "CA 16 · Magia divina (SAB CD 13, +5) · Saeta guía, Curar heridas, Bendición",
+  },
+  {
+    id: "pc_theron",
+    name: "Theron Ashveil",
+    species: "Alto Elfo",
+    className: "Mago",
+    summaryEs:
+      "Magia arcana (INT CD 13, +5) · Descarga de fuego, Proyectil mágico, Escudo",
+  },
 ];
 
 export function isPresetId(value: string): value is CharacterPresetId {
-  return value === "pc_kael" || value === "pc_brenna" || value === "pc_lira";
+  return (
+    value === "pc_kael" ||
+    value === "pc_brenna" ||
+    value === "pc_lira" ||
+    value === "pc_seraphina" ||
+    value === "pc_theron"
+  );
 }
 
 export function createPresetCharacter(
@@ -82,9 +109,11 @@ export function createPresetCharacter(
       inventory: [
         { itemId: "longsword", name: "Espada larga", quantity: 1 },
         { itemId: "shield", name: "Escudo", quantity: 1 },
+        { itemId: "potion-of-healing", name: "Poción de curación", quantity: 1 },
         { itemId: "rations", name: "Raciones de viaje", quantity: 3 },
       ],
       spellSlots: {},
+      hitDice: { die: "d10", current: 1, max: 1 },
       concentratingOn: null,
       authority,
       rollAuthority,
@@ -122,9 +151,116 @@ export function createPresetCharacter(
       inventory: [
         { itemId: "dagger", name: "Daga", quantity: 2 },
         { itemId: "thieves-tools", name: "Herramientas de ladrón", quantity: 1 },
+        { itemId: "potion-of-healing", name: "Poción de curación", quantity: 1 },
         { itemId: "rations", name: "Raciones de viaje", quantity: 2 },
       ],
       spellSlots: {},
+      hitDice: { die: "d8", current: 1, max: 1 },
+      concentratingOn: null,
+      authority,
+      rollAuthority,
+    };
+  }
+
+  if (presetId === "pc_seraphina") {
+    return {
+      id: "pc_seraphina",
+      name: "Seraphina Voss",
+      species: "Humana",
+      className: "Clériga",
+      level: 1,
+      abilities: {
+        str: 12, // +1
+        dex: 10, // +0
+        con: 14, // +2
+        int: 10, // +0
+        wis: 16, // +3
+        cha: 14, // +2
+      },
+      skillProficiencies: {
+        insight: "proficient", // +5
+        medicine: "proficient", // +5
+        persuasion: "proficient", // +4
+        religion: "proficient", // +2
+      },
+      savingThrowProficiencies: ["wis", "cha"],
+      hp: { current: 10, max: 10, temp: 0 },
+      ac: 16,
+      speed: 30,
+      conditions: [],
+      exhaustionLevel: 0,
+      inventory: [
+        { itemId: "mace", name: "Maza", quantity: 1 },
+        { itemId: "shield", name: "Escudo", quantity: 1 },
+        { itemId: "potion-of-healing", name: "Poción de curación", quantity: 1 },
+        { itemId: "rations", name: "Raciones de viaje", quantity: 3 },
+      ],
+      spellSlots: {
+        "1": { current: 2, max: 2 },
+      },
+      spellcastingAbility: "wis",
+      knownSpells: [
+        "sacred-flame",
+        "guidance",
+        "guiding-bolt",
+        "cure-wounds",
+        "healing-word",
+        "bless",
+        "shield-of-faith",
+      ],
+      hitDice: { die: "d8", current: 1, max: 1 },
+      concentratingOn: null,
+      authority,
+      rollAuthority,
+    };
+  }
+
+  if (presetId === "pc_theron") {
+    return {
+      id: "pc_theron",
+      name: "Theron Ashveil",
+      species: "Alto Elfo",
+      className: "Mago",
+      level: 1,
+      abilities: {
+        str: 8, // -1
+        dex: 14, // +2
+        con: 14, // +2
+        int: 16, // +3
+        wis: 12, // +1
+        cha: 10, // +0
+      },
+      skillProficiencies: {
+        arcana: "proficient", // +5
+        history: "proficient", // +5
+        investigation: "proficient", // +5
+        perception: "proficient", // +3
+      },
+      savingThrowProficiencies: ["int", "wis"],
+      hp: { current: 8, max: 8, temp: 0 },
+      ac: 12,
+      speed: 30,
+      conditions: [],
+      exhaustionLevel: 0,
+      inventory: [
+        { itemId: "quarterstaff", name: "Bastón arcano", quantity: 1 },
+        { itemId: "dagger", name: "Daga", quantity: 1 },
+        { itemId: "potion-of-healing", name: "Poción de curación", quantity: 1 },
+        { itemId: "rations", name: "Raciones de viaje", quantity: 2 },
+      ],
+      spellSlots: {
+        "1": { current: 2, max: 2 },
+      },
+      spellcastingAbility: "int",
+      knownSpells: [
+        "fire-bolt",
+        "ray-of-frost",
+        "magic-missile",
+        "burning-hands",
+        "shield",
+        "sleep",
+      ],
+      hitDice: { die: "d6", current: 1, max: 1 },
       concentratingOn: null,
       authority,
       rollAuthority,
@@ -160,9 +296,11 @@ export function createPresetCharacter(
     inventory: [
       { itemId: "shortbow", name: "Arco corto", quantity: 1 },
       { itemId: "shortsword", name: "Espada corta", quantity: 1 },
+      { itemId: "potion-of-healing", name: "Poción de curación", quantity: 1 },
       { itemId: "rations", name: "Raciones de viaje", quantity: 3 },
     ],
     spellSlots: {},
+    hitDice: { die: "d10", current: 1, max: 1 },
     concentratingOn: null,
     authority,
     rollAuthority,

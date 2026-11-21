@@ -8,13 +8,17 @@ import {
   CrosshairIcon,
   DicesIcon,
   FlagIcon,
+  HeartPulseIcon,
   Loader2Icon,
   MapPinIcon,
+  MoonIcon,
   RotateCcwIcon,
   SearchIcon,
   ShieldCheckIcon,
+  SkullIcon,
   SparklesIcon,
   SwordsIcon,
+  Wand2Icon,
   XCircleIcon,
 } from "lucide-react";
 
@@ -29,7 +33,7 @@ import {
   TraceTitle,
 } from "@/components/ui/trace";
 import { cn } from "@/lib/utils";
-import type { DmToolPart } from "@/tools";
+import type { ChatUIMessage, DmToolPart } from "@/tools";
 
 const LABELS: Record<DmToolPart["type"], string> = {
   "tool-resolve_check": "Prueba de habilidad",
@@ -46,6 +50,10 @@ const LABELS: Record<DmToolPart["type"], string> = {
   "tool-combat_end": "Fin de combate",
   "tool-apply_condition": "Condiciones / Concentración",
   "tool-remember_fact": "Memoria de campaña",
+  "tool-cast_spell": "Conjuro 5e",
+  "tool-take_rest": "Descanso",
+  "tool-death_save": "Salvación de muerte",
+  "tool-heal": "Curación / Estabilizar",
 };
 
 function ToolCategoryIcon({ type }: { type: DmToolPart["type"] }) {
@@ -78,6 +86,14 @@ function ToolCategoryIcon({ type }: { type: DmToolPart["type"] }) {
       return <SparklesIcon className={cls} />;
     case "tool-remember_fact":
       return <BookmarkIcon className={cls} />;
+    case "tool-cast_spell":
+      return <Wand2Icon className={cls} />;
+    case "tool-take_rest":
+      return <MoonIcon className={cls} />;
+    case "tool-death_save":
+      return <SkullIcon className={cls} />;
+    case "tool-heal":
+      return <HeartPulseIcon className={cls} />;
   }
 }
 
@@ -339,7 +355,277 @@ function summarizeTool(part: DmToolPart): {
         details: out,
       };
     }
+    case "tool-cast_spell": {
+      const out = part.output;
+      const spellTitle = out.spellNameEs ?? part.input?.spellId ?? label;
+      let badge: { label: string; tone: BadgeTone } = {
+        label: "Lanzado",
+        tone: "indigo",
+      };
+      if (!out.ok) {
+        badge = { label: out.code ?? "Error", tone: "rose" };
+      } else if (out.attackRoll) {
+        badge = out.attackRoll.isCritical
+          ? { label: "CRÍTICO", tone: "amber" }
+          : out.attackRoll.hit
+            ? { label: "Impacto", tone: "emerald" }
+            : { label: "Fallo", tone: "rose" };
+      } else if (out.savingThrow) {
+        badge = out.savingThrow.saved
+          ? { label: "Resistido", tone: "amber" }
+          : { label: "Efecto", tone: "emerald" };
+      } else if (out.healingApplied && out.healingApplied > 0) {
+        badge = { label: `+${out.healingApplied} PG`, tone: "emerald" };
+      }
+      return {
+        title: `${label}: ${spellTitle}`,
+        description: out.messageEs,
+        badge,
+        isError: !out.ok,
+        details: out,
+      };
+    }
+    case "tool-take_rest": {
+      const out = part.output;
+      return {
+        title:
+          out.restType === "long" ? "Descanso largo" : "Descanso corto",
+        description: out.messageEs,
+        badge: out.ok
+          ? {
+              label:
+                out.hpHealed && out.hpHealed > 0
+                  ? `+${out.hpHealed} PG`
+                  : "Recuperado",
+              tone: "emerald",
+            }
+          : { label: out.code ?? "Error", tone: "rose" },
+        isError: !out.ok,
+        details: out,
+      };
+    }
+    case "tool-death_save": {
+      const out = part.output;
+      const tone: BadgeTone =
+        !out.ok ||
+        out.outcome === "failure" ||
+        out.outcome === "critical_failure" ||
+        out.outcome === "dead"
+          ? "rose"
+          : out.outcome === "critical_recovery"
+            ? "amber"
+            : "emerald";
+      const badgeLabel = !out.ok
+        ? (out.code ?? "Error")
+        : out.outcome === "critical_recovery"
+          ? "NAT 20 (+1 PG)"
+          : out.outcome === "stabilized"
+            ? "Estable"
+            : out.outcome === "dead"
+              ? "Muerto"
+              : out.outcome === "success"
+                ? "Éxito"
+                : out.outcome === "critical_failure"
+                  ? "NAT 1 (×2)"
+                  : "Fallo";
+      return {
+        title: label,
+        description: out.messageEs,
+        badge: { label: badgeLabel, tone },
+        isError: !out.ok,
+        details: out,
+      };
+    }
+    case "tool-heal": {
+      const out = part.output;
+      return {
+        title: label,
+        description: out.messageEs,
+        badge: out.ok
+          ? out.stabilized
+            ? { label: "Estabilizado", tone: "emerald" }
+            : out.hpHealed && out.hpHealed > 0
+              ? { label: `+${out.hpHealed} PG`, tone: "emerald" }
+              : { label: "Fallo", tone: "rose" }
+          : { label: out.code ?? "Error", tone: "rose" },
+        isError: !out.ok,
+        details: out,
+      };
+    }
   }
+}
+
+export interface TurnOutcomeSummary {
+  skillLabel: string;
+  outcomeLabel: string;
+  tone: BadgeTone;
+}
+
+const SKILL_LABELS_ES: Record<string, string> = {
+  acrobatics: "Acrobacias",
+  animal_handling: "Trato con Animales",
+  arcana: "Arcano",
+  athletics: "Atletismo",
+  deception: "Engaño",
+  history: "Historia",
+  insight: "Perspicacia",
+  intimidation: "Intimidación",
+  investigation: "Investigación",
+  medicine: "Medicina",
+  nature: "Naturaleza",
+  perception: "Percepción",
+  performance: "Interpretación",
+  persuasion: "Persuasión",
+  religion: "Religión",
+  sleight_of_hand: "Juego de Manos",
+  stealth: "Sigilo",
+  survival: "Supervivencia",
+  str: "Fuerza",
+  dex: "Destreza",
+  con: "Constitución",
+  int: "Inteligencia",
+  wis: "Sabiduría",
+  cha: "Carisma",
+};
+
+function formatSkillEs(raw?: string): string {
+  if (!raw) return "Acción";
+  const key = raw.toLowerCase();
+  return SKILL_LABELS_ES[key] ?? raw;
+}
+
+/**
+ * Extracts the primary deterministic outcome badge from an assistant message
+ * so the preceding player action card can display "Skill · Éxito/Fallo" inline.
+ */
+export function extractTurnOutcomeSummary(
+  assistantMessage: ChatUIMessage | undefined,
+): TurnOutcomeSummary | null {
+  if (!assistantMessage || assistantMessage.role !== "assistant") {
+    return null;
+  }
+
+  for (const part of assistantMessage.parts) {
+    if (part.type === "tool-resolve_check" && part.state === "output-available" && part.output.ok) {
+      return {
+        skillLabel: formatSkillEs(part.output.skill ?? part.input?.skill),
+        outcomeLabel: part.output.success ? "Éxito" : "Fallo",
+        tone: part.output.success ? "emerald" : "rose",
+      };
+    }
+    if (part.type === "tool-declare_check" && part.state === "output-available") {
+      return {
+        skillLabel: formatSkillEs(part.output.skill),
+        outcomeLabel: part.output.success ? "Éxito" : "Fallo",
+        tone: part.output.success ? "emerald" : "rose",
+      };
+    }
+    if (part.type === "tool-investigate" && part.state === "output-available" && part.output.ok) {
+      const count = part.output.unlockedClues?.length ?? 0;
+      return {
+        skillLabel: "Investigación",
+        outcomeLabel: count > 0 ? `+${count} pista${count > 1 ? "s" : ""}` : "Sin pistas",
+        tone: count > 0 ? "emerald" : "neutral",
+      };
+    }
+    if (part.type === "tool-cast_spell" && part.state === "output-available" && part.output.ok) {
+      const name = part.output.spellNameEs ?? "Conjuro";
+      if (part.output.attackRoll) {
+        return {
+          skillLabel: name,
+          outcomeLabel: part.output.attackRoll.isCritical
+            ? "CRÍTICO"
+            : part.output.attackRoll.hit
+              ? "Impacto"
+              : "Fallo",
+          tone: part.output.attackRoll.isCritical
+            ? "amber"
+            : part.output.attackRoll.hit
+              ? "emerald"
+              : "rose",
+        };
+      }
+      if (part.output.healingApplied && part.output.healingApplied > 0) {
+        return {
+          skillLabel: name,
+          outcomeLabel: `+${part.output.healingApplied} PG`,
+          tone: "emerald",
+        };
+      }
+      return {
+        skillLabel: name,
+        outcomeLabel: "Lanzado",
+        tone: "indigo",
+      };
+    }
+    if (part.type === "tool-combat_attack" && part.state === "output-available" && part.output.ok) {
+      return {
+        skillLabel: "Combate",
+        outcomeLabel: part.output.isCritical
+          ? "CRÍTICO"
+          : part.output.hit
+            ? `Impacto (${part.output.damageApplied ?? 0})`
+            : "Fallo",
+        tone: part.output.isCritical
+          ? "amber"
+          : part.output.hit
+            ? "emerald"
+            : "rose",
+      };
+    }
+    if (part.type === "tool-resolve_save" && part.state === "output-available" && part.output.ok) {
+      return {
+        skillLabel: `Salv. ${formatSkillEs(part.output.ability)}`,
+        outcomeLabel: part.output.success ? "Superada" : "Fallida",
+        tone: part.output.success ? "emerald" : "rose",
+      };
+    }
+    if (part.type === "tool-death_save" && part.state === "output-available" && part.output.ok) {
+      const o = part.output.outcome;
+      return {
+        skillLabel: "Muerte",
+        outcomeLabel:
+          o === "critical_recovery"
+            ? "NAT 20"
+            : o === "stabilized"
+              ? "Estable"
+              : o === "dead"
+                ? "Muerto"
+                : o === "success"
+                  ? "Éxito"
+                  : "Fallo",
+        tone:
+          o === "critical_recovery"
+            ? "amber"
+            : o === "stabilized" || o === "success"
+              ? "emerald"
+              : "rose",
+      };
+    }
+    if (part.type === "tool-take_rest" && part.state === "output-available" && part.output.ok) {
+      return {
+        skillLabel: part.output.restType === "long" ? "Descanso largo" : "Descanso corto",
+        outcomeLabel: "Completado",
+        tone: "emerald",
+      };
+    }
+    if (part.type === "tool-heal" && part.state === "output-available" && part.output.ok) {
+      return {
+        skillLabel: "Curación",
+        outcomeLabel: part.output.stabilized
+          ? "Estable"
+          : part.output.hpHealed && part.output.hpHealed > 0
+            ? `+${part.output.hpHealed} PG`
+            : "Fallo",
+        tone:
+          part.output.stabilized || (part.output.hpHealed ?? 0) > 0
+            ? "emerald"
+            : "rose",
+      };
+    }
+  }
+
+  return null;
 }
 
 export function DmToolPartView({

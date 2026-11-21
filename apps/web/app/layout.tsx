@@ -1,4 +1,4 @@
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Newsreader } from "next/font/google";
 
 import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
@@ -13,6 +13,12 @@ const fontMono = Geist_Mono({
   variable: "--font-mono",
 });
 
+const fontSerif = Newsreader({
+  subsets: ["latin"],
+  variable: "--font-serif",
+  style: ["normal", "italic"],
+});
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -25,6 +31,7 @@ export default function RootLayout({
       className={cn(
         "antialiased",
         fontMono.variable,
+        fontSerif.variable,
         "font-sans",
         fontSans.variable,
       )}

@@ -2,6 +2,8 @@ import { z } from 'zod';
 import {
   CombatStateSchema,
   Condition5eSchema,
+  DeathSavesSchema,
+  HitDieTypeSchema,
   VisibilitySchema,
   type Character,
   type CombatState,
@@ -28,6 +30,10 @@ export const EventTypeSchema = z.enum([
   'COMBAT_ATTACK',
   'COMBAT_TURN_ADVANCED',
   'COMBAT_ENDED',
+  'SPELL_CAST',
+  'REST_TAKEN',
+  'DEATH_SAVE_RESOLVED',
+  'HEALING_APPLIED',
   'ROLLBACK',
 ]);
 export type EventType = z.infer<typeof EventTypeSchema>;
@@ -99,6 +105,36 @@ export const GameStateDeltaSchema = z.object({
       }),
     )
     .optional(),
+  spellSlotChanges: z
+    .array(
+      z.object({
+        actorId: z.string().min(1),
+        level: z.string().min(1),
+        before: z.number().int().min(0),
+        after: z.number().int().min(0),
+      }),
+    )
+    .optional(),
+  hitDiceChanges: z
+    .array(
+      z.object({
+        actorId: z.string().min(1),
+        before: z.number().int().min(0),
+        after: z.number().int().min(0),
+        die: HitDieTypeSchema.optional(),
+        max: z.number().int().min(1).optional(),
+      }),
+    )
+    .optional(),
+  deathSaveChanges: z
+    .array(
+      z.object({
+        actorId: z.string().min(1),
+        before: DeathSavesSchema,
+        after: DeathSavesSchema,
+      }),
+    )
+    .optional(),
   cluesUnlocked: z.array(z.string().min(1)).optional(),
   combat: CombatStateSchema.nullable().optional(),
 });
@@ -135,6 +171,9 @@ function cloneCharacter(char: Character): Character {
     spellSlots: Object.fromEntries(
       Object.entries(char.spellSlots).map(([lvl, pool]) => [lvl, { ...pool }]),
     ),
+    ...(char.knownSpells ? { knownSpells: [...char.knownSpells] } : {}),
+    ...(char.hitDice ? { hitDice: { ...char.hitDice } } : {}),
+    ...(char.deathSaves ? { deathSaves: { ...char.deathSaves } } : {}),
     ...(char.resistances ? { resistances: [...char.resistances] } : {}),
     authority: { ...char.authority },
   };
@@ -186,7 +225,10 @@ export function applyDelta(
     (delta.conditionsRemoved && delta.conditionsRemoved.length > 0) ||
     (delta.exhaustionChanges && delta.exhaustionChanges.length > 0) ||
     (delta.concentrationChanges && delta.concentrationChanges.length > 0) ||
-    (delta.inventoryDelta && delta.inventoryDelta.length > 0);
+    (delta.inventoryDelta && delta.inventoryDelta.length > 0) ||
+    (delta.spellSlotChanges && delta.spellSlotChanges.length > 0) ||
+    (delta.hitDiceChanges && delta.hitDiceChanges.length > 0) ||
+    (delta.deathSaveChanges && delta.deathSaveChanges.length > 0);
 
   const explicitExhaustionActors = new Set(
     (delta.exhaustionChanges ?? []).map((change) => change.actorId),
@@ -298,6 +340,39 @@ export function applyDelta(
         });
       }
     }
+
+    for (const change of delta.spellSlotChanges ?? []) {
+      const char = ensureCloned(change.actorId);
+      if (!char) continue;
+      const existing = char.spellSlots[change.level];
+      const maxSlots = existing ? existing.max : Math.max(change.before, change.after);
+      char.spellSlots[change.level] = {
+        current: Math.max(0, Math.min(maxSlots, change.after)),
+        max: maxSlots,
+      };
+    }
+
+    for (const change of delta.hitDiceChanges ?? []) {
+      const char = ensureCloned(change.actorId);
+      if (!char) continue;
+      const die = change.die ?? char.hitDice?.die ?? 'd8';
+      const max = change.max ?? char.hitDice?.max ?? Math.max(1, char.level);
+      char.hitDice = {
+        die,
+        max,
+        current: Math.max(0, Math.min(max, change.after)),
+      };
+    }
+
+    for (const change of delta.deathSaveChanges ?? []) {
+      const char = ensureCloned(change.actorId);
+      if (!char) continue;
+      char.deathSaves = {
+        successes: Math.max(0, Math.min(3, change.after.successes)),
+        failures: Math.max(0, Math.min(3, change.after.failures)),
+        stable: change.after.stable,
+      };
+    }
   }
 
   const nextUnlockedClues: Record<string, string[]> = Object.fromEntries(
@@ -330,7 +405,28 @@ export function applyDelta(
           if (combatant) {
             const clampedHp = Math.max(0, Math.min(combatant.hp.max, change.after));
             combatant.hp.current = clampedHp;
-            combatant.defeated = clampedHp <= 0;
+            if (clampedHp > 0) {
+              combatant.defeated = false;
+            } else if (state.ruleset === '5e-full' && combatant.kind === 'pc') {
+              const updatedPc = nextCharacters[change.actorId];
+              combatant.defeated = (updatedPc?.deathSaves?.failures ?? 0) >= 3;
+            } else {
+              combatant.defeated = true;
+            }
+          }
+        }
+      }
+      if (delta.deathSaveChanges && delta.deathSaveChanges.length > 0) {
+        for (const change of delta.deathSaveChanges) {
+          const combatant = nextCombat.combatants.find(
+            (c) => c.actorId === change.actorId || c.id === change.actorId,
+          );
+          if (combatant && combatant.kind === 'pc') {
+            if (change.after.failures >= 3) {
+              combatant.defeated = true;
+            } else if (combatant.hp.current > 0) {
+              combatant.defeated = false;
+            }
           }
         }
       }

@@ -31,7 +31,13 @@ async function execTool<I, O>(
 
 async function setupRuntime(options: {
   mode?: "digital" | "hybrid";
-  presetId?: "pc_kael" | "pc_brenna" | "pc_lira";
+  presetId?:
+    | "pc_kael"
+    | "pc_brenna"
+    | "pc_lira"
+    | "pc_seraphina"
+    | "pc_theron";
+  ruleset?: "5e-lite" | "5e-full";
   seed?: string;
 } = {}) {
   const store = new InMemoryGameStore();
@@ -40,7 +46,7 @@ async function setupRuntime(options: {
     guestId,
     presetId: options.presetId ?? "pc_kael",
     mode: options.mode ?? "digital",
-    ruleset: "5e-lite",
+    ruleset: options.ruleset ?? "5e-lite",
   });
 
   let state = loaded.state;
@@ -551,5 +557,136 @@ describe("DM agent (Eve architecture) & Aguas Quietas E2E", () => {
     });
     expect(rbBefore.ok).toBe(true);
     expect(rt.getState().combat).toBeUndefined();
+  });
+
+  it("supports 5e-full spellcasters (Seraphina & Theron), cast_spell, take_rest, heal, suggest_actions, and exact rollback", async () => {
+    const seraphinaRun = await setupRuntime({
+      presetId: "pc_seraphina",
+      ruleset: "5e-full",
+      seed: "seraphina-5e-full",
+    });
+    const theronRun = await setupRuntime({
+      presetId: "pc_theron",
+      ruleset: "5e-full",
+      seed: "theron-5e-full",
+    });
+
+    const seraphinaPrompt = buildDmSystemPrompt(
+      seraphinaRun.rt.getState(),
+      seraphinaRun.rt.getEvents(),
+    );
+    expect(seraphinaPrompt).toContain("Seraphina Voss");
+    expect(seraphinaPrompt).toContain("Magia (WIS): CD 13 | Ataque +5");
+    expect(seraphinaPrompt).toContain("Nv.1: 2/2");
+
+    const theronPrompt = buildDmSystemPrompt(
+      theronRun.rt.getState(),
+      theronRun.rt.getEvents(),
+    );
+    expect(theronPrompt).toContain("Theron Ashveil");
+    expect(theronPrompt).toContain("Magia (INT): CD 13 | Ataque +5");
+    expect(theronPrompt).toContain("magic-missile");
+
+    const tools = createDmTools(seraphinaRun.rt);
+
+    // 1. Cast Bless (concentration, consumes level-1 slot 2 -> 1)
+    const castBless = await execTool(tools.cast_spell, {
+      sceneId: "escena_01_orilla",
+      casterId: "pc_seraphina",
+      spellId: "bless",
+    });
+    expect(castBless.ok).toBe(true);
+    expect(castBless.slotPoolAfter).toEqual({ current: 1, max: 2 });
+    expect(
+      seraphinaRun.rt.getState().characters.pc_seraphina?.concentratingOn,
+    ).toBe("Bendición");
+
+    // 2. Suggest actions does NOT write to event_log or increment lastSeq
+    const seqBeforeSuggest = seraphinaRun.rt.getState().lastSeq;
+    const suggested = await execTool(tools.suggest_actions, {
+      sceneLabel: "AGUAS QUIETAS · ORILLA",
+      actions: [
+        {
+          skill: "Investigación",
+          tone: "blue",
+          label: "Inspeccionar las huellas frescas junto a los juncos.",
+        },
+        {
+          skill: "Sigilo",
+          tone: "violet",
+          label: "Ocultarse entre la maleza antes de cruzar.",
+        },
+        {
+          skill: "Persuasión",
+          tone: "amber",
+          label: "Llamar con calma a los vigías del embarcadero.",
+        },
+      ],
+    });
+    expect(suggested.ok).toBe(true);
+    expect(suggested.actions).toHaveLength(3);
+    expect(seraphinaRun.rt.getState().lastSeq).toBe(seqBeforeSuggest);
+
+    // 3. Long rest restores spell slots 1/2 -> 2/2 and clears concentration
+    const restOut = await execTool(tools.take_rest, {
+      sceneId: "escena_01_orilla",
+      actorId: "pc_seraphina",
+      restType: "long",
+    });
+    expect(restOut.ok).toBe(true);
+    expect(restOut.slotsRestored).toBe(true);
+    expect(
+      seraphinaRun.rt.getState().characters.pc_seraphina?.spellSlots["1"],
+    ).toEqual({ current: 2, max: 2 });
+    expect(
+      seraphinaRun.rt.getState().characters.pc_seraphina?.concentratingOn,
+    ).toBeNull();
+
+    // 4. Heal with potion consumes inventory item deterministically
+    const healOut = await execTool(tools.heal, {
+      sceneId: "escena_01_orilla",
+      actorId: "pc_seraphina",
+      targetId: "pc_seraphina",
+      source: "potion",
+      reason: "Prueba de poción",
+    });
+    expect(healOut.ok).toBe(true);
+    expect(
+      seraphinaRun.rt
+        .getState()
+        .characters.pc_seraphina?.inventory.find(
+          (i) => i.itemId === "potion-of-healing",
+        ),
+    ).toBeUndefined();
+
+    // 5. Rollback to seq 1 restores 1/2 slot, concentration, and potion in inventory
+    const rb = await execTool(tools.rollback_to_event, {
+      targetSeq: 1,
+      reason: "Volver justo después de lanzar Bendición",
+    });
+    expect(rb.ok).toBe(true);
+    expect(
+      seraphinaRun.rt.getState().characters.pc_seraphina?.spellSlots["1"],
+    ).toEqual({ current: 1, max: 2 });
+    expect(
+      seraphinaRun.rt.getState().characters.pc_seraphina?.concentratingOn,
+    ).toBe("Bendición");
+    expect(
+      seraphinaRun.rt
+        .getState()
+        .characters.pc_seraphina?.inventory.find(
+          (i) => i.itemId === "potion-of-healing",
+        )?.quantity,
+    ).toBe(1);
+
+    // 6. Rollback to seq 0 restores pristine 2/2 slots
+    const rbZero = await execTool(tools.rollback_to_event, {
+      targetSeq: 0,
+      reason: "Reiniciar inicio",
+    });
+    expect(rbZero.ok).toBe(true);
+    expect(
+      seraphinaRun.rt.getState().characters.pc_seraphina?.spellSlots["1"],
+    ).toEqual({ current: 2, max: 2 });
   });
 });

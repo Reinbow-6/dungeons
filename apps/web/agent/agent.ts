@@ -2,17 +2,21 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   getCheckModifier,
+  getSpellcastingStats,
   type GameEvent,
   type GameState,
   type Skill,
 } from "@dungeons/rules";
 
 import { createApplyConditionTool } from "@/agent/tools/apply-condition";
+import { createCastSpellTool } from "@/agent/tools/cast-spell";
 import { createCombatAttackTool } from "@/agent/tools/combat-attack";
 import { createCombatEndTool } from "@/agent/tools/combat-end";
 import { createCombatNextTurnTool } from "@/agent/tools/combat-next-turn";
 import { createCombatStartTool } from "@/agent/tools/combat-start";
+import { createDeathSaveTool } from "@/agent/tools/death-save";
 import { declareCheckTool } from "@/agent/tools/declare-check";
+import { createHealTool } from "@/agent/tools/heal";
 import { createInventoryTool } from "@/agent/tools/inventory";
 import { createInvestigateTool } from "@/agent/tools/investigate";
 import { createLookupRulesTool } from "@/agent/tools/lookup-rules";
@@ -21,6 +25,8 @@ import { createResolveCheckTool } from "@/agent/tools/resolve-check";
 import { createResolveSaveTool } from "@/agent/tools/resolve-save";
 import { createRollbackTool } from "@/agent/tools/rollback-to-event";
 import type { DmToolRuntime } from "@/agent/tools/runtime";
+import { createSuggestActionsTool } from "@/agent/tools/suggest-actions";
+import { createTakeRestTool } from "@/agent/tools/take-rest";
 import { createTransitionSceneTool } from "@/agent/tools/transition-scene";
 import { sanitizeUntrustedText } from "@/lib/ai/prompt-safety";
 import type { SessionSummaryItem, StoredMemoryFact } from "@/lib/game/store";
@@ -117,10 +123,26 @@ export function buildDmSystemPrompt(
       const safeConc = char.concentratingOn
         ? sanitizeUntrustedText(char.concentratingOn, 80)
         : "ninguna";
+      const spellStats = getSpellcastingStats(char);
+      const slotEntries = Object.entries(char.spellSlots)
+        .map(([lvl, pool]) => `Nv.${lvl}: ${pool.current}/${pool.max}`)
+        .join(", ");
+      const hitDiceText = char.hitDice
+        ? `${char.hitDice.current}/${char.hitDice.max} ${char.hitDice.die}`
+        : `1/1`;
+      const deathSavesLine =
+        char.hp.current === 0
+          ? `  - Salvaciones de muerte: éxitos ${char.deathSaves?.successes ?? 0}/3, fallos ${char.deathSaves?.failures ?? 0}/3${char.deathSaves?.stable ? " (ESTABLE)" : " (MORIBUNDO — usar death_save o curación)"}`
+          : null;
+      const spellLine = spellStats
+        ? `  - Magia (${spellStats.ability.toUpperCase()}): CD ${spellStats.spellSaveDc} | Ataque +${spellStats.spellAttackBonus} | Espacios: ${slotEntries || "ninguno"}${char.knownSpells && char.knownSpells.length > 0 ? ` | Conjuros: ${char.knownSpells.join(", ")}` : ""}`
+        : null;
 
       return [
         `- **${safeName}** (actorId: \`${char.id}\`, ${char.species}, ${char.className} Nv.${char.level})`,
-        `  - PG: ${char.hp.current}/${char.hp.max} (temp: ${char.hp.temp}) | CA: ${char.ac} | Condiciones: ${cond} | Agotamiento: ${char.exhaustionLevel} | Concentración: ${safeConc}`,
+        `  - PG: ${char.hp.current}/${char.hp.max} (temp: ${char.hp.temp}) | CA: ${char.ac} | Dados de Golpe: ${hitDiceText} | Condiciones: ${cond} | Agotamiento: ${char.exhaustionLevel} | Concentración: ${safeConc}`,
+        ...(deathSavesLine ? [deathSavesLine] : []),
+        ...(spellLine ? [spellLine] : []),
         `  - Modo de tiradas (\`rollAuthority\`): \`${char.rollAuthority}\` (${char.rollAuthority === "player-declared" ? "MODO HÍBRIDO: usá `declare_check` para las pruebas del jugador" : "MODO DIGITAL: usá `resolve_check`"})`,
         `  - Modificadores clave: ${mods}`,
         `  - Inventario: ${inv}`,
@@ -264,6 +286,11 @@ export function createDmTools(rt: DmToolRuntime) {
     combat_end: createCombatEndTool(rt),
     apply_condition: createApplyConditionTool(rt),
     remember_fact: createRememberFactTool(rt),
+    cast_spell: createCastSpellTool(rt),
+    take_rest: createTakeRestTool(rt),
+    death_save: createDeathSaveTool(rt),
+    heal: createHealTool(rt),
+    suggest_actions: createSuggestActionsTool(),
     ask_user: askUser,
   };
 }

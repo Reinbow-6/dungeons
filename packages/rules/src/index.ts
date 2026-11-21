@@ -4,4 +4,6 @@ export * from './modifiers.js';
 export * from './events.js';
 export * from './resolvers.js';
 export * from './combat.js';
+export * from './spells.js';
+export * from './rest-and-death.js';
 export * from './adventures/aguas-quietas.js';

@@ -33,6 +33,11 @@ export type WebSearchToolPart = Extract<
   { type: "tool-web_search" }
 >;
 
+export type SuggestActionsToolPart = Extract<
+  ChatMessagePart,
+  { type: "tool-suggest_actions" }
+>;
+
 export type DmToolPart = Extract<
   ChatMessagePart,
   {
@@ -50,6 +55,10 @@ export type DmToolPart = Extract<
       | "tool-combat_next_turn"
       | "tool-combat_end"
       | "tool-apply_condition"
-      | "tool-remember_fact";
+      | "tool-remember_fact"
+      | "tool-cast_spell"
+      | "tool-take_rest"
+      | "tool-death_save"
+      | "tool-heal";
   }
 >;

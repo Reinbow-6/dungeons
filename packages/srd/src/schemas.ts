@@ -77,12 +77,16 @@ export interface SrdSpell {
   nameEs: string;
   level: number;
   school: string;
+  classes: string[];
   castingTime: string;
   ritual: boolean;
   range: string;
   components: string[];
   duration: string;
   concentration: boolean;
+  attackType: 'melee' | 'ranged' | null;
+  damageType: string | null;
+  damageAtSlotLevel: Record<string, string> | null;
   description: string;
   descriptionEs: string;
   rulesetVersion: '5.2.1';

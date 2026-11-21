@@ -894,9 +894,44 @@ export function resolveCombatAttack(
     targetHpAfter = Math.max(0, targetHpBefore - damageApplied);
   }
 
-  const targetDefeated = targetHpAfter <= 0;
+  const isFiveEFullPc = state.ruleset === '5e-full' && Boolean(targetChar);
+  const existingDeathSaves = targetChar?.deathSaves ?? {
+    successes: 0,
+    failures: 0,
+    stable: false,
+  };
+  let nextDeathSaves: { successes: number; failures: number; stable: boolean } | undefined;
+  let addUnconscious = false;
+  let pcDiedAtZero = false;
+
+  if (isFiveEFullPc && targetChar && hit && targetHpAfter <= 0) {
+    if (targetHpBefore > 0) {
+      // Dropped to 0 HP in 5e-full: enters unconscious + dying state
+      addUnconscious = !targetChar.conditions.includes('unconscious');
+      nextDeathSaves = { successes: 0, failures: 0, stable: false };
+    } else if (damageApplied > 0) {
+      // Already at 0 HP and took damage: +1 failure (+2 on critical hit)
+      const addedFailures = isCritical ? 2 : 1;
+      const failures = Math.min(3, existingDeathSaves.failures + addedFailures);
+      nextDeathSaves = {
+        successes: existingDeathSaves.successes,
+        failures,
+        stable: false,
+      };
+      pcDiedAtZero = failures >= 3;
+    }
+  }
+
+  const targetDefeated = isFiveEFullPc
+    ? pcDiedAtZero || existingDeathSaves.failures >= 3
+    : targetHpAfter <= 0;
   updatedTargetCombatant.hp.current = targetHpAfter;
   updatedTargetCombatant.defeated = targetDefeated;
+  if (addUnconscious) {
+    const conds = new Set(updatedTargetCombatant.conditions ?? []);
+    conds.add('unconscious');
+    updatedTargetCombatant.conditions = Array.from(conds);
+  }
 
   const concentrationCheck =
     targetChar && hit
@@ -914,7 +949,7 @@ export function resolveCombatAttack(
     .every((c) => c.defeated);
   const allPcsDefeated = nextCombat.combatants
     .filter((c) => c.kind === 'pc')
-    .every((c) => c.defeated);
+    .every((c) => c.defeated || c.hp.current <= 0);
 
   const nextSeq = state.lastSeq + 1;
   const stateDelta: GameStateDelta = {
@@ -941,9 +976,33 @@ export function resolveCombatAttack(
             : {}),
         }
       : {}),
+    ...(targetChar && addUnconscious
+      ? {
+          conditionsAdded: [
+            { actorId: targetChar.id, condition: 'unconscious' as const },
+          ],
+        }
+      : {}),
+    ...(targetChar && nextDeathSaves
+      ? {
+          deathSaveChanges: [
+            {
+              actorId: targetChar.id,
+              before: existingDeathSaves,
+              after: nextDeathSaves,
+            },
+          ],
+        }
+      : {}),
+    ...(targetChar && pcDiedAtZero
+      ? {
+          flagsSet: {
+            [`pc:${targetChar.id}:dead`]: true,
+          },
+        }
+      : {}),
     ...(targetChar &&
-    concentrationCheck &&
-    !concentrationCheck.maintained &&
+    ((concentrationCheck && !concentrationCheck.maintained) || addUnconscious) &&
     targetChar.concentratingOn
       ? {
           concentrationChanges: [

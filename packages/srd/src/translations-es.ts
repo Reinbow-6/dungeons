@@ -228,6 +228,26 @@ export const SPELL_TRANSLATIONS_ES: Record<string, EsTranslation> = {
     nameEs: 'Descarga de fuego',
     descriptionEs: 'Truco a distancia (120 pies): ataque mágico que inflige 1d10 de daño por fuego.',
   },
+  'ray-of-frost': {
+    nameEs: 'Rayo de escarcha',
+    descriptionEs: 'Truco a distancia (60 pies): ataque mágico que inflige 1d8 de frío y reduce 10 pies la velocidad.',
+  },
+  'sacred-flame': {
+    nameEs: 'Llama sagrada',
+    descriptionEs: 'Truco (60 pies): salvación de Destreza o 1d8 de daño radiante (ignora cobertura).',
+  },
+  'acid-splash': {
+    nameEs: 'Salpicadura de ácido',
+    descriptionEs: 'Truco (60 pies, esfera de 5 pies): salvación de Destreza o 1d6 de daño ácido.',
+  },
+  'chill-touch': {
+    nameEs: 'Toque helado',
+    descriptionEs: 'Truco (Toque): ataque mágico cuerpo a cuerpo que inflige 1d10 necrótico e impide curarse.',
+  },
+  guidance: {
+    nameEs: 'Guía',
+    descriptionEs: 'Truco (Concentración, Toque): suma +1d4 a una prueba de característica elegida.',
+  },
   'mage-hand': {
     nameEs: 'Mano de mago',
     descriptionEs: 'Mano espectral flotante que manipula objetos ligeros hasta a 30 pies.',
@@ -236,6 +256,10 @@ export const SPELL_TRANSLATIONS_ES: Record<string, EsTranslation> = {
     nameEs: 'Luz',
     descriptionEs: 'Un objeto tocado emite luz brillante en 20 pies y luz tenue en otros 20.',
   },
+  'guiding-bolt': {
+    nameEs: 'Saeta guía',
+    descriptionEs: 'Nivel 1 (120 pies): ataque mágico que inflige 4d6 radiante y da ventaja al próximo ataque contra el objetivo.',
+  },
   'cure-wounds': {
     nameEs: 'Curar heridas',
     descriptionEs: 'Nivel 1 (Toque): recupera 2d8 + modificador de lanzamiento en SRD 5.2.1.',
@@ -243,6 +267,18 @@ export const SPELL_TRANSLATIONS_ES: Record<string, EsTranslation> = {
   'healing-word': {
     nameEs: 'Palabra de curación',
     descriptionEs: 'Nivel 1 (Acción Adicional, 60 pies): recupera 2d4 + modificador en SRD 5.2.1.',
+  },
+  bless: {
+    nameEs: 'Bendición',
+    descriptionEs: 'Nivel 1 (Concentración): hasta 3 criaturas suman +1d4 a ataques y tiradas de salvación.',
+  },
+  bane: {
+    nameEs: 'Perdición',
+    descriptionEs: 'Nivel 1 (Concentración, salvación de Carisma): hasta 3 enemigos restan 1d4 a ataques y salvaciones.',
+  },
+  'shield-of-faith': {
+    nameEs: 'Escudo de la fe',
+    descriptionEs: 'Nivel 1 (Acción Adicional, Concentración): +2 a la CA de una criatura a 60 pies.',
   },
   shield: {
     nameEs: 'Escudo arcano',
@@ -255,6 +291,34 @@ export const SPELL_TRANSLATIONS_ES: Record<string, EsTranslation> = {
   'burning-hands': {
     nameEs: 'Manos ardientes',
     descriptionEs: 'Nivel 1 (Cono de 15 pies): 3d6 de daño por fuego (salvación de Destreza mitad).',
+  },
+  thunderwave: {
+    nameEs: 'Onda atronadora',
+    descriptionEs: 'Nivel 1 (Cubo de 15 pies): salvación de Constitución o 2d8 de trueno y empuje de 10 pies (mitad si supera).',
+  },
+  'inflict-wounds': {
+    nameEs: 'Infligir heridas',
+    descriptionEs: 'Nivel 1 (Toque): salvación de Constitución o 2d10 de daño necrótico (mitad si supera).',
+  },
+  sleep: {
+    nameEs: 'Dormir',
+    descriptionEs: 'Nivel 1 (Concentración, salvación de Sabiduría): incapacita y duerme criaturas en un área de 5 pies.',
+  },
+  'faerie-fire': {
+    nameEs: 'Fuego feérico',
+    descriptionEs: 'Nivel 1 (Concentración, salvación de Destreza): perfila enemigos con luz y otorga ventaja al atacarlos.',
+  },
+  'hold-person': {
+    nameEs: 'Inmovilizar persona',
+    descriptionEs: 'Nivel 2 (Concentración, salvación de Sabiduría): paraliza a un humanoide a 60 pies.',
+  },
+  'scorching-ray': {
+    nameEs: 'Rayo abrasador',
+    descriptionEs: 'Nivel 2 (120 pies): tres rayos de fuego, cada uno con ataque mágico de 2d6 de fuego.',
+  },
+  aid: {
+    nameEs: 'Auxilio',
+    descriptionEs: 'Nivel 2: hasta 3 aliados aumentan sus PG máximos y actuales en 5.',
   },
   entangle: {
     nameEs: 'Enmarañar',

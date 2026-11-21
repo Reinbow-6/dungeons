@@ -1,16 +1,26 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import type { GameEvent, GameState } from "@dungeons/rules";
+import type { GameEvent, GameState, RulesetProfile } from "@dungeons/rules";
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
 } from "ai";
+import {
+  ChevronRightIcon,
+  HeartPulseIcon,
+  PanelRightIcon,
+  ShieldIcon,
+  SkullIcon,
+  SparklesIcon,
+  SwordsIcon,
+} from "lucide-react";
 import * as React from "react";
 
 import { ChatMessage } from "@/components/chat-message";
 import { GameSidebar } from "@/components/game/game-sidebar";
 import { HybridCheckCard } from "@/components/game/hybrid-check-card";
+import { extractTurnOutcomeSummary } from "@/components/game/tool-parts";
 import { PromptForm } from "@/components/prompt-form";
 import { QuestionCard } from "@/components/question-card";
 import { StatusIcon } from "@/components/status-icon";
@@ -36,6 +46,7 @@ import { Trace, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace";
 import type { CharacterPresetInfo } from "@/lib/game/presets";
 import type { SessionSummaryItem, StoredMemoryFact } from "@/lib/game/store";
 import { type GatewayModel } from "@/lib/models";
+import { cn } from "@/lib/utils";
 import { type ChatUIMessage } from "@/tools";
 
 function LiveTurnStatus({ status }: { status: "submitted" | "streaming" }) {
@@ -54,11 +65,11 @@ function LiveTurnStatus({ status }: { status: "submitted" | "streaming" }) {
   return (
     <div className="flex items-center justify-between gap-2 px-1 text-[11px] text-muted-foreground">
       <div className="flex items-center gap-2">
-        <span className="size-1.5 animate-pulse rounded-full bg-indigo-400" />
+        <span className="size-1.5 animate-pulse rounded-full bg-amber-400" />
         <span>
           {status === "submitted"
             ? "El DM está resolviendo reglas y pensando…"
-            : "Narrando respuesta…"}
+            : "Narrando escena…"}
         </span>
       </div>
       <span className="font-mono text-[11px] tabular-nums">
@@ -96,6 +107,8 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   >([]);
   const [memoryFacts, setMemoryFacts] = React.useState<StoredMemoryFact[]>([]);
   const [presets, setPresets] = React.useState<CharacterPresetInfo[]>([]);
+  // HUD lateral colapsado por defecto (estilo Old Greg's Tavern)
+  const [sidebarOpen, setSidebarOpen] = React.useState(false);
 
   const resolvedModel = models.some((m) => m.id === model)
     ? model
@@ -120,6 +133,21 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   React.useEffect(() => {
     transportBundle.updateBody({ model: resolvedModel, campaignId });
   }, [transportBundle, resolvedModel, campaignId]);
+
+  React.useEffect(() => {
+    function handleShortcut(event: KeyboardEvent) {
+      if (event.altKey && event.key.toLowerCase() === "h") {
+        event.preventDefault();
+        setSidebarOpen((prev) => !prev);
+      } else if (event.key === "Escape") {
+        setSidebarOpen(false);
+      }
+    }
+    window.addEventListener("keydown", handleShortcut);
+    return () => {
+      window.removeEventListener("keydown", handleShortcut);
+    };
+  }, []);
 
   const {
     messages,
@@ -177,7 +205,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
           body: JSON.stringify({
             presetId: "pc_kael",
             mode: "digital",
-            ruleset: "5e-lite",
+            ruleset: "5e-full",
           }),
         });
         if (!createRes.ok || cancelled) return;
@@ -223,11 +251,12 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   async function handleNewCampaign(
     presetId: string,
     mode: "digital" | "hybrid",
+    ruleset: RulesetProfile,
   ) {
     const res = await fetch("/api/game/campaigns", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ presetId, mode, ruleset: "5e-lite" }),
+      body: JSON.stringify({ presetId, mode, ruleset }),
     });
     if (!res.ok) return;
     const data = (await res.json()) as CampaignApiPayload;
@@ -318,6 +347,22 @@ export function Chat({ models }: { models: GatewayModel[] }) {
 
   const isBusy = status === "submitted" || status === "streaming";
   const lastMessage = messages.at(-1);
+  const activeChar = gameState ? Object.values(gameState.characters)[0] : undefined;
+  const currentScene = gameState ? gameState.scenes[gameState.sceneId] : undefined;
+
+  const pcNames = React.useMemo(
+    () => (gameState ? Object.values(gameState.characters).map((c) => c.name) : []),
+    [gameState],
+  );
+  const npcNames = React.useMemo(
+    () =>
+      gameState?.combat?.active
+        ? gameState.combat.combatants
+            .filter((c) => c.kind !== "pc")
+            .map((c) => c.name)
+        : [],
+    [gameState],
+  );
 
   const pendingQuestion =
     lastMessage?.role === "assistant"
@@ -341,62 +386,186 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         )
       : undefined;
 
+  const firstAssistantIndex = messages.findIndex((m) => m.role === "assistant");
+  const level1Slots = activeChar?.spellSlots["1"];
+
+  const submitPrompt = React.useCallback(
+    (prompt: string) => {
+      if (isBusy) return;
+      void sendMessage(
+        { text: prompt },
+        { body: { model: resolvedModel, campaignId } },
+      );
+    },
+    [isBusy, sendMessage, resolvedModel, campaignId],
+  );
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+    <div className="tavern-backdrop relative flex min-h-0 flex-1 overflow-hidden">
+      {/* Lengüeta discreta en el borde izquierdo estilo Old Greg's Tavern */}
+      {!sidebarOpen && (
+        <button
+          type="button"
+          onClick={() => setSidebarOpen(true)}
+          title="Abrir HUD de ficha, escena y combate (Alt+H)"
+          aria-label="Abrir panel lateral de personaje"
+          className="fixed left-3 top-16 z-30 inline-flex size-7 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground shadow-xs backdrop-blur-md transition-colors hover:border-amber-500/40 hover:text-foreground"
+        >
+          <ChevronRightIcon className="size-3.5" />
+        </button>
+      )}
+
+      {/* Píldora flotante compacta de estado vital cuando el HUD está colapsado */}
+      {!sidebarOpen && activeChar && gameState && (
+        <button
+          type="button"
+          onClick={() => setSidebarOpen(true)}
+          title="Ver ficha completa, conjuros, memoria y rollback (Alt+H)"
+          className={cn(
+            "fixed right-4 top-16 z-30 flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] shadow-sm backdrop-blur-md transition-all hover:border-amber-500/45",
+            gameState.combat?.active
+              ? "border-rose-500/45 bg-rose-950/75 text-rose-100"
+              : activeChar.hp.current === 0
+                ? "border-rose-500/60 bg-rose-950/85 text-rose-100 animate-pulse"
+                : "border-border/70 bg-card/80 text-foreground/90",
+          )}
+        >
+          <span className="max-w-24 truncate font-medium text-amber-700 dark:text-amber-300">
+            {activeChar.name.split(" ")[0]}
+          </span>
+          <span className="inline-flex items-center gap-1 font-mono tabular-nums">
+            {activeChar.hp.current === 0 ? (
+              <SkullIcon className="size-3 text-rose-400" />
+            ) : (
+              <HeartPulseIcon className="size-3 text-emerald-500" />
+            )}
+            {activeChar.hp.current}/{activeChar.hp.max}
+          </span>
+          <span className="hidden items-center gap-0.5 font-mono tabular-nums text-muted-foreground sm:inline-flex">
+            <ShieldIcon className="size-3" />
+            {activeChar.ac}
+          </span>
+          {level1Slots && (
+            <span className="hidden items-center gap-0.5 font-mono tabular-nums text-violet-600 dark:text-violet-300 sm:inline-flex">
+              <SparklesIcon className="size-3" />
+              {level1Slots.current}/{level1Slots.max}
+            </span>
+          )}
+          {gameState.combat?.active && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/25 px-1.5 py-0 font-mono text-[10px] font-semibold text-rose-200">
+              <SwordsIcon className="size-2.5" />R{gameState.combat.round}
+            </span>
+          )}
+          <PanelRightIcon className="size-3 text-muted-foreground" />
+        </button>
+      )}
+
+      {/* Columna editorial principal */}
       <div className="mx-auto flex min-h-0 w-full flex-1 flex-col">
         {messages.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center bg-[radial-gradient(ellipse_at_top,oklch(0.62_0.16_265/0.09),transparent_65%)] p-6">
+          <div className="flex flex-1 items-center justify-center p-6">
             <Empty className="max-w-2xl border-none p-4 sm:p-8">
               <EmptyHeader className="max-w-lg">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/25 bg-indigo-500/10 px-2.5 py-0.5 font-mono text-[10px] font-medium text-indigo-700 dark:text-indigo-300">
-                  SRD 5.2.1 · Motor determinista · Voz STT
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-0.5 font-mono text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                  SRD 5.2.1 · {gameState?.ruleset ?? "5e-full"} · Motor determinista · Voz STT
                 </span>
-                <EmptyTitle className="mt-1 text-2xl font-semibold tracking-tight">
+                <EmptyTitle className="mt-2 font-serif text-3xl font-semibold tracking-tight">
                   Aguas Quietas
                 </EmptyTitle>
-                <EmptyDescription>
-                  Campaña 5e-lite asistida por reglas deterministas. Escribí o
-                  usá el micrófono para jugar en modo digital o híbrido.
+                <EmptyDescription className="text-[14px] leading-relaxed">
+                  Crónica interactiva 5e asistida por motor determinista. Escribí,
+                  dictá con el micrófono o abrí el panel lateral (<kbd className="rounded border border-border px-1 font-mono text-[10px]">Alt+H</kbd>) para elegir ficha o modo híbrido.
                 </EmptyDescription>
               </EmptyHeader>
               <EmptyContent className="max-w-xl">
-                <Suggestions
-                  onSelect={(prompt) =>
-                    sendMessage(
-                      { text: prompt },
-                      { body: { model: resolvedModel, campaignId } },
-                    )
-                  }
-                />
+                <Suggestions onSelect={submitPrompt} />
               </EmptyContent>
             </Empty>
           </div>
         ) : (
           <MessageScrollerProvider>
-            <MessageScroller className="flex-1">
+            <MessageScroller className="relative flex-1">
+              {/* Degradado superior sutil estilo lectura nocturna */}
+              <div
+                aria-hidden
+                className="pointer-events-none sticky top-0 z-10 h-6 w-full bg-gradient-to-b from-background/90 to-transparent"
+              />
               <MessageScrollerViewport>
-                <MessageScrollerContent className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-6 py-6">
-                  {messages.map((message) => (
-                    <MessageScrollerItem
-                      key={message.id}
-                      messageId={message.id}
-                      scrollAnchor={message.role === "user"}
-                    >
-                      <ChatMessage
-                        message={message}
-                        isStreaming={isBusy && message.id === lastMessage?.id}
-                        onRetry={
-                          !isBusy && message.id === lastMessage?.id
-                            ? () =>
-                                regenerate({
-                                  messageId: message.id,
-                                  body: { model: resolvedModel, campaignId },
-                                })
-                            : undefined
-                        }
-                      />
-                    </MessageScrollerItem>
-                  ))}
+                <MessageScrollerContent className="mx-auto flex w-full max-w-[700px] flex-col gap-7 px-5 pb-8 pt-2 sm:px-6">
+                  {messages.map((message, idx) => {
+                    const nextMessage = messages[idx + 1];
+                    const turnOutcome =
+                      message.role === "user"
+                        ? extractTurnOutcomeSummary(nextMessage)
+                        : null;
+
+                    let sceneHeader: { microLabel: string; title: string } | null =
+                      null;
+                    if (message.role === "assistant") {
+                      const transitionPart = message.parts.find(
+                        (
+                          p,
+                        ): p is Extract<
+                          typeof p,
+                          {
+                            type: "tool-transition_scene";
+                            state: "output-available";
+                          }
+                        > =>
+                          p.type === "tool-transition_scene" &&
+                          p.state === "output-available" &&
+                          p.output.ok,
+                      );
+                      if (transitionPart?.output.titleEs) {
+                        sceneHeader = {
+                          microLabel: "AGUAS QUIETAS · NUEVA ESCENA",
+                          title: transitionPart.output.titleEs,
+                        };
+                      } else if (idx === firstAssistantIndex && currentScene) {
+                        sceneHeader = {
+                          microLabel: `AGUAS QUIETAS · ${gameState?.ruleset.toUpperCase() ?? "5E-FULL"}`,
+                          title: currentScene.titleEs,
+                        };
+                      }
+                    }
+
+                    const isLastAssistant =
+                      message.role === "assistant" &&
+                      idx === messages.length - 1;
+
+                    return (
+                      <MessageScrollerItem
+                        key={message.id}
+                        messageId={message.id}
+                        scrollAnchor={message.role === "user"}
+                      >
+                        <ChatMessage
+                          message={message}
+                          isStreaming={isBusy && message.id === lastMessage?.id}
+                          isLastAssistant={isLastAssistant}
+                          hideSuggestions={Boolean(
+                            pendingQuestion || pendingDeclareCheck,
+                          )}
+                          characterName={activeChar?.name}
+                          characterClassName={activeChar?.className}
+                          turnOutcome={turnOutcome}
+                          sceneHeader={sceneHeader}
+                          pcNames={pcNames}
+                          npcNames={npcNames}
+                          onSelectSuggestion={submitPrompt}
+                          onRetry={
+                            !isBusy && message.id === lastMessage?.id
+                              ? () =>
+                                  regenerate({
+                                    messageId: message.id,
+                                    body: { model: resolvedModel, campaignId },
+                                  })
+                              : undefined
+                          }
+                        />
+                      </MessageScrollerItem>
+                    );
+                  })}
                   {status === "submitted" && (
                     <MessageScrollerItem messageId="thinking">
                       <Message>
@@ -456,7 +625,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
           </MessageScrollerProvider>
         )}
 
-        <div className="mx-auto flex w-full max-w-2xl flex-col gap-2 px-6 pb-5 pt-2">
+        <div className="mx-auto flex w-full max-w-[700px] flex-col gap-2 px-5 pb-5 pt-2 sm:px-6">
           {error && (
             <Alert variant="destructive">
               <AlertTitle>Error en la solicitud</AlertTitle>
@@ -471,18 +640,16 @@ export function Chat({ models }: { models: GatewayModel[] }) {
             model={resolvedModel}
             onModelChange={setModel}
             isBusy={isBusy}
-            onSubmit={(text) =>
-              sendMessage(
-                { text },
-                { body: { model: resolvedModel, campaignId } },
-              )
-            }
+            onSubmit={submitPrompt}
             onStop={() => stop()}
           />
         </div>
       </div>
 
+      {/* HUD Lateral colapsable (drawer deslizable) */}
       <GameSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
         campaignId={campaignId}
         sessionNumber={sessionNumber}
         state={gameState}
@@ -495,6 +662,10 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         onStateUpdated={setGameState}
         onToggleMode={handleToggleMode}
         onRollback={handleRollback}
+        onQuickAction={(prompt) => {
+          setSidebarOpen(false);
+          submitPrompt(prompt);
+        }}
         onManualDeclareVerified={(result, nextState, event) => {
           setGameState(nextState);
           setEvents((prev) => [...prev, event]);

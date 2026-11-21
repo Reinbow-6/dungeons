@@ -6,6 +6,7 @@
   "license": "MIT",
   "scripts": {
     "dev": "next dev",
+    "prebuild": "pnpm --filter @dungeons/rules build && pnpm --filter @dungeons/srd build",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

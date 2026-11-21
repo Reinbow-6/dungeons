@@ -46,7 +46,7 @@ import {
 } from "@/lib/observability/logger";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 function jsonWithGuestCookie(
   body: Record<string, unknown>,
@@ -244,7 +244,7 @@ export async function POST(req: Request) {
         guestId: guest.guestId,
         presetId: "pc_kael",
         mode: "digital",
-        ruleset: "5e-lite",
+        ruleset: "5e-full",
       });
     }
   } catch (err) {
@@ -421,7 +421,17 @@ export async function POST(req: Request) {
     ...(resolved.providerOptions
       ? { providerOptions: resolved.providerOptions }
       : {}),
-    stopWhen: isStepCount(chatSpendCap.config.maxAgentSteps),
+    stopWhen: [
+      isStepCount(chatSpendCap.config.maxAgentSteps),
+      ({ steps }) => {
+        const last = steps.at(-1);
+        return Boolean(
+          last &&
+            last.text.trim().length > 0 &&
+            last.toolCalls.some((tc) => tc.toolName === "suggest_actions"),
+        );
+      },
+    ],
     maxOutputTokens: chatSpendCap.config.maxOutputTokens,
     abortSignal: req.signal,
     onFinish: ({ totalUsage, steps }) => {

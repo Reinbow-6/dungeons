@@ -196,6 +196,50 @@ export function extractDeterministicFactsFromEvent(
       break;
     }
 
+    case "REST_TAKEN": {
+      if (p.restType !== "long") {
+        break;
+      }
+      const sceneId = typeof p.sceneId === "string" ? p.sceneId : state.sceneId;
+      const sceneTitle = state.scenes[sceneId]?.titleEs ?? sceneId;
+      facts.push({
+        category: "milestone",
+        content: sanitizeUntrustedText(
+          `${actorName} completó un descanso largo en "${sceneTitle}", recuperando fuerzas y recursos.`,
+          280,
+        ),
+        importance: 5,
+        eventSeq: event.seq,
+        source: "engine",
+      });
+      break;
+    }
+
+    case "DEATH_SAVE_RESOLVED": {
+      const outcome = typeof p.outcome === "string" ? p.outcome : "";
+      if (
+        outcome !== "critical_recovery" &&
+        outcome !== "stabilized" &&
+        outcome !== "dead"
+      ) {
+        break;
+      }
+      const detail =
+        outcome === "critical_recovery"
+          ? "se recuperó milagrosamente con un 20 natural (1 PG)"
+          : outcome === "stabilized"
+            ? "quedó estable en 0 PG"
+            : "murió tras acumular 3 fallos de salvación contra la muerte";
+      facts.push({
+        category: "milestone",
+        content: sanitizeUntrustedText(`${actorName} ${detail}.`, 280),
+        importance: outcome === "dead" ? 10 : 8,
+        eventSeq: event.seq,
+        source: "engine",
+      });
+      break;
+    }
+
     case "CHECK_RESOLVED":
     case "SAVE_RESOLVED": {
       const nat = resolveNaturalFromDice(event.dieResults, p.mode);

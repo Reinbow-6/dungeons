@@ -333,6 +333,151 @@ export interface CombatEndToolOutput {
   seq?: number;
 }
 
+export interface CastSpellToolInput {
+  sceneId: string;
+  casterId: string;
+  spellId: string;
+  slotLevel?: number;
+  targetId?: string;
+  mode?: "normal" | "advantage" | "disadvantage";
+}
+
+export interface CastSpellToolOutput {
+  ok: boolean;
+  code?: string;
+  messageEs: string;
+  spellId?: string;
+  spellNameEs?: string;
+  slotLevelUsed?: number;
+  kind?: "attack" | "save" | "auto_hit" | "heal" | "utility";
+  concentration?: boolean;
+  spellAttackBonus?: number;
+  spellSaveDc?: number;
+  targetId?: string;
+  targetName?: string;
+  attackRoll?: {
+    rolls: number[];
+    naturalRoll: number;
+    total: number;
+    targetAc: number;
+    hit: boolean;
+    isCritical: boolean;
+    effectiveMode: "normal" | "advantage" | "disadvantage";
+  };
+  savingThrow?: {
+    ability: string;
+    dc: number;
+    rolls: number[];
+    naturalRoll: number;
+    modifier: number;
+    total: number;
+    saved: boolean;
+  };
+  damageApplied?: number;
+  damageType?: string;
+  healingApplied?: number;
+  targetHpAfter?: number;
+  slotPoolAfter?: { current: number; max: number };
+  seq?: number;
+}
+
+export interface TakeRestToolInput {
+  sceneId: string;
+  actorId: string;
+  restType: "short" | "long";
+  hitDiceToSpend?: number;
+}
+
+export interface TakeRestToolOutput {
+  ok: boolean;
+  code?: string;
+  messageEs: string;
+  actorId?: string;
+  restType?: "short" | "long";
+  hpBefore?: number;
+  hpAfter?: number;
+  hpHealed?: number;
+  hitDiceSpent?: number;
+  hitDiceAfter?: { die: string; current: number; max: number };
+  slotsRestored?: boolean;
+  exhaustionAfter?: number;
+  seq?: number;
+}
+
+export interface DeathSaveToolInput {
+  sceneId: string;
+  actorId: string;
+  mode?: "normal" | "advantage" | "disadvantage";
+}
+
+export interface DeathSaveToolOutput {
+  ok: boolean;
+  code?: string;
+  messageEs: string;
+  actorId?: string;
+  naturalRoll?: number;
+  total?: number;
+  outcome?:
+    | "critical_recovery"
+    | "success"
+    | "stabilized"
+    | "failure"
+    | "critical_failure"
+    | "dead";
+  deathSavesAfter?: { successes: number; failures: number; stable: boolean };
+  hpAfter?: number;
+  seq?: number;
+}
+
+export interface HealToolInput {
+  sceneId: string;
+  actorId: string;
+  targetId: string;
+  source: "potion" | "medicine_stabilize" | "feature";
+  itemId?: string;
+  diceExpression?: string;
+  reason: string;
+}
+
+export interface HealToolOutput {
+  ok: boolean;
+  code?: string;
+  messageEs: string;
+  targetId?: string;
+  targetName?: string;
+  source?: "potion" | "medicine_stabilize" | "feature";
+  hpBefore?: number;
+  hpAfter?: number;
+  hpHealed?: number;
+  stabilized?: boolean;
+  itemConsumed?: string;
+  seq?: number;
+}
+
+export type SuggestedActionTone =
+  | "blue"
+  | "crimson"
+  | "violet"
+  | "emerald"
+  | "amber";
+
+export interface SuggestedActionItem {
+  skill: string;
+  tone?: SuggestedActionTone;
+  label: string;
+}
+
+export interface SuggestActionsToolInput {
+  sceneLabel?: string;
+  actions: SuggestedActionItem[];
+}
+
+export interface SuggestActionsToolOutput {
+  ok: boolean;
+  sceneLabel?: string;
+  actions: SuggestedActionItem[];
+}
+
 export type DmToolSetTypes = {
   resolve_check: {
     input: ResolveCheckToolInput;
@@ -389,6 +534,26 @@ export type DmToolSetTypes = {
   remember_fact: {
     input: RememberFactToolInput;
     output: RememberFactToolOutput;
+  };
+  cast_spell: {
+    input: CastSpellToolInput;
+    output: CastSpellToolOutput;
+  };
+  take_rest: {
+    input: TakeRestToolInput;
+    output: TakeRestToolOutput;
+  };
+  death_save: {
+    input: DeathSaveToolInput;
+    output: DeathSaveToolOutput;
+  };
+  heal: {
+    input: HealToolInput;
+    output: HealToolOutput;
+  };
+  suggest_actions: {
+    input: SuggestActionsToolInput;
+    output: SuggestActionsToolOutput;
   };
   ask_user: {
     input: {
