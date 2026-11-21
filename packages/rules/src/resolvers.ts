@@ -1,0 +1,1258 @@
+import { z } from 'zod';
+import {
+  applyDelta,
+  type GameEvent,
+  type GameStateDelta,
+} from './events.js';
+import {
+  combineRollMode,
+  getCheckModifier,
+  getProficiencyBonus,
+  getSavingThrowModifier,
+} from './modifiers.js';
+import {
+  RollModeSchema,
+  rollD20,
+  rollDice,
+  RulesError,
+  type Rng,
+  type RollMode,
+} from './rng.js';
+import {
+  AbilitySchema,
+  CheckTargetSchema,
+  VisibilitySchema,
+  type Character,
+  type GameState,
+  type SceneClue,
+  type Visibility,
+} from './types.js';
+
+export interface ResolverContext {
+  rng: Rng;
+  createId: () => string;
+  now: () => string;
+}
+
+export type ResolverErrorCode =
+  | 'INVALID_INPUT'
+  | 'INVALID_SCENE'
+  | 'UNKNOWN_ACTOR'
+  | 'WRONG_MODE'
+  | 'DC_REQUIRED'
+  | 'FORBIDDEN_TRANSITION'
+  | 'IMPOSSIBLE_DIE'
+  | 'INCOHERENT_TOTAL'
+  | 'INVALID_DICE_EXPRESSION';
+
+type DcResolution =
+  | { ok: true; dc: number; source: 'scene-clue' | 'declared' }
+  | {
+      ok: false;
+      code: 'DC_REQUIRED' | 'INVALID_INPUT';
+      messageEs: string;
+    };
+
+/** Resuelve la CD desde el dato de escena cuando se entrega `dcRef`. */
+function resolveSceneDc(
+  state: GameState,
+  sceneId: string,
+  dcRef: string | undefined,
+  dc: number | undefined,
+): DcResolution {
+  if (dcRef) {
+    const clue = state.scenes[sceneId]?.clues.find((c) => c.id === dcRef);
+    if (!clue) {
+      return {
+        ok: false,
+        code: 'INVALID_INPUT',
+        messageEs: `No existe una pista/DC con id "${dcRef}" en la escena "${sceneId}".`,
+      };
+    }
+    return { ok: true, dc: clue.dc, source: 'scene-clue' };
+  }
+  if (dc === undefined) {
+    return {
+      ok: false,
+      code: 'DC_REQUIRED',
+      messageEs: 'Falta la CD: enviá dcRef con el id de una pista de la escena o un dc numérico.',
+    };
+  }
+  return { ok: true, dc, source: 'declared' };
+}
+
+// ---------- resolve_check ----------
+
+export const ResolveCheckInputSchema = z
+  .object({
+    sceneId: z.string().min(1),
+    actorId: z.string().min(1),
+    skill: CheckTargetSchema,
+    dc: z.number().int().min(1).max(40).optional(),
+    dcRef: z.string().min(1).optional(),
+    mode: RollModeSchema.optional(),
+    visibility: VisibilitySchema.optional(),
+    checkId: z.string().min(1).optional(),
+  })
+  .strict();
+export type ResolveCheckInput = z.infer<typeof ResolveCheckInputSchema>;
+
+export type ResolveCheckResult =
+  | {
+      ok: true;
+      checkId: string;
+      success: boolean;
+      margin: number;
+      total: number;
+      dc: number;
+      naturalRoll: number;
+      modifier: number;
+      effectiveMode: RollMode;
+      rolls: number[];
+      event: GameEvent;
+      nextState: GameState;
+    }
+  | {
+      ok: false;
+      code:
+        | 'INVALID_INPUT'
+        | 'INVALID_SCENE'
+        | 'UNKNOWN_ACTOR'
+        | 'WRONG_MODE'
+        | 'DC_REQUIRED';
+      messageEs: string;
+    };
+
+export function resolveCheck(
+  state: GameState,
+  rawInput: unknown,
+  ctx: ResolverContext,
+): ResolveCheckResult {
+  const parsed = ResolveCheckInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      messageEs: `Parámetros inválidos en resolve_check: ${parsed.error.issues[0]?.message ?? 'formato incorrecto'}.`,
+    };
+  }
+
+  const input = parsed.data;
+  if (input.sceneId !== state.sceneId || !state.scenes[input.sceneId]) {
+    return {
+      ok: false,
+      code: 'INVALID_SCENE',
+      messageEs: `La escena "${input.sceneId}" no coincide con la escena activa ("${state.sceneId}").`,
+    };
+  }
+
+  const actor = state.characters[input.actorId];
+  if (!actor) {
+    return {
+      ok: false,
+      code: 'UNKNOWN_ACTOR',
+      messageEs: `No existe el personaje "${input.actorId}" en el estado actual.`,
+    };
+  }
+
+  if (actor.rollAuthority === 'player-declared') {
+    return {
+      ok: false,
+      code: 'WRONG_MODE',
+      messageEs: `El personaje "${actor.id}" declara sus tiradas en modo híbrido: usá declare_check en lugar de resolve_check.`,
+    };
+  }
+
+  const resolvedDc = resolveSceneDc(
+    state,
+    input.sceneId,
+    input.dcRef,
+    input.dc,
+  );
+  if (!resolvedDc.ok) {
+    return { ok: false, code: resolvedDc.code, messageEs: resolvedDc.messageEs };
+  }
+
+  const modBreakdown = getCheckModifier(actor, input.skill, state.ruleset);
+  const effectiveMode = combineRollMode(
+    input.mode ?? 'normal',
+    modBreakdown.imposesDisadvantage,
+  );
+  const roll = rollD20(ctx.rng, effectiveMode);
+  const total = roll.chosen + modBreakdown.totalMod;
+  const success = total >= resolvedDc.dc;
+  const margin = total - resolvedDc.dc;
+  const checkId = input.checkId ?? ctx.createId();
+  const nextSeq = state.lastSeq + 1;
+
+  const stateDelta: GameStateDelta = {
+    flagsSet: {
+      [`check:${checkId}:success`]: success,
+    },
+  };
+
+  const event: GameEvent = {
+    id: ctx.createId(),
+    campaignId: state.campaignId,
+    sessionId: state.sessionId,
+    seq: nextSeq,
+    type: 'CHECK_RESOLVED',
+    source: 'engine',
+    visibility: input.visibility ?? 'public',
+    actor: actor.id,
+    checkId,
+    declaredTotal: null,
+    dieResults: roll.rolls,
+    payload: {
+      sceneId: input.sceneId,
+      skill: input.skill,
+      dc: resolvedDc.dc,
+      dcRef: input.dcRef ?? null,
+      dcSource: resolvedDc.source,
+      dcDeclaredByModel: input.dc ?? null,
+      mode: effectiveMode,
+      modifier: modBreakdown.totalMod,
+      total,
+      success,
+      margin,
+    },
+    stateDelta,
+    revertedByEventId: null,
+    createdAt: ctx.now(),
+  };
+
+  const nextState = applyDelta(state, stateDelta, nextSeq);
+
+  return {
+    ok: true,
+    checkId,
+    success,
+    margin,
+    total,
+    dc: resolvedDc.dc,
+    naturalRoll: roll.chosen,
+    modifier: modBreakdown.totalMod,
+    effectiveMode,
+    rolls: roll.rolls,
+    event,
+    nextState,
+  };
+}
+
+// ---------- resolve_save ----------
+
+export const ResolveSaveInputSchema = z
+  .object({
+    sceneId: z.string().min(1),
+    actorId: z.string().min(1),
+    ability: AbilitySchema,
+    dc: z.number().int().min(1).max(40).optional(),
+    dcRef: z.string().min(1).optional(),
+    mode: RollModeSchema.optional(),
+    visibility: VisibilitySchema.optional(),
+    checkId: z.string().min(1).optional(),
+  })
+  .strict();
+export type ResolveSaveInput = z.infer<typeof ResolveSaveInputSchema>;
+
+export type ResolveSaveResult =
+  | {
+      ok: true;
+      checkId: string;
+      success: boolean;
+      margin: number;
+      total: number;
+      dc: number;
+      naturalRoll: number;
+      modifier: number;
+      rolls: number[];
+      event: GameEvent;
+      nextState: GameState;
+    }
+  | {
+      ok: false;
+      code:
+        | 'INVALID_INPUT'
+        | 'INVALID_SCENE'
+        | 'UNKNOWN_ACTOR'
+        | 'WRONG_MODE'
+        | 'DC_REQUIRED';
+      messageEs: string;
+    };
+
+export function resolveSave(
+  state: GameState,
+  rawInput: unknown,
+  ctx: ResolverContext,
+): ResolveSaveResult {
+  const parsed = ResolveSaveInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      messageEs: `Parámetros inválidos en resolve_save: ${parsed.error.issues[0]?.message ?? 'formato incorrecto'}.`,
+    };
+  }
+
+  const input = parsed.data;
+  if (input.sceneId !== state.sceneId || !state.scenes[input.sceneId]) {
+    return {
+      ok: false,
+      code: 'INVALID_SCENE',
+      messageEs: `La escena "${input.sceneId}" no coincide con la escena activa ("${state.sceneId}").`,
+    };
+  }
+
+  const actor = state.characters[input.actorId];
+  if (!actor) {
+    return {
+      ok: false,
+      code: 'UNKNOWN_ACTOR',
+      messageEs: `No existe el personaje "${input.actorId}" en el estado actual.`,
+    };
+  }
+
+  if (actor.rollAuthority === 'player-declared') {
+    return {
+      ok: false,
+      code: 'WRONG_MODE',
+      messageEs: `El personaje "${actor.id}" declara sus tiradas en modo híbrido: usá declare_check en lugar de resolve_save.`,
+    };
+  }
+
+  const resolvedDc = resolveSceneDc(
+    state,
+    input.sceneId,
+    input.dcRef,
+    input.dc,
+  );
+  if (!resolvedDc.ok) {
+    return { ok: false, code: resolvedDc.code, messageEs: resolvedDc.messageEs };
+  }
+
+  const saveBreakdown = getSavingThrowModifier(
+    actor,
+    input.ability,
+    state.ruleset,
+  );
+  const mode = input.mode ?? 'normal';
+  const roll = rollD20(ctx.rng, mode);
+  const total = roll.chosen + saveBreakdown.totalMod;
+  const success = total >= resolvedDc.dc;
+  const margin = total - resolvedDc.dc;
+  const checkId = input.checkId ?? ctx.createId();
+  const nextSeq = state.lastSeq + 1;
+
+  const stateDelta: GameStateDelta = {
+    flagsSet: {
+      [`save:${checkId}:success`]: success,
+    },
+  };
+
+  const event: GameEvent = {
+    id: ctx.createId(),
+    campaignId: state.campaignId,
+    sessionId: state.sessionId,
+    seq: nextSeq,
+    type: 'SAVE_RESOLVED',
+    source: 'engine',
+    visibility: input.visibility ?? 'public',
+    actor: actor.id,
+    checkId,
+    declaredTotal: null,
+    dieResults: roll.rolls,
+    payload: {
+      sceneId: input.sceneId,
+      ability: input.ability,
+      dc: resolvedDc.dc,
+      dcRef: input.dcRef ?? null,
+      dcSource: resolvedDc.source,
+      dcDeclaredByModel: input.dc ?? null,
+      mode,
+      modifier: saveBreakdown.totalMod,
+      total,
+      success,
+      margin,
+    },
+    stateDelta,
+    revertedByEventId: null,
+    createdAt: ctx.now(),
+  };
+
+  const nextState = applyDelta(state, stateDelta, nextSeq);
+
+  return {
+    ok: true,
+    checkId,
+    success,
+    margin,
+    total,
+    dc: resolvedDc.dc,
+    naturalRoll: roll.chosen,
+    modifier: saveBreakdown.totalMod,
+    rolls: roll.rolls,
+    event,
+    nextState,
+  };
+}
+
+// ---------- declare_check ----------
+
+export const DeclareCheckInputSchema = z
+  .object({
+    sceneId: z.string().min(1),
+    actorId: z.string().min(1),
+    skill: CheckTargetSchema,
+    dc: z.number().int().min(1).max(40).optional(),
+    dcRef: z.string().min(1).optional(),
+    declaredTotal: z.number().int().optional(),
+    dieResults: z.array(z.number().int().min(1).max(20)).min(1).max(2),
+    mode: RollModeSchema.optional(),
+    visibility: VisibilitySchema.optional(),
+    checkId: z.string().min(1).optional(),
+  })
+  .strict();
+export type DeclareCheckInput = z.infer<typeof DeclareCheckInputSchema>;
+
+// Loose structural pre-parser so out-of-range dice produce structured IMPOSSIBLE_DIE errors.
+const DeclareCheckShapeSchema = z
+  .object({
+    sceneId: z.string().min(1),
+    actorId: z.string().min(1),
+    skill: CheckTargetSchema,
+    dc: z.number().int().min(1).max(40).optional(),
+    dcRef: z.string().min(1).optional(),
+    declaredTotal: z.number().int().optional(),
+    dieResults: z.array(z.number()),
+    mode: RollModeSchema.optional(),
+    visibility: VisibilitySchema.optional(),
+    checkId: z.string().min(1).optional(),
+  })
+  .strict();
+
+export type DeclareCheckResult =
+  | {
+      ok: true;
+      checkId: string;
+      success: boolean;
+      margin: number;
+      total: number;
+      dc: number;
+      declaredTotal: number;
+      naturalRoll: number;
+      expectedModifier: number;
+      stateDelta: GameStateDelta;
+      event: GameEvent;
+      nextState: GameState;
+    }
+  | {
+      ok: false;
+      code:
+        | 'IMPOSSIBLE_DIE'
+        | 'INCOHERENT_TOTAL'
+        | 'UNKNOWN_ACTOR'
+        | 'INVALID_SCENE'
+        | 'INVALID_INPUT'
+        | 'WRONG_MODE'
+        | 'DC_REQUIRED';
+      messageEs: string;
+      expectedRange: { min: number; max: number };
+    };
+
+function pickNaturalRoll(dieResults: readonly number[], mode: RollMode): number {
+  const first = dieResults[0] ?? 1;
+  if (mode === 'normal' || dieResults.length === 1) {
+    return first;
+  }
+  const second = dieResults[1] ?? first;
+  return mode === 'advantage' ? Math.max(first, second) : Math.min(first, second);
+}
+
+function validatePaperPlayerTotal(
+  actor: Character,
+  naturalRoll: number,
+  declaredTotal: number,
+): { valid: boolean; expectedRange: { min: number; max: number } } {
+  const pb = getProficiencyBonus(actor.level);
+  const minMod = -5;
+  const maxMod = 10 + 2 * pb;
+  const expectedRange = {
+    min: naturalRoll + minMod,
+    max: naturalRoll + maxMod,
+  };
+  return {
+    valid: declaredTotal >= expectedRange.min && declaredTotal <= expectedRange.max,
+    expectedRange,
+  };
+}
+
+export function declareCheck(
+  state: GameState,
+  rawInput: unknown,
+  ctx: ResolverContext,
+): DeclareCheckResult {
+  const shape = DeclareCheckShapeSchema.safeParse(rawInput);
+  if (!shape.success) {
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      messageEs: `Entrada inválida en declare_check: ${shape.error.issues[0]?.message ?? 'formato incorrecto'}.`,
+      expectedRange: { min: 1, max: 20 },
+    };
+  }
+
+  const input = shape.data;
+  if (input.sceneId !== state.sceneId || !state.scenes[input.sceneId]) {
+    return {
+      ok: false,
+      code: 'INVALID_SCENE',
+      messageEs: `La escena "${input.sceneId}" no coincide con la escena activa ("${state.sceneId}").`,
+      expectedRange: { min: 1, max: 20 },
+    };
+  }
+
+  const actor = state.characters[input.actorId];
+  if (!actor) {
+    return {
+      ok: false,
+      code: 'UNKNOWN_ACTOR',
+      messageEs: `No existe el personaje "${input.actorId}" en el estado actual.`,
+      expectedRange: { min: 1, max: 20 },
+    };
+  }
+
+  if (actor.rollAuthority === 'engine-rolled') {
+    return {
+      ok: false,
+      code: 'WRONG_MODE',
+      messageEs: `El personaje "${actor.id}" usa tiradas del motor: usá resolve_check en lugar de declare_check.`,
+      expectedRange: { min: 1, max: 20 },
+    };
+  }
+
+  const resolvedDc = resolveSceneDc(
+    state,
+    input.sceneId,
+    input.dcRef,
+    input.dc,
+  );
+  if (!resolvedDc.ok) {
+    return {
+      ok: false,
+      code: resolvedDc.code,
+      messageEs: resolvedDc.messageEs,
+      expectedRange: { min: 1, max: 20 },
+    };
+  }
+
+  const modBreakdown = getCheckModifier(actor, input.skill, state.ruleset);
+  const effectiveMode = combineRollMode(
+    input.mode ?? 'normal',
+    modBreakdown.imposesDisadvantage,
+  );
+  const expectedDieCount = effectiveMode === 'normal' ? 1 : 2;
+
+  if (input.dieResults.length !== expectedDieCount) {
+    return {
+      ok: false,
+      code: 'IMPOSSIBLE_DIE',
+      messageEs: `Se esperaban ${expectedDieCount} dado(s) para el modo "${effectiveMode}", pero se recibieron ${input.dieResults.length}. Corregí la tirada.`,
+      expectedRange: { min: 1, max: 20 },
+    };
+  }
+
+  for (const die of input.dieResults) {
+    if (!Number.isInteger(die) || die < 1 || die > 20) {
+      return {
+        ok: false,
+        code: 'IMPOSSIBLE_DIE',
+        messageEs: `Valor de d20 imposible (${die}). Cada dado debe estar entre 1 y 20. Corregí la tirada.`,
+        expectedRange: { min: 1, max: 20 },
+      };
+    }
+  }
+
+  const naturalRoll = pickNaturalRoll(input.dieResults, effectiveMode);
+  const sheetAuthority = actor.authority.skills;
+
+  let resolvedTotal: number;
+  if (input.declaredTotal === undefined) {
+    resolvedTotal = naturalRoll + modBreakdown.totalMod;
+  } else if (sheetAuthority === 'player') {
+    const check = validatePaperPlayerTotal(
+      actor,
+      naturalRoll,
+      input.declaredTotal,
+    );
+    if (!check.valid) {
+      return {
+        ok: false,
+        code: 'INCOHERENT_TOTAL',
+        messageEs: `El total declarado (${input.declaredTotal}) es físicamente incoherente con el dado (${naturalRoll}) para nivel ${actor.level}. Esperado entre ${check.expectedRange.min} y ${check.expectedRange.max}. Corregilo antes de continuar.`,
+        expectedRange: check.expectedRange,
+      };
+    }
+    resolvedTotal = input.declaredTotal;
+  } else {
+    const expectedTotal = naturalRoll + modBreakdown.totalMod;
+    const expectedRange = {
+      min: 1 + modBreakdown.totalMod,
+      max: 20 + modBreakdown.totalMod,
+    };
+    if (input.declaredTotal !== expectedTotal) {
+      return {
+        ok: false,
+        code: 'INCOHERENT_TOTAL',
+        messageEs: `Total incoherente: declaraste ${input.declaredTotal}, pero ${naturalRoll} + (${modBreakdown.totalMod >= 0 ? '+' : ''}${modBreakdown.totalMod}) = ${expectedTotal}. Corregí el total.`,
+        expectedRange,
+      };
+    }
+    resolvedTotal = input.declaredTotal;
+  }
+
+  const success = resolvedTotal >= resolvedDc.dc;
+  const margin = resolvedTotal - resolvedDc.dc;
+  const checkId = input.checkId ?? ctx.createId();
+  const nextSeq = state.lastSeq + 1;
+
+  const stateDelta: GameStateDelta = {
+    flagsSet: {
+      [`check:${checkId}:success`]: success,
+    },
+  };
+
+  const event: GameEvent = {
+    id: ctx.createId(),
+    campaignId: state.campaignId,
+    sessionId: state.sessionId,
+    seq: nextSeq,
+    type: 'CHECK_RESOLVED',
+    source: 'player-declared',
+    visibility: input.visibility ?? 'public',
+    actor: actor.id,
+    checkId,
+    declaredTotal: resolvedTotal,
+    dieResults: [...input.dieResults],
+    payload: {
+      sceneId: input.sceneId,
+      skill: input.skill,
+      dc: resolvedDc.dc,
+      dcRef: input.dcRef ?? null,
+      dcSource: resolvedDc.source,
+      dcDeclaredByModel: input.dc ?? null,
+      mode: effectiveMode,
+      expectedModifier: modBreakdown.totalMod,
+      total: resolvedTotal,
+      success,
+      margin,
+    },
+    stateDelta,
+    revertedByEventId: null,
+    createdAt: ctx.now(),
+  };
+
+  const nextState = applyDelta(state, stateDelta, nextSeq);
+
+  return {
+    ok: true,
+    checkId,
+    success,
+    margin,
+    total: resolvedTotal,
+    dc: resolvedDc.dc,
+    declaredTotal: resolvedTotal,
+    naturalRoll,
+    expectedModifier: modBreakdown.totalMod,
+    stateDelta,
+    event,
+    nextState,
+  };
+}
+
+// ---------- resolve_investigate ----------
+
+export const ResolveInvestigateInputSchema = z
+  .object({
+    sceneId: z.string().min(1),
+    actorId: z.string().min(1),
+    skill: z.enum(['investigation', 'perception']).optional(),
+    mode: RollModeSchema.optional(),
+    declared: z
+      .object({
+        declaredTotal: z.number().int().optional(),
+        dieResults: z.array(z.number()),
+      })
+      .strict()
+      .optional(),
+    visibility: VisibilitySchema.optional(),
+    checkId: z.string().min(1).optional(),
+  })
+  .strict();
+export type ResolveInvestigateInput = z.infer<
+  typeof ResolveInvestigateInputSchema
+>;
+
+export type ResolveInvestigateResult =
+  | {
+      ok: true;
+      checkId: string;
+      total: number;
+      naturalRoll: number;
+      modifier: number;
+      unlockedClues: SceneClue[];
+      allUnlockedClueIds: string[];
+      event: GameEvent;
+      nextState: GameState;
+    }
+  | {
+      ok: false;
+      code:
+        | 'INVALID_INPUT'
+        | 'INVALID_SCENE'
+        | 'UNKNOWN_ACTOR'
+        | 'IMPOSSIBLE_DIE'
+        | 'INCOHERENT_TOTAL'
+        | 'WRONG_MODE'
+        | 'DC_REQUIRED';
+      messageEs: string;
+      expectedRange?: { min: number; max: number };
+    };
+
+export function resolveInvestigate(
+  state: GameState,
+  rawInput: unknown,
+  ctx: ResolverContext,
+): ResolveInvestigateResult {
+  const parsed = ResolveInvestigateInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      messageEs: `Parámetros inválidos en investigate: ${parsed.error.issues[0]?.message ?? 'formato incorrecto'}.`,
+    };
+  }
+
+  const input = parsed.data;
+  const scene = state.scenes[input.sceneId];
+  if (input.sceneId !== state.sceneId || !scene) {
+    return {
+      ok: false,
+      code: 'INVALID_SCENE',
+      messageEs: `La escena "${input.sceneId}" no coincide con la escena activa ("${state.sceneId}").`,
+    };
+  }
+
+  const actor = state.characters[input.actorId];
+  if (!actor) {
+    return {
+      ok: false,
+      code: 'UNKNOWN_ACTOR',
+      messageEs: `No existe el personaje "${input.actorId}" en el estado actual.`,
+    };
+  }
+
+  const skill = input.skill ?? 'investigation';
+  const checkId = input.checkId ?? ctx.createId();
+  let total: number;
+  let naturalRoll: number;
+  let modifier: number;
+  let dieResults: number[];
+  let source: 'engine' | 'player-declared';
+  let declaredTotal: number | null;
+
+  if (input.declared) {
+    const lowestDc = scene.clues.reduce(
+      (min, clue) => (clue.dc < min ? clue.dc : min),
+      12,
+    );
+    const declResult = declareCheck(
+      state,
+      {
+        sceneId: input.sceneId,
+        actorId: input.actorId,
+        skill,
+        dc: lowestDc,
+        ...(input.declared.declaredTotal !== undefined
+          ? { declaredTotal: input.declared.declaredTotal }
+          : {}),
+        dieResults: input.declared.dieResults,
+        ...(input.mode ? { mode: input.mode } : {}),
+        ...(input.visibility ? { visibility: input.visibility } : {}),
+        checkId,
+      },
+      ctx,
+    );
+    if (!declResult.ok) {
+      return {
+        ok: false,
+        code: declResult.code,
+        messageEs: declResult.messageEs,
+        expectedRange: declResult.expectedRange,
+      };
+    }
+
+    total = declResult.total;
+    naturalRoll = declResult.naturalRoll;
+    modifier = declResult.expectedModifier;
+    dieResults = [...input.declared.dieResults];
+    source = 'player-declared';
+    declaredTotal = declResult.declaredTotal;
+  } else {
+    const modBreakdown = getCheckModifier(actor, skill, state.ruleset);
+    const effectiveMode = combineRollMode(
+      input.mode ?? 'normal',
+      modBreakdown.imposesDisadvantage,
+    );
+    const roll = rollD20(ctx.rng, effectiveMode);
+    total = roll.chosen + modBreakdown.totalMod;
+    naturalRoll = roll.chosen;
+    modifier = modBreakdown.totalMod;
+    dieResults = roll.rolls;
+    source = 'engine';
+    declaredTotal = null;
+  }
+
+  const alreadyUnlocked = new Set(state.unlockedClues[input.sceneId] ?? []);
+  const newlyUnlocked = scene.clues.filter(
+    (clue) => clue.dc <= total && !alreadyUnlocked.has(clue.id),
+  );
+  const nextSeq = state.lastSeq + 1;
+
+  const stateDelta: GameStateDelta = {
+    cluesUnlocked: newlyUnlocked.map((c) => c.id),
+  };
+
+  const event: GameEvent = {
+    id: ctx.createId(),
+    campaignId: state.campaignId,
+    sessionId: state.sessionId,
+    seq: nextSeq,
+    type: 'CLUES_UNLOCKED',
+    source,
+    visibility: input.visibility ?? 'public',
+    actor: actor.id,
+    checkId,
+    declaredTotal,
+    dieResults,
+    payload: {
+      sceneId: input.sceneId,
+      skill,
+      total,
+      newlyUnlockedIds: newlyUnlocked.map((c) => c.id),
+    },
+    stateDelta,
+    revertedByEventId: null,
+    createdAt: ctx.now(),
+  };
+
+  const nextState = applyDelta(state, stateDelta, nextSeq);
+
+  return {
+    ok: true,
+    checkId,
+    total,
+    naturalRoll,
+    modifier,
+    unlockedClues: newlyUnlocked,
+    allUnlockedClueIds: nextState.unlockedClues[input.sceneId] ?? [],
+    event,
+    nextState,
+  };
+}
+
+// ---------- transition_scene ----------
+
+export const TransitionSceneInputSchema = z
+  .object({
+    targetSceneId: z.string().min(1),
+    actorId: z.string().min(1).optional(),
+    reason: z.string().min(1),
+    visibility: VisibilitySchema.optional(),
+  })
+  .strict();
+export type TransitionSceneInput = z.infer<typeof TransitionSceneInputSchema>;
+
+export type TransitionSceneResult =
+  | {
+      ok: true;
+      fromSceneId: string;
+      toSceneId: string;
+      event: GameEvent;
+      nextState: GameState;
+    }
+  | {
+      ok: false;
+      code: 'INVALID_INPUT' | 'INVALID_SCENE' | 'FORBIDDEN_TRANSITION' | 'MISSING_PRECONDITION';
+      messageEs: string;
+    };
+
+export function transitionScene(
+  state: GameState,
+  rawInput: unknown,
+  ctx: ResolverContext,
+): TransitionSceneResult {
+  const parsed = TransitionSceneInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      messageEs: `Parámetros inválidos en transition_scene: ${parsed.error.issues[0]?.message ?? 'formato incorrecto'}.`,
+    };
+  }
+
+  const input = parsed.data;
+  const currentScene = state.scenes[state.sceneId];
+  const targetScene = state.scenes[input.targetSceneId];
+
+  if (!currentScene || !targetScene) {
+    return {
+      ok: false,
+      code: 'INVALID_SCENE',
+      messageEs: `Escena destino desconocida: "${input.targetSceneId}".`,
+    };
+  }
+
+  if (!currentScene.allowedTransitions.includes(input.targetSceneId)) {
+    return {
+      ok: false,
+      code: 'FORBIDDEN_TRANSITION',
+      messageEs: `Transición no permitida desde "${state.sceneId}" hacia "${input.targetSceneId}".`,
+    };
+  }
+
+  const requirement =
+    currentScene.transitionRequirements?.[
+      `${state.sceneId}>${input.targetSceneId}`
+    ];
+  if (requirement) {
+    const unlockedClues = new Set(state.unlockedClues[state.sceneId] ?? []);
+    const missingClues = (requirement.requiredClues ?? []).filter(
+      (clueId) => !unlockedClues.has(clueId),
+    );
+    const missingFlags = (requirement.requiredFlags ?? []).filter(
+      (flag) => !state.flags[flag],
+    );
+    if (missingClues.length > 0 || missingFlags.length > 0) {
+      const missing = [
+        ...missingClues.map((clueId) => `pista "${clueId}"`),
+        ...missingFlags.map((flag) => `flag "${flag}"`),
+      ];
+      return {
+        ok: false,
+        code: 'MISSING_PRECONDITION',
+        messageEs: `Faltan requisitos para avanzar a "${input.targetSceneId}": ${missing.join(', ')}. Usá investigate en la escena actual para desbloquearlos.`,
+      };
+    }
+  }
+
+  const nextSeq = state.lastSeq + 1;
+  const stateDelta: GameStateDelta = {
+    sceneId: input.targetSceneId,
+  };
+
+  const event: GameEvent = {
+    id: ctx.createId(),
+    campaignId: state.campaignId,
+    sessionId: state.sessionId,
+    seq: nextSeq,
+    type: 'SCENE_TRANSITION',
+    source: 'engine',
+    visibility: input.visibility ?? 'public',
+    actor: input.actorId ?? 'system',
+    checkId: null,
+    declaredTotal: null,
+    dieResults: null,
+    payload: {
+      fromSceneId: state.sceneId,
+      toSceneId: input.targetSceneId,
+      reason: input.reason,
+    },
+    stateDelta,
+    revertedByEventId: null,
+    createdAt: ctx.now(),
+  };
+
+  const nextState = applyDelta(state, stateDelta, nextSeq);
+
+  return {
+    ok: true,
+    fromSceneId: state.sceneId,
+    toSceneId: input.targetSceneId,
+    event,
+    nextState,
+  };
+}
+
+// ---------- resolve_damage_roll ----------
+
+export const ResolveDamageRollInputSchema = z
+  .object({
+    sceneId: z.string().min(1),
+    sourceActorId: z.string().min(1),
+    targetActorId: z.string().min(1),
+    diceExpression: z.string().min(1),
+    visibility: VisibilitySchema.optional(),
+  })
+  .strict();
+export type ResolveDamageRollInput = z.infer<
+  typeof ResolveDamageRollInputSchema
+>;
+
+export type ResolveDamageRollResult =
+  | {
+      ok: true;
+      damageRolled: number;
+      rolls: number[];
+      hpBefore: number;
+      hpAfter: number;
+      event: GameEvent;
+      nextState: GameState;
+    }
+  | {
+      ok: false;
+      code:
+        | 'INVALID_INPUT'
+        | 'INVALID_SCENE'
+        | 'UNKNOWN_ACTOR'
+        | 'INVALID_DICE_EXPRESSION';
+      messageEs: string;
+    };
+
+export function resolveDamageRoll(
+  state: GameState,
+  rawInput: unknown,
+  ctx: ResolverContext,
+): ResolveDamageRollResult {
+  const parsed = ResolveDamageRollInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      messageEs: `Parámetros inválidos en resolve_damage_roll: ${parsed.error.issues[0]?.message ?? 'formato incorrecto'}.`,
+    };
+  }
+
+  const input = parsed.data;
+  if (input.sceneId !== state.sceneId || !state.scenes[input.sceneId]) {
+    return {
+      ok: false,
+      code: 'INVALID_SCENE',
+      messageEs: `La escena "${input.sceneId}" no coincide con la escena activa ("${state.sceneId}").`,
+    };
+  }
+
+  const target = state.characters[input.targetActorId];
+  if (!target) {
+    return {
+      ok: false,
+      code: 'UNKNOWN_ACTOR',
+      messageEs: `No existe el objetivo "${input.targetActorId}" en el estado actual.`,
+    };
+  }
+
+  let rollResult;
+  try {
+    rollResult = rollDice(input.diceExpression, ctx.rng);
+  } catch (err) {
+    if (err instanceof RulesError) {
+      return {
+        ok: false,
+        code: 'INVALID_DICE_EXPRESSION',
+        messageEs: err.message,
+      };
+    }
+    throw err;
+  }
+
+  const damageRolled = Math.max(0, rollResult.total);
+  const absorbedByTemp = Math.min(target.hp.temp, damageRolled);
+  const remainingDamage = damageRolled - absorbedByTemp;
+  const hpBefore = target.hp.current;
+  const hpAfter = Math.max(0, hpBefore - remainingDamage);
+  const nextSeq = state.lastSeq + 1;
+
+  const stateDelta: GameStateDelta = {
+    hpChanges: [
+      {
+        actorId: target.id,
+        before: hpBefore,
+        after: hpAfter,
+      },
+    ],
+    ...(absorbedByTemp > 0
+      ? {
+          tempHpChanges: [
+            {
+              actorId: target.id,
+              before: target.hp.temp,
+              after: Math.max(0, target.hp.temp - absorbedByTemp),
+            },
+          ],
+        }
+      : {}),
+  };
+
+  const event: GameEvent = {
+    id: ctx.createId(),
+    campaignId: state.campaignId,
+    sessionId: state.sessionId,
+    seq: nextSeq,
+    type: 'DAMAGE_APPLIED',
+    source: 'engine',
+    visibility: input.visibility ?? 'public',
+    actor: input.sourceActorId,
+    checkId: null,
+    declaredTotal: null,
+    dieResults: null,
+    payload: {
+      sceneId: input.sceneId,
+      sourceActorId: input.sourceActorId,
+      targetActorId: target.id,
+      diceExpression: input.diceExpression,
+      rolls: rollResult.rolls,
+      damageRolled,
+      absorbedByTemp,
+    },
+    stateDelta,
+    revertedByEventId: null,
+    createdAt: ctx.now(),
+  };
+
+  const nextState = applyDelta(state, stateDelta, nextSeq);
+
+  return {
+    ok: true,
+    damageRolled,
+    rolls: rollResult.rolls,
+    hpBefore,
+    hpAfter,
+    event,
+    nextState,
+  };
+}
+
+// ---------- resolve_inventory_change ----------
+
+export const ResolveInventoryChangeInputSchema = z
+  .object({
+    sceneId: z.string().min(1),
+    actorId: z.string().min(1),
+    itemId: z.string().min(1),
+    itemName: z.string().min(1).optional(),
+    qtyDelta: z
+      .number()
+      .int()
+      .min(-99)
+      .max(99)
+      .refine((v) => v !== 0, 'qtyDelta no puede ser 0.'),
+    reason: z.string().min(1),
+    visibility: VisibilitySchema.optional(),
+  })
+  .strict();
+export type ResolveInventoryChangeInput = z.infer<
+  typeof ResolveInventoryChangeInputSchema
+>;
+
+export type ResolveInventoryChangeResult =
+  | {
+      ok: true;
+      itemId: string;
+      itemName: string;
+      quantityBefore: number;
+      quantityAfter: number;
+      event: GameEvent;
+      nextState: GameState;
+    }
+  | {
+      ok: false;
+      code: 'INVALID_INPUT' | 'INVALID_SCENE' | 'UNKNOWN_ACTOR';
+      messageEs: string;
+    };
+
+export function resolveInventoryChange(
+  state: GameState,
+  rawInput: unknown,
+  ctx: ResolverContext,
+): ResolveInventoryChangeResult {
+  const parsed = ResolveInventoryChangeInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      messageEs: `Parámetros inválidos en inventory: ${parsed.error.issues[0]?.message ?? 'formato incorrecto'}.`,
+    };
+  }
+
+  const input = parsed.data;
+  if (input.sceneId !== state.sceneId || !state.scenes[input.sceneId]) {
+    return {
+      ok: false,
+      code: 'INVALID_SCENE',
+      messageEs: `La escena "${input.sceneId}" no coincide con la escena activa ("${state.sceneId}").`,
+    };
+  }
+
+  const actor = state.characters[input.actorId];
+  if (!actor) {
+    return {
+      ok: false,
+      code: 'UNKNOWN_ACTOR',
+      messageEs: `No existe el personaje "${input.actorId}" en el estado actual.`,
+    };
+  }
+
+  const existing = actor.inventory.find((i) => i.itemId === input.itemId);
+  const quantityBefore = existing?.quantity ?? 0;
+  const quantityAfter = Math.max(0, quantityBefore + input.qtyDelta);
+  const resolvedName = existing?.name ?? input.itemName ?? input.itemId;
+  const nextSeq = state.lastSeq + 1;
+
+  const stateDelta: GameStateDelta = {
+    inventoryDelta: [
+      {
+        actorId: actor.id,
+        itemId: input.itemId,
+        ...(input.itemName ? { name: input.itemName } : {}),
+        qtyDelta: input.qtyDelta,
+      },
+    ],
+  };
+
+  const event: GameEvent = {
+    id: ctx.createId(),
+    campaignId: state.campaignId,
+    sessionId: state.sessionId,
+    seq: nextSeq,
+    type: 'INVENTORY_CHANGED',
+    source: 'engine',
+    visibility: input.visibility ?? 'public',
+    actor: actor.id,
+    checkId: null,
+    declaredTotal: null,
+    dieResults: null,
+    payload: {
+      sceneId: input.sceneId,
+      itemId: input.itemId,
+      itemName: resolvedName,
+      qtyDelta: input.qtyDelta,
+      quantityBefore,
+      quantityAfter,
+      reason: input.reason,
+    },
+    stateDelta,
+    revertedByEventId: null,
+    createdAt: ctx.now(),
+  };
+
+  const nextState = applyDelta(state, stateDelta, nextSeq);
+
+  return {
+    ok: true,
+    itemId: input.itemId,
+    itemName: resolvedName,
+    quantityBefore,
+    quantityAfter,
+    event,
+    nextState,
+  };
+}

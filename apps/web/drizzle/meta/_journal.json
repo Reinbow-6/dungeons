@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1795050858912,
+      "tag": "0000_graceful_grim_reaper",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795128000000,
+      "tag": "0001_message_event_seq",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795150127338,
+      "tag": "0002_known_mantis",
+      "breakpoints": true
+    }
+  ]
+}
