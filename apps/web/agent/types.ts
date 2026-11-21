@@ -7,6 +7,7 @@ export interface ResolveCheckToolInput {
   dc?: number;
   dcRef?: string;
   mode?: "normal" | "advantage" | "disadvantage";
+  requiresSight?: boolean;
 }
 
 export interface ResolveCheckToolOutput {
@@ -17,6 +18,7 @@ export interface ResolveCheckToolOutput {
   skill?: string;
   dc?: number;
   dcRef?: string;
+  autoFailed?: boolean;
   rolls?: number[];
   naturalRoll?: number;
   modifier?: number;
@@ -43,6 +45,7 @@ export interface ResolveSaveToolOutput {
   ability?: string;
   dc?: number;
   dcRef?: string;
+  autoFailed?: boolean;
   rolls?: number[];
   naturalRoll?: number;
   modifier?: number;
@@ -240,14 +243,58 @@ export interface CombatAttackToolOutput {
   damageExpressionUsed?: string | null;
   damageRolls?: number[];
   rawDamage?: number;
-  damageRelation?: "normal" | "vulnerable" | "immune";
+  damageRelation?: "normal" | "resistant" | "vulnerable" | "immune";
   damageApplied?: number;
   targetHpBefore?: number;
   targetHpAfter?: number;
   targetDefeated?: boolean;
   allEnemiesDefeated?: boolean;
   allPcsDefeated?: boolean;
+  concentrationCheck?: {
+    spell: string;
+    dc: number;
+    naturalRoll: number | null;
+    modifier: number;
+    total: number | null;
+    maintained: boolean;
+  };
   seq?: number;
+}
+
+export interface ApplyConditionToolInput {
+  sceneId: string;
+  actorId: string;
+  addConditions?: string[];
+  removeConditions?: string[];
+  exhaustionDelta?: number;
+  concentratingOn?: string | null;
+  reason: string;
+}
+
+export interface ApplyConditionToolOutput {
+  ok: boolean;
+  code?: string;
+  messageEs: string;
+  actorId?: string;
+  conditionsAfter?: string[];
+  exhaustionLevelAfter?: number;
+  concentratingOnAfter?: string | null;
+  seq?: number;
+}
+
+export interface RememberFactToolInput {
+  category: "npc" | "promise" | "milestone" | "scene" | "item";
+  content: string;
+  importance?: number;
+}
+
+export interface RememberFactToolOutput {
+  ok: boolean;
+  messageEs: string;
+  category?: string;
+  content?: string;
+  importance?: number;
+  eventSeq?: number;
 }
 
 export interface CombatNextTurnToolInput {
@@ -334,6 +381,14 @@ export type DmToolSetTypes = {
   combat_end: {
     input: CombatEndToolInput;
     output: CombatEndToolOutput;
+  };
+  apply_condition: {
+    input: ApplyConditionToolInput;
+    output: ApplyConditionToolOutput;
+  };
+  remember_fact: {
+    input: RememberFactToolInput;
+    output: RememberFactToolOutput;
   };
   ask_user: {
     input: {

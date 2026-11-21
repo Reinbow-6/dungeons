@@ -15,6 +15,12 @@ import {
   type DmChatUIMessage,
   type DmToolRuntime,
 } from "@/agent/agent";
+import { extractDeterministicFactsFromEvent } from "@/agent/subagents/memory/agent";
+import { compactConversationContext } from "@/lib/ai/context-window";
+import {
+  detectPromptInjectionSignals,
+  wrapUserMessagesForModel,
+} from "@/lib/ai/prompt-safety";
 import {
   ProviderConfigError,
   resolveLanguageModel,
@@ -23,7 +29,7 @@ import { resolveGuestSessionFromRequest } from "@/lib/auth/guest-session";
 import { commitEventWithRetry, performRollback } from "@/lib/game/operations";
 import { getDefaultGameStore } from "@/lib/game/store";
 import {
-  chatRateLimiter,
+  checkRateLimitPersistent,
   extractClientIp,
 } from "@/lib/guardrails/rate-limit";
 import {
@@ -75,7 +81,21 @@ export async function POST(req: Request) {
 
   const guestIdHash = hashGuestId(guest.guestId);
   const clientIp = extractClientIp(req);
-  const rateCheck = chatRateLimiter.check(guest.guestId, clientIp);
+  let rateCheck;
+  try {
+    rateCheck = await checkRateLimitPersistent(guest.guestId, clientIp);
+  } catch (err) {
+    return serverErrorResponse({
+      route: "/api/chat",
+      err,
+      publicMessageEs: "Error interno al verificar límite de frecuencia.",
+      status: 500,
+      errorCode: "RATE_LIMIT_ERROR",
+      setCookieHeader: guest.setCookieHeader,
+      correlationId: requestId,
+      guestIdHash,
+    });
+  }
   if (!rateCheck.allowed) {
     logServerEvent({
       level: "warn",
@@ -243,6 +263,7 @@ export async function POST(req: Request) {
   let currentState = loaded.state;
   let currentEvents = loaded.events;
   let currentLogHeadSeq = loaded.logHeadSeq;
+  let currentMemoryFacts = loaded.memoryFacts;
   const campaignId = loaded.campaignId;
   const sessionId = loaded.sessionId;
 
@@ -273,6 +294,22 @@ export async function POST(req: Request) {
         currentEvents = [...currentEvents, event];
         currentLogHeadSeq = outcome.logHeadSeq;
       }
+
+      const derived = extractDeterministicFactsFromEvent(event, currentState);
+      if (derived.length > 0) {
+        try {
+          const saved = await store.saveMemoryFacts(
+            campaignId,
+            sessionId,
+            derived,
+          );
+          if (saved.length > 0) {
+            currentMemoryFacts = [...saved, ...currentMemoryFacts];
+          }
+        } catch {
+          // Non-fatal memory extraction
+        }
+      }
     },
     commitRollback: async (targetSeq, reason) => {
       const rb = await performRollback({
@@ -286,8 +323,21 @@ export async function POST(req: Request) {
         currentState = rb.state;
         currentEvents = rb.events;
         currentLogHeadSeq = rb.logHeadSeq;
+        currentMemoryFacts = rb.memoryFacts;
       }
       return rb;
+    },
+    saveMemoryFact: async (fact) => {
+      try {
+        const saved = await store.saveMemoryFacts(campaignId, sessionId, [
+          { ...fact, source: "dm-memory" },
+        ]);
+        if (saved.length > 0) {
+          currentMemoryFacts = [...saved, ...currentMemoryFacts];
+        }
+      } catch {
+        // Non-fatal memory write
+      }
     },
     rng: createRng(randomUUID()),
     createId: () => randomUUID(),
@@ -312,6 +362,24 @@ export async function POST(req: Request) {
 
   const lastIncoming = messages.at(-1);
   if (lastIncoming?.role === "user") {
+    const rawUserText = lastIncoming.parts
+      .filter(
+        (p): p is Extract<typeof p, { type: "text" }> => p.type === "text",
+      )
+      .map((p) => p.text)
+      .join("\n");
+    const injectionCheck = detectPromptInjectionSignals(rawUserText);
+    if (injectionCheck.flagged) {
+      logServerEvent({
+        level: "warn",
+        requestId,
+        route: "/api/chat",
+        event: "prompt_injection_signal",
+        guestIdHash,
+        detail: injectionCheck.matchedPatterns.join(","),
+      });
+    }
+
     try {
       await store.saveMessages(
         campaignId,
@@ -333,12 +401,22 @@ export async function POST(req: Request) {
     // Non-fatal usage counter hiccup; do not abort turn
   }
 
-  const systemPrompt = buildDmSystemPrompt(currentState, currentEvents);
+  const compacted = compactConversationContext({ messages });
+  const systemPrompt = buildDmSystemPrompt(currentState, currentEvents, {
+    sessionNumber: loaded.sessionNumber,
+    worldSummary: loaded.worldSummary,
+    sessionSummaries: loaded.sessionSummaries,
+    memoryFacts: currentMemoryFacts,
+    olderTurnsDigest: compacted.olderTurnsDigest,
+  });
+  const modelMessages = wrapUserMessagesForModel(
+    await convertToModelMessages(compacted.recentMessages),
+  );
 
   const result = streamText({
     model: resolved.model,
     system: systemPrompt,
-    messages: await convertToModelMessages(messages),
+    messages: modelMessages,
     tools,
     ...(resolved.providerOptions
       ? { providerOptions: resolved.providerOptions }

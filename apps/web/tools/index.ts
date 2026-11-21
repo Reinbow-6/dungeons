@@ -48,6 +48,8 @@ export type DmToolPart = Extract<
       | "tool-combat_start"
       | "tool-combat_attack"
       | "tool-combat_next_turn"
-      | "tool-combat_end";
+      | "tool-combat_end"
+      | "tool-apply_condition"
+      | "tool-remember_fact";
   }
 >;

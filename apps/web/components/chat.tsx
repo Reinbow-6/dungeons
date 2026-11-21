@@ -34,12 +34,15 @@ import {
 } from "@/components/ui/message-scroller";
 import { Trace, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace";
 import type { CharacterPresetInfo } from "@/lib/game/presets";
+import type { SessionSummaryItem, StoredMemoryFact } from "@/lib/game/store";
 import { type GatewayModel } from "@/lib/models";
 import { type ChatUIMessage } from "@/tools";
 
 interface CampaignApiPayload {
   campaignId: string | null;
   sessionId: string | null;
+  sessionNumber?: number;
+  worldSummary?: string;
   state: GameState | null;
   events: GameEvent[];
   messages: Array<{
@@ -47,14 +50,21 @@ interface CampaignApiPayload {
     role: "user" | "assistant" | "system";
     parts: ChatUIMessage["parts"];
   }>;
+  sessionSummaries?: SessionSummaryItem[];
+  memoryFacts?: StoredMemoryFact[];
   presets: CharacterPresetInfo[];
 }
 
 export function Chat({ models }: { models: GatewayModel[] }) {
   const [model, setModel] = React.useState(models[0]?.id ?? "");
   const [campaignId, setCampaignId] = React.useState<string | null>(null);
+  const [sessionNumber, setSessionNumber] = React.useState<number>(1);
   const [gameState, setGameState] = React.useState<GameState | null>(null);
   const [events, setEvents] = React.useState<GameEvent[]>([]);
+  const [sessionSummaries, setSessionSummaries] = React.useState<
+    SessionSummaryItem[]
+  >([]);
+  const [memoryFacts, setMemoryFacts] = React.useState<StoredMemoryFact[]>([]);
   const [presets, setPresets] = React.useState<CharacterPresetInfo[]>([]);
 
   const resolvedModel = models.some((m) => m.id === model)
@@ -104,8 +114,11 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       if (!res.ok) return;
       const data = (await res.json()) as CampaignApiPayload;
       setCampaignId(data.campaignId);
+      setSessionNumber(data.sessionNumber ?? 1);
       setGameState(data.state);
       setEvents(data.events);
+      setSessionSummaries(data.sessionSummaries ?? []);
+      setMemoryFacts(data.memoryFacts ?? []);
       setPresets(data.presets ?? []);
       if (restoreMessages) {
         setMessages(
@@ -143,8 +156,11 @@ export function Chat({ models }: { models: GatewayModel[] }) {
 
       if (cancelled) return;
       setCampaignId(data.campaignId);
+      setSessionNumber(data.sessionNumber ?? 1);
       setGameState(data.state);
       setEvents(data.events);
+      setSessionSummaries(data.sessionSummaries ?? []);
+      setMemoryFacts(data.memoryFacts ?? []);
       setPresets(data.presets ?? []);
       setMessages(
         data.messages.map((m) => ({
@@ -186,10 +202,38 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     if (!res.ok) return;
     const data = (await res.json()) as CampaignApiPayload;
     setCampaignId(data.campaignId);
+    setSessionNumber(data.sessionNumber ?? 1);
     setGameState(data.state);
     setEvents(data.events);
+    setSessionSummaries(data.sessionSummaries ?? []);
+    setMemoryFacts(data.memoryFacts ?? []);
     setPresets(data.presets ?? []);
     setMessages([]);
+  }
+
+  async function handleStartNewSession() {
+    if (!campaignId) return;
+    const res = await fetch("/api/game/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ campaignId }),
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as {
+      ok: boolean;
+      sessionNumber?: number;
+      sessionSummaries?: SessionSummaryItem[];
+      memoryFacts?: StoredMemoryFact[];
+      state?: GameState;
+      events?: GameEvent[];
+    };
+    if (data.ok) {
+      if (data.sessionNumber) setSessionNumber(data.sessionNumber);
+      if (data.sessionSummaries) setSessionSummaries(data.sessionSummaries);
+      if (data.memoryFacts) setMemoryFacts(data.memoryFacts);
+      if (data.state) setGameState(data.state);
+      if (data.events) setEvents(data.events);
+    }
   }
 
   async function handleToggleMode(
@@ -222,10 +266,14 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       state: GameState;
       events: GameEvent[];
       messages?: CampaignApiPayload["messages"];
+      memoryFacts?: StoredMemoryFact[];
     };
     if (data.ok) {
       setGameState(data.state);
       setEvents(data.events);
+      if (Array.isArray(data.memoryFacts)) {
+        setMemoryFacts(data.memoryFacts);
+      }
       if (Array.isArray(data.messages)) {
         setMessages(
           data.messages.map((m) => ({
@@ -399,10 +447,14 @@ export function Chat({ models }: { models: GatewayModel[] }) {
 
       <GameSidebar
         campaignId={campaignId}
+        sessionNumber={sessionNumber}
         state={gameState}
         events={events}
+        sessionSummaries={sessionSummaries}
+        memoryFacts={memoryFacts}
         presets={presets}
         onNewCampaign={handleNewCampaign}
+        onStartNewSession={handleStartNewSession}
         onStateUpdated={setGameState}
         onToggleMode={handleToggleMode}
         onRollback={handleRollback}

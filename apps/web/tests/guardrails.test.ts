@@ -12,7 +12,7 @@ import {
   resolveGuestSessionFromRequest,
   verifyGuestSessionToken,
 } from "@/lib/auth/guest-session";
-import { eventLog, providerHealth } from "@/lib/db/schema";
+import { eventLog, memoryFacts, providerHealth, rateLimitBuckets } from "@/lib/db/schema";
 import {
   createRateLimiter,
   extractClientIp,
@@ -243,7 +243,7 @@ describe("provider config, error sanitization & Drizzle schema", () => {
     }
   });
 
-  it("includes required provenance, rollback, and provider_health columns", () => {
+  it("includes required provenance, rollback, memory_facts, rate_limit_buckets, and provider_health columns", () => {
     const eventCols = getTableColumns(eventLog);
     expect(eventCols).toHaveProperty("source");
     expect(eventCols).toHaveProperty("actor");
@@ -252,6 +252,16 @@ describe("provider config, error sanitization & Drizzle schema", () => {
     expect(eventCols).toHaveProperty("dieResults");
     expect(eventCols).toHaveProperty("stateDelta");
     expect(eventCols).toHaveProperty("revertedByEventId");
+
+    const memCols = getTableColumns(memoryFacts);
+    expect(memCols).toHaveProperty("eventSeq");
+    expect(memCols).toHaveProperty("revertedBySeq");
+    expect(memCols).toHaveProperty("source");
+
+    const rlCols = getTableColumns(rateLimitBuckets);
+    expect(rlCols).toHaveProperty("bucketKey");
+    expect(rlCols).toHaveProperty("windowStart");
+    expect(rlCols).toHaveProperty("requestCount");
 
     const healthCols = getTableColumns(providerHealth);
     expect(healthCols).toHaveProperty("provider");

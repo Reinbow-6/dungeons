@@ -37,6 +37,24 @@ export const CheckTargetZod = z.enum([
 
 export const RollModeZod = z.enum(["normal", "advantage", "disadvantage"]);
 
+export const Condition5eZod = z.enum([
+  "blinded",
+  "charmed",
+  "deafened",
+  "exhaustion",
+  "frightened",
+  "grappled",
+  "incapacitated",
+  "invisible",
+  "paralyzed",
+  "petrified",
+  "poisoned",
+  "prone",
+  "restrained",
+  "stunned",
+  "unconscious",
+]);
+
 export interface DmToolRuntime {
   campaignId: string;
   sessionId: string;
@@ -51,6 +69,12 @@ export interface DmToolRuntime {
     expectedSeq?: number,
   ) => Promise<void>;
   commitRollback: (targetSeq: number, reason?: string) => Promise<RollbackResult>;
+  saveMemoryFact?: (fact: {
+    category: "npc" | "promise" | "milestone" | "scene" | "item";
+    content: string;
+    importance: number;
+    eventSeq: number;
+  }) => Promise<void>;
   rng: Rng;
   createId: () => string;
   now: () => string;

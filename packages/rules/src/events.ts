@@ -71,6 +71,24 @@ export const GameStateDeltaSchema = z.object({
       }),
     )
     .optional(),
+  exhaustionChanges: z
+    .array(
+      z.object({
+        actorId: z.string().min(1),
+        before: z.number().int().min(0).max(6),
+        after: z.number().int().min(0).max(6),
+      }),
+    )
+    .optional(),
+  concentrationChanges: z
+    .array(
+      z.object({
+        actorId: z.string().min(1),
+        before: z.string().nullable(),
+        after: z.string().nullable(),
+      }),
+    )
+    .optional(),
   inventoryDelta: z
     .array(
       z.object({
@@ -117,6 +135,7 @@ function cloneCharacter(char: Character): Character {
     spellSlots: Object.fromEntries(
       Object.entries(char.spellSlots).map(([lvl, pool]) => [lvl, { ...pool }]),
     ),
+    ...(char.resistances ? { resistances: [...char.resistances] } : {}),
     authority: { ...char.authority },
   };
 }
@@ -132,9 +151,19 @@ function cloneCombatState(combat: CombatState): CombatState {
       attacks: c.attacks.map((a) => ({ ...a })),
       vulnerabilities: [...c.vulnerabilities],
       immunities: [...c.immunities],
+      ...(c.resistances ? { resistances: [...c.resistances] } : {}),
+      ...(c.conditions ? { conditions: [...c.conditions] } : {}),
     })),
   };
 }
+
+const INCAPACITATING_CONDITIONS = new Set<Condition5e>([
+  'incapacitated',
+  'paralyzed',
+  'petrified',
+  'stunned',
+  'unconscious',
+]);
 
 /**
  * Pure, immutable state transition applying a deterministic `GameStateDelta`.
@@ -155,7 +184,14 @@ export function applyDelta(
     (delta.tempHpChanges && delta.tempHpChanges.length > 0) ||
     (delta.conditionsAdded && delta.conditionsAdded.length > 0) ||
     (delta.conditionsRemoved && delta.conditionsRemoved.length > 0) ||
+    (delta.exhaustionChanges && delta.exhaustionChanges.length > 0) ||
+    (delta.concentrationChanges && delta.concentrationChanges.length > 0) ||
     (delta.inventoryDelta && delta.inventoryDelta.length > 0);
+
+  const explicitExhaustionActors = new Set(
+    (delta.exhaustionChanges ?? []).map((change) => change.actorId),
+  );
+  const conditionChangedActors = new Set<string>();
 
   if (needsCharacterCopy) {
     nextCharacters = { ...state.characters };
@@ -186,21 +222,56 @@ export function applyDelta(
 
     for (const added of delta.conditionsAdded ?? []) {
       const char = ensureCloned(added.actorId);
-      if (char && !char.conditions.includes(added.condition as Condition5e)) {
+      if (!char) continue;
+      conditionChangedActors.add(added.actorId);
+      if (!char.conditions.includes(added.condition as Condition5e)) {
         char.conditions.push(added.condition as Condition5e);
-        if (added.condition === 'exhaustion' && char.exhaustionLevel === 0) {
-          char.exhaustionLevel = 1;
-        }
+      }
+      // Exhaustion is cumulative unless an explicit exhaustionChanges entry sets the target level
+      if (
+        added.condition === 'exhaustion' &&
+        !explicitExhaustionActors.has(added.actorId)
+      ) {
+        char.exhaustionLevel = Math.min(6, char.exhaustionLevel + 1);
+      }
+      if (INCAPACITATING_CONDITIONS.has(added.condition as Condition5e)) {
+        char.concentratingOn = null;
       }
     }
 
     for (const removed of delta.conditionsRemoved ?? []) {
       const char = ensureCloned(removed.actorId);
       if (char) {
+        conditionChangedActors.add(removed.actorId);
         char.conditions = char.conditions.filter((c) => c !== removed.condition);
-        if (removed.condition === 'exhaustion') {
+        if (
+          removed.condition === 'exhaustion' &&
+          !explicitExhaustionActors.has(removed.actorId)
+        ) {
           char.exhaustionLevel = 0;
         }
+      }
+    }
+
+    for (const change of delta.exhaustionChanges ?? []) {
+      const char = ensureCloned(change.actorId);
+      if (!char) continue;
+      conditionChangedActors.add(change.actorId);
+      const nextLevel = Math.max(0, Math.min(6, change.after));
+      char.exhaustionLevel = nextLevel;
+      if (nextLevel > 0) {
+        if (!char.conditions.includes('exhaustion')) {
+          char.conditions.push('exhaustion');
+        }
+      } else {
+        char.conditions = char.conditions.filter((c) => c !== 'exhaustion');
+      }
+    }
+
+    for (const change of delta.concentrationChanges ?? []) {
+      const char = ensureCloned(change.actorId);
+      if (char) {
+        char.concentratingOn = change.after;
       }
     }
 
@@ -250,15 +321,32 @@ export function applyDelta(
     nextCombat = delta.combat ? cloneCombatState(delta.combat) : null;
   } else if (state.combat !== undefined) {
     nextCombat = state.combat ? cloneCombatState(state.combat) : null;
-    if (nextCombat && nextCombat.active && delta.hpChanges && delta.hpChanges.length > 0) {
-      for (const change of delta.hpChanges) {
-        const combatant = nextCombat.combatants.find(
-          (c) => c.actorId === change.actorId || c.id === change.actorId,
-        );
-        if (combatant) {
-          const clampedHp = Math.max(0, Math.min(combatant.hp.max, change.after));
-          combatant.hp.current = clampedHp;
-          combatant.defeated = clampedHp <= 0;
+    if (nextCombat && nextCombat.active) {
+      if (delta.hpChanges && delta.hpChanges.length > 0) {
+        for (const change of delta.hpChanges) {
+          const combatant = nextCombat.combatants.find(
+            (c) => c.actorId === change.actorId || c.id === change.actorId,
+          );
+          if (combatant) {
+            const clampedHp = Math.max(0, Math.min(combatant.hp.max, change.after));
+            combatant.hp.current = clampedHp;
+            combatant.defeated = clampedHp <= 0;
+          }
+        }
+      }
+      if (conditionChangedActors.size > 0) {
+        for (const actorId of conditionChangedActors) {
+          const updatedChar = nextCharacters[actorId];
+          const combatant = nextCombat.combatants.find(
+            (c) => c.actorId === actorId || c.id === actorId,
+          );
+          if (updatedChar && combatant) {
+            if (updatedChar.conditions.length > 0) {
+              combatant.conditions = [...updatedChar.conditions];
+            } else {
+              delete combatant.conditions;
+            }
+          }
         }
       }
     }

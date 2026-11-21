@@ -183,6 +183,7 @@ export const CharacterSchema = z.object({
   inventory: z.array(InventoryItemSchema),
   spellSlots: z.record(z.string(), SpellSlotPoolSchema),
   concentratingOn: z.string().nullable(),
+  resistances: z.array(z.string().min(1)).optional(),
   authority: CharacterAuthoritySchema,
   rollAuthority: RollAuthoritySchema,
 });
@@ -215,6 +216,8 @@ export const CombatantSchema = z.object({
   attacks: z.array(CombatantAttackSchema),
   vulnerabilities: z.array(z.string().min(1)),
   immunities: z.array(z.string().min(1)),
+  resistances: z.array(z.string().min(1)).optional(),
+  conditions: z.array(Condition5eSchema).optional(),
   defeated: z.boolean(),
 });
 export type Combatant = z.infer<typeof CombatantSchema>;

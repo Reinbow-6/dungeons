@@ -3,6 +3,7 @@ import { declareCheck } from "@dungeons/rules";
 import { z } from "zod";
 
 import { resolveGuestSessionFromRequest } from "@/lib/auth/guest-session";
+import { extractDeterministicFactsFromEvent } from "@/agent/subagents/memory/agent";
 import { commitEventWithRetry } from "@/lib/game/operations";
 import { getDefaultGameStore, isStaleSeqError } from "@/lib/game/store";
 import { serverErrorResponse } from "@/lib/http/errors";
@@ -161,6 +162,22 @@ export async function POST(req: Request) {
         );
       }
       throw err;
+    }
+
+    const derivedFacts = extractDeterministicFactsFromEvent(
+      result.event,
+      authoritativeState,
+    );
+    if (derivedFacts.length > 0) {
+      try {
+        await store.saveMemoryFacts(
+          loaded.campaignId,
+          loaded.sessionId,
+          derivedFacts,
+        );
+      } catch {
+        // Non-fatal memory write
+      }
     }
 
     const headers = new Headers();

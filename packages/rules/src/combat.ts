@@ -5,10 +5,15 @@ import {
   type GameStateDelta,
 } from './events.js';
 import {
-  combineRollMode,
+  evaluateConcentrationCheck,
   getAbilityModifier,
   getConditionPenalty,
+  getConditionsEffects,
   getProficiencyBonus,
+  resolveDamageRelation,
+  resolveRollMode,
+  type ConcentrationCheckOutcome,
+  type DamageRelation,
 } from './modifiers.js';
 import type { ResolverContext } from './resolvers.js';
 import {
@@ -21,6 +26,7 @@ import {
 } from './rng.js';
 import {
   CombatantAttackSchema,
+  Condition5eSchema,
   VisibilitySchema,
   type Character,
   type Combatant,
@@ -29,6 +35,8 @@ import {
   type CombatState,
   type GameState,
 } from './types.js';
+
+export type { DamageRelation } from './modifiers.js';
 
 // ---------- Standard 5e-lite weapons & PC attack derivation ----------
 
@@ -240,6 +248,8 @@ function cloneCombatStateLocal(combat: CombatState): CombatState {
       attacks: c.attacks.map((a) => ({ ...a })),
       vulnerabilities: [...c.vulnerabilities],
       immunities: [...c.immunities],
+      ...(c.resistances ? { resistances: [...c.resistances] } : {}),
+      ...(c.conditions ? { conditions: [...c.conditions] } : {}),
     })),
   };
 }
@@ -263,6 +273,8 @@ export const CombatEnemyDefinitionSchema = z
     attacks: z.array(CombatantAttackSchema).min(1),
     vulnerabilities: z.array(z.string().min(1)).optional(),
     immunities: z.array(z.string().min(1)).optional(),
+    resistances: z.array(z.string().min(1)).optional(),
+    conditions: z.array(Condition5eSchema).optional(),
   })
   .strict();
 export type CombatEnemyDefinition = z.infer<typeof CombatEnemyDefinitionSchema>;
@@ -394,6 +406,12 @@ export function startCombat(
       attacks: deriveCharacterAttacks(char),
       vulnerabilities: [],
       immunities: [],
+      ...(char.resistances && char.resistances.length > 0
+        ? { resistances: [...char.resistances] }
+        : {}),
+      ...(char.conditions.length > 0
+        ? { conditions: [...char.conditions] }
+        : {}),
       defeated: char.hp.current <= 0,
     };
     rolledEntries.push({
@@ -427,6 +445,12 @@ export function startCombat(
       attacks: ally.attacks.map((a) => ({ ...a })),
       vulnerabilities: [...(ally.vulnerabilities ?? [])],
       immunities: [...(ally.immunities ?? [])],
+      ...(ally.resistances && ally.resistances.length > 0
+        ? { resistances: [...ally.resistances] }
+        : {}),
+      ...(ally.conditions && ally.conditions.length > 0
+        ? { conditions: [...ally.conditions] }
+        : {}),
       defeated: false,
     };
     rolledEntries.push({
@@ -460,6 +484,12 @@ export function startCombat(
       attacks: enemy.attacks.map((a) => ({ ...a })),
       vulnerabilities: [...(enemy.vulnerabilities ?? [])],
       immunities: [...(enemy.immunities ?? [])],
+      ...(enemy.resistances && enemy.resistances.length > 0
+        ? { resistances: [...enemy.resistances] }
+        : {}),
+      ...(enemy.conditions && enemy.conditions.length > 0
+        ? { conditions: [...enemy.conditions] }
+        : {}),
       defeated: false,
     };
     rolledEntries.push({
@@ -562,8 +592,6 @@ export type ResolveCombatAttackInput = z.infer<
   typeof ResolveCombatAttackInputSchema
 >;
 
-export type DamageRelation = 'normal' | 'vulnerable' | 'immune';
-
 export type ResolveCombatAttackResult =
   | {
       ok: true;
@@ -593,6 +621,7 @@ export type ResolveCombatAttackResult =
       targetDefeated: boolean;
       allEnemiesDefeated: boolean;
       allPcsDefeated: boolean;
+      concentrationCheck?: ConcentrationCheckOutcome;
       combat: CombatState;
       event: GameEvent;
       nextState: GameState;
@@ -606,10 +635,17 @@ export type ResolveCombatAttackResult =
         | 'UNKNOWN_COMBATANT'
         | 'INVALID_TARGET'
         | 'COMBATANT_DEFEATED'
+        | 'ATTACKER_INCAPACITATED'
         | 'UNKNOWN_ATTACK'
         | 'INVALID_DICE_EXPRESSION';
       messageEs: string;
     };
+
+function isRangedAttack(attack: CombatantAttack): boolean {
+  return /bow|arco|crossbow|ballesta|sling|honda/i.test(
+    `${attack.id} ${attack.nameEs}`,
+  );
+}
 
 function findCombatantIndex(
   combatants: readonly Combatant[],
@@ -756,20 +792,53 @@ export function resolveCombatAttack(
     attacker.kind === 'pc' && attacker.actorId
       ? state.characters[attacker.actorId]
       : undefined;
-  const condPenalty = attackerChar
-    ? getConditionPenalty(attackerChar, state.ruleset)
-    : { d20Modifier: 0, imposesDisadvantageOnChecks: false };
+  const targetChar =
+    target.kind === 'pc' && target.actorId
+      ? state.characters[target.actorId]
+      : undefined;
 
-  const effectiveMode = combineRollMode(
-    input.mode ?? 'normal',
-    condPenalty.imposesDisadvantageOnChecks,
-  );
-  const effectiveAttackBonus = attack.attackBonus + condPenalty.d20Modifier;
+  const attackerEffects = attackerChar
+    ? getConditionPenalty(attackerChar, state.ruleset)
+    : getConditionsEffects(attacker.conditions ?? [], 0);
+  if (attackerEffects.isIncapacitated) {
+    return {
+      ok: false,
+      code: 'ATTACKER_INCAPACITATED',
+      messageEs: `"${attacker.name}" está incapacitado y no puede realizar ataques.`,
+    };
+  }
+
+  const targetConditions = targetChar
+    ? targetChar.conditions
+    : (target.conditions ?? []);
+  const targetEffects = targetChar
+    ? getConditionPenalty(targetChar, state.ruleset)
+    : getConditionsEffects(targetConditions, 0);
+
+  const ranged = isRangedAttack(attack);
+  const hasAdvantage =
+    attackerEffects.grantsAdvantageOnAttacks ||
+    targetEffects.grantsAdvantageToAttackers ||
+    (!ranged && targetConditions.includes('prone'));
+  const hasDisadvantage =
+    attackerEffects.imposesDisadvantageOnAttacks ||
+    targetEffects.imposesDisadvantageToAttackers ||
+    (ranged && targetConditions.includes('prone'));
+
+  const effectiveMode = resolveRollMode({
+    requested: input.mode ?? 'normal',
+    hasAdvantage,
+    hasDisadvantage,
+  });
+  const effectiveAttackBonus = attack.attackBonus + attackerEffects.d20Modifier;
   const attackRoll = rollD20(ctx.rng, effectiveMode);
-  const isCritical = attackRoll.isNatural20;
   const isCriticalMiss = attackRoll.isNatural1;
   const attackTotal = attackRoll.chosen + effectiveAttackBonus;
-  const hit = isCritical || (!isCriticalMiss && attackTotal >= target.ac);
+  const hit =
+    attackRoll.isNatural20 || (!isCriticalMiss && attackTotal >= target.ac);
+  const isCritical =
+    attackRoll.isNatural20 ||
+    (!isCriticalMiss && hit && !ranged && targetEffects.autoCritFromMelee);
 
   let damageExpressionUsed: string | null = null;
   let damageRolls: number[] = [];
@@ -796,33 +865,20 @@ export function resolveCombatAttack(
       throw err;
     }
 
-    const normalizedDmgType = attack.damageType.trim().toLowerCase();
-    const immunities = new Set(
-      target.immunities.map((t) => t.trim().toLowerCase()),
-    );
-    const vulnerabilities = new Set(
-      target.vulnerabilities.map((t) => t.trim().toLowerCase()),
-    );
-
-    if (immunities.has(normalizedDmgType)) {
-      damageRelation = 'immune';
-      damageApplied = 0;
-    } else if (vulnerabilities.has(normalizedDmgType)) {
-      damageRelation = 'vulnerable';
-      damageApplied = rawDamage * 2;
-    } else {
-      damageRelation = 'normal';
-      damageApplied = rawDamage;
-    }
+    const dmgRel = resolveDamageRelation(rawDamage, attack.damageType, {
+      immunities: target.immunities,
+      vulnerabilities: target.vulnerabilities,
+      resistances: [
+        ...(target.resistances ?? []),
+        ...(targetChar?.resistances ?? []),
+      ],
+    });
+    damageRelation = dmgRel.relation;
+    damageApplied = dmgRel.damageApplied;
   }
 
   const nextCombat = cloneCombatStateLocal(state.combat);
   const updatedTargetCombatant = nextCombat.combatants[targetIdx]!;
-
-  const targetChar =
-    target.kind === 'pc' && target.actorId
-      ? state.characters[target.actorId]
-      : undefined;
 
   let absorbedByTemp = 0;
   let targetHpBefore: number;
@@ -841,6 +897,17 @@ export function resolveCombatAttack(
   const targetDefeated = targetHpAfter <= 0;
   updatedTargetCombatant.hp.current = targetHpAfter;
   updatedTargetCombatant.defeated = targetDefeated;
+
+  const concentrationCheck =
+    targetChar && hit
+      ? evaluateConcentrationCheck({
+          character: targetChar,
+          damageApplied,
+          hpAfter: targetHpAfter,
+          ruleset: state.ruleset,
+          rng: ctx.rng,
+        })
+      : undefined;
 
   const allEnemiesDefeated = nextCombat.combatants
     .filter((c) => c.kind === 'enemy')
@@ -872,6 +939,20 @@ export function resolveCombatAttack(
                 ],
               }
             : {}),
+        }
+      : {}),
+    ...(targetChar &&
+    concentrationCheck &&
+    !concentrationCheck.maintained &&
+    targetChar.concentratingOn
+      ? {
+          concentrationChanges: [
+            {
+              actorId: targetChar.id,
+              before: targetChar.concentratingOn,
+              after: null,
+            },
+          ],
         }
       : {}),
   };
@@ -917,6 +998,7 @@ export function resolveCombatAttack(
       targetDefeated,
       allEnemiesDefeated,
       allPcsDefeated,
+      concentrationCheck: concentrationCheck ?? null,
     },
     stateDelta,
     revertedByEventId: null,
@@ -953,6 +1035,7 @@ export function resolveCombatAttack(
     targetDefeated,
     allEnemiesDefeated,
     allPcsDefeated,
+    ...(concentrationCheck ? { concentrationCheck } : {}),
     combat: nextState.combat!,
     event,
     nextState,

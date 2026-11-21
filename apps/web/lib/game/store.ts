@@ -10,7 +10,7 @@ import {
   type RollbackResult,
   type RulesetProfile,
 } from "@dungeons/rules";
-import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 
 import { getDb, isDbConfigured } from "@/lib/db/client";
 import {
@@ -19,6 +19,7 @@ import {
   characters,
   eventLog,
   gameStateSnapshots,
+  memoryFacts,
   messages,
   sessions,
 } from "@/lib/db/schema";
@@ -73,12 +74,68 @@ function isUniqueSeqViolation(err: unknown): boolean {
   );
 }
 
-export interface LoadedCampaign {
+export type MemoryFactCategory =
+  | "npc"
+  | "promise"
+  | "milestone"
+  | "scene"
+  | "item";
+
+export interface StoredMemoryFact {
+  id: string;
   campaignId: string;
-  sessionId: string;
+  sessionId: string | null;
+  category: string;
+  content: string;
+  importance: number;
+  eventSeq: number;
+  revertedBySeq: number | null;
+  source: string;
+  createdAt: string;
+}
+
+export interface SaveMemoryFactInput {
+  category: string;
+  content: string;
+  importance?: number;
+  eventSeq: number;
+  source?: string;
+}
+
+export interface SessionSummaryItem {
+  id: string;
+  sessionNumber: number;
+  summary: string;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+export interface CampaignSummary {
+  campaignId: string;
   title: string;
   adventureId: string;
   ruleset: RulesetProfile;
+  sceneId: string;
+  lastSeq: number;
+  role: string;
+  updatedAt: string;
+}
+
+export interface PaginatedCampaignList {
+  items: CampaignSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface LoadedCampaign {
+  campaignId: string;
+  sessionId: string;
+  sessionNumber: number;
+  title: string;
+  adventureId: string;
+  ruleset: RulesetProfile;
+  worldSummary: string;
   initialState: GameState;
   state: GameState;
   /**
@@ -88,10 +145,19 @@ export interface LoadedCampaign {
   logHeadSeq: number;
   events: GameEvent[];
   messages: StoredMessage[];
+  sessionSummaries: SessionSummaryItem[];
+  memoryFacts: StoredMemoryFact[];
 }
 
 function computeLogHeadSeq(events: GameEvent[]): number {
   return events.reduce((max, e) => (e.seq > max ? e.seq : max), 0);
+}
+
+function sortMemoryFacts(facts: StoredMemoryFact[]): StoredMemoryFact[] {
+  return facts.slice().sort((a, b) => {
+    if (b.importance !== a.importance) return b.importance - a.importance;
+    return b.eventSeq - a.eventSeq;
+  });
 }
 
 export interface CreateCampaignInput {
@@ -108,6 +174,21 @@ export interface GameStore {
   loadCampaign(
     campaignId: string,
     guestId: string,
+  ): Promise<LoadedCampaign | null>;
+  listCampaignsForGuest(
+    guestId: string,
+    options?: { limit?: number; offset?: number },
+  ): Promise<PaginatedCampaignList>;
+  addCampaignMember(
+    campaignId: string,
+    ownerGuestId: string,
+    memberGuestId: string,
+    role?: string,
+  ): Promise<boolean>;
+  startNewSession(
+    campaignId: string,
+    guestId: string,
+    options?: { closingSummary?: string; worldSummary?: string },
   ): Promise<LoadedCampaign | null>;
   appendEvent(
     campaignId: string,
@@ -133,6 +214,11 @@ export interface GameStore {
     entries: Array<{ role: "user" | "assistant" | "system"; parts: unknown[] }>,
     currentSeq?: number,
   ): Promise<void>;
+  saveMemoryFacts(
+    campaignId: string,
+    sessionId: string,
+    facts: SaveMemoryFactInput[],
+  ): Promise<StoredMemoryFact[]>;
 }
 
 function mapEventRow(row: typeof eventLog.$inferSelect): GameEvent {
@@ -151,6 +237,23 @@ function mapEventRow(row: typeof eventLog.$inferSelect): GameEvent {
     payload: row.payload,
     stateDelta: row.stateDelta,
     revertedByEventId: row.revertedByEventId,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapMemoryFactRow(
+  row: typeof memoryFacts.$inferSelect,
+): StoredMemoryFact {
+  return {
+    id: row.id,
+    campaignId: row.campaignId,
+    sessionId: row.sessionId,
+    category: row.category,
+    content: row.content,
+    importance: row.importance,
+    eventSeq: row.eventSeq,
+    revertedBySeq: row.revertedBySeq,
+    source: row.source,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -178,6 +281,9 @@ function buildInitialFromRows(params: {
   };
 }
 
+const DEFAULT_WORLD_SUMMARY =
+  "Frontera pantanosa del norte tras la caída de la capital del sur.";
+
 export class SupabaseGameStore implements GameStore {
   async createCampaign(input: CreateCampaignInput): Promise<LoadedCampaign> {
     const db = getDb();
@@ -198,6 +304,7 @@ export class SupabaseGameStore implements GameStore {
       ruleset,
     });
     const mainCharacter = Object.values(initialState.characters)[0]!;
+    const now = new Date();
 
     await db.transaction(async (tx) => {
       await tx.insert(campaigns).values({
@@ -206,8 +313,7 @@ export class SupabaseGameStore implements GameStore {
         title,
         adventureId: "aguas-quietas",
         ruleset,
-        worldSummary:
-          "Frontera pantanosa del norte tras la caída de la capital del sur.",
+        worldSummary: DEFAULT_WORLD_SUMMARY,
       });
 
       await tx.insert(sessions).values({
@@ -215,6 +321,7 @@ export class SupabaseGameStore implements GameStore {
         campaignId,
         sessionNumber: 1,
         summary: "",
+        startedAt: now,
       });
 
       const [insertedChar] = await tx
@@ -232,7 +339,7 @@ export class SupabaseGameStore implements GameStore {
         campaignId,
         guestId: input.guestId,
         characterId: insertedChar?.id ?? null,
-        role: "player",
+        role: "owner",
       });
 
       await tx.insert(gameStateSnapshots).values({
@@ -246,14 +353,26 @@ export class SupabaseGameStore implements GameStore {
     return {
       campaignId,
       sessionId,
+      sessionNumber: 1,
       title,
       adventureId: "aguas-quietas",
       ruleset,
+      worldSummary: DEFAULT_WORLD_SUMMARY,
       initialState,
       state: initialState,
       logHeadSeq: 0,
       events: [],
       messages: [],
+      sessionSummaries: [
+        {
+          id: sessionId,
+          sessionNumber: 1,
+          summary: "",
+          startedAt: now.toISOString(),
+          endedAt: null,
+        },
+      ],
+      memoryFacts: [],
     };
   }
 
@@ -261,17 +380,143 @@ export class SupabaseGameStore implements GameStore {
     guestId: string,
   ): Promise<LoadedCampaign | null> {
     const db = getDb();
+    const memberCampaigns = db
+      .select({ campaignId: campaignMembers.campaignId })
+      .from(campaignMembers)
+      .where(eq(campaignMembers.guestId, guestId));
+
     const [latest] = await db
       .select({ id: campaigns.id })
       .from(campaigns)
-      .where(eq(campaigns.ownerGuestId, guestId))
-      .orderBy(desc(campaigns.createdAt))
+      .where(
+        or(
+          eq(campaigns.ownerGuestId, guestId),
+          inArray(campaigns.id, memberCampaigns),
+        ),
+      )
+      .orderBy(desc(campaigns.updatedAt), desc(campaigns.createdAt))
       .limit(1);
 
     if (!latest) {
       return null;
     }
     return this.loadCampaign(latest.id, guestId);
+  }
+
+  async listCampaignsForGuest(
+    guestId: string,
+    options?: { limit?: number; offset?: number },
+  ): Promise<PaginatedCampaignList> {
+    const limit = Math.min(50, Math.max(1, Math.trunc(options?.limit ?? 20)));
+    const offset = Math.max(0, Math.trunc(options?.offset ?? 0));
+    const db = getDb();
+
+    const memberCampaigns = db
+      .select({ campaignId: campaignMembers.campaignId })
+      .from(campaignMembers)
+      .where(eq(campaignMembers.guestId, guestId));
+    const accessFilter = or(
+      eq(campaigns.ownerGuestId, guestId),
+      inArray(campaigns.id, memberCampaigns),
+    );
+
+    const [countRow] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(campaigns)
+      .where(accessFilter);
+
+    const rows = await db
+      .select()
+      .from(campaigns)
+      .where(accessFilter)
+      .orderBy(desc(campaigns.updatedAt), desc(campaigns.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    if (rows.length === 0) {
+      return { items: [], total: Number(countRow?.count ?? 0), limit, offset };
+    }
+
+    const ids = rows.map((r) => r.id);
+    const [snapshots, memberRoles] = await Promise.all([
+      db
+        .select()
+        .from(gameStateSnapshots)
+        .where(inArray(gameStateSnapshots.campaignId, ids)),
+      db
+        .select()
+        .from(campaignMembers)
+        .where(
+          and(
+            inArray(campaignMembers.campaignId, ids),
+            eq(campaignMembers.guestId, guestId),
+          ),
+        ),
+    ]);
+
+    const snapByCampaign = new Map(snapshots.map((s) => [s.campaignId, s]));
+    const roleByCampaign = new Map(
+      memberRoles.map((m) => [m.campaignId, m.role]),
+    );
+
+    return {
+      items: rows.map((c) => {
+        const snap = snapByCampaign.get(c.id);
+        return {
+          campaignId: c.id,
+          title: c.title,
+          adventureId: c.adventureId,
+          ruleset: c.ruleset,
+          sceneId: snap?.sceneId ?? "escena_01_orilla",
+          lastSeq: snap?.lastSeq ?? 0,
+          role:
+            c.ownerGuestId === guestId
+              ? "owner"
+              : (roleByCampaign.get(c.id) ?? "player"),
+          updatedAt: c.updatedAt.toISOString(),
+        };
+      }),
+      total: Number(countRow?.count ?? 0),
+      limit,
+      offset,
+    };
+  }
+
+  async addCampaignMember(
+    campaignId: string,
+    ownerGuestId: string,
+    memberGuestId: string,
+    role = "player",
+  ): Promise<boolean> {
+    if (!UUID_REGEX.test(campaignId)) {
+      return false;
+    }
+    const db = getDb();
+    const [campaign] = await db
+      .select({ id: campaigns.id, ownerGuestId: campaigns.ownerGuestId })
+      .from(campaigns)
+      .where(
+        and(eq(campaigns.id, campaignId), eq(campaigns.ownerGuestId, ownerGuestId)),
+      )
+      .limit(1);
+
+    if (!campaign) {
+      return false;
+    }
+
+    await db
+      .insert(campaignMembers)
+      .values({
+        campaignId,
+        guestId: memberGuestId,
+        characterId: null,
+        role,
+      })
+      .onConflictDoNothing({
+        target: [campaignMembers.campaignId, campaignMembers.guestId],
+      });
+
+    return true;
   }
 
   async loadCampaign(
@@ -286,51 +531,75 @@ export class SupabaseGameStore implements GameStore {
     const [campaign] = await db
       .select()
       .from(campaigns)
-      .where(
-        and(eq(campaigns.id, campaignId), eq(campaigns.ownerGuestId, guestId)),
-      )
+      .where(eq(campaigns.id, campaignId))
       .limit(1);
 
     if (!campaign) {
       return null;
     }
 
-    const [session] = await db
+    if (campaign.ownerGuestId !== guestId) {
+      const [member] = await db
+        .select({ id: campaignMembers.id })
+        .from(campaignMembers)
+        .where(
+          and(
+            eq(campaignMembers.campaignId, campaignId),
+            eq(campaignMembers.guestId, guestId),
+          ),
+        )
+        .limit(1);
+      if (!member) {
+        return null;
+      }
+    }
+
+    const sessionRows = await db
       .select()
       .from(sessions)
       .where(eq(sessions.campaignId, campaign.id))
-      .orderBy(asc(sessions.sessionNumber))
-      .limit(1);
+      .orderBy(asc(sessions.sessionNumber));
 
-    if (!session) {
+    const activeSession = sessionRows.at(-1);
+    if (!activeSession) {
       return null;
     }
 
-    const charRows = await db
-      .select()
-      .from(characters)
-      .where(eq(characters.campaignId, campaign.id));
-
-    const eventRows = await db
-      .select()
-      .from(eventLog)
-      .where(eq(eventLog.campaignId, campaign.id))
-      .orderBy(asc(eventLog.seq));
-
-    const messageRows = await db
-      .select()
-      .from(messages)
-      .where(
-        and(
-          eq(messages.campaignId, campaign.id),
-          isNull(messages.revertedBySeq),
-        ),
-      )
-      .orderBy(asc(messages.createdAt));
+    const [charRows, eventRows, messageRows, factRows] = await Promise.all([
+      db
+        .select()
+        .from(characters)
+        .where(eq(characters.campaignId, campaign.id)),
+      db
+        .select()
+        .from(eventLog)
+        .where(eq(eventLog.campaignId, campaign.id))
+        .orderBy(asc(eventLog.seq)),
+      db
+        .select()
+        .from(messages)
+        .where(
+          and(
+            eq(messages.campaignId, campaign.id),
+            isNull(messages.revertedBySeq),
+          ),
+        )
+        .orderBy(asc(messages.createdAt)),
+      db
+        .select()
+        .from(memoryFacts)
+        .where(
+          and(
+            eq(memoryFacts.campaignId, campaign.id),
+            isNull(memoryFacts.revertedBySeq),
+          ),
+        )
+        .orderBy(desc(memoryFacts.importance), desc(memoryFacts.eventSeq)),
+    ]);
 
     const initialState = buildInitialFromRows({
       campaign,
-      session,
+      session: activeSession,
       characterRows: charRows,
     });
     const events = eventRows.map(mapEventRow);
@@ -338,10 +607,12 @@ export class SupabaseGameStore implements GameStore {
 
     return {
       campaignId: campaign.id,
-      sessionId: session.id,
+      sessionId: activeSession.id,
+      sessionNumber: activeSession.sessionNumber,
       title: campaign.title,
       adventureId: campaign.adventureId,
       ruleset: campaign.ruleset,
+      worldSummary: campaign.worldSummary,
       initialState,
       state,
       logHeadSeq: computeLogHeadSeq(events),
@@ -354,7 +625,63 @@ export class SupabaseGameStore implements GameStore {
         eventSeq: m.eventSeq,
         revertedBySeq: m.revertedBySeq,
       })),
+      sessionSummaries: sessionRows.map((s) => ({
+        id: s.id,
+        sessionNumber: s.sessionNumber,
+        summary: s.summary,
+        startedAt: s.startedAt.toISOString(),
+        endedAt: s.endedAt ? s.endedAt.toISOString() : null,
+      })),
+      memoryFacts: factRows.map(mapMemoryFactRow),
     };
+  }
+
+  async startNewSession(
+    campaignId: string,
+    guestId: string,
+    options?: { closingSummary?: string; worldSummary?: string },
+  ): Promise<LoadedCampaign | null> {
+    const loaded = await this.loadCampaign(campaignId, guestId);
+    if (!loaded) {
+      return null;
+    }
+
+    const db = getDb();
+    const now = new Date();
+    const nextSessionId = randomUUID();
+    const closingSummary =
+      options?.closingSummary?.trim() ||
+      `Sesión #${loaded.sessionNumber} cerrada en escena ${loaded.state.sceneId} (seq ${loaded.state.lastSeq}).`;
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(sessions)
+        .set({
+          summary: closingSummary,
+          endedAt: now,
+        })
+        .where(eq(sessions.id, loaded.sessionId));
+
+      await tx
+        .update(campaigns)
+        .set({
+          updatedAt: now,
+          ...(options?.worldSummary !== undefined
+            ? { worldSummary: options.worldSummary }
+            : {}),
+        })
+        .where(eq(campaigns.id, campaignId));
+
+      await tx.insert(sessions).values({
+        id: nextSessionId,
+        campaignId,
+        sessionNumber: loaded.sessionNumber + 1,
+        summary: "",
+        startedAt: now,
+      });
+    });
+
+    return this.loadCampaign(campaignId, guestId);
   }
 
   async appendEvent(
@@ -481,6 +808,17 @@ export class SupabaseGameStore implements GameStore {
           ),
         );
 
+      await tx
+        .update(memoryFacts)
+        .set({ revertedBySeq: rb.rollbackEvent.seq })
+        .where(
+          and(
+            eq(memoryFacts.campaignId, campaignId),
+            gt(memoryFacts.eventSeq, targetSeq),
+            isNull(memoryFacts.revertedBySeq),
+          ),
+        );
+
       await tx.insert(eventLog).values({
         id: rb.rollbackEvent.id,
         campaignId,
@@ -591,16 +929,102 @@ export class SupabaseGameStore implements GameStore {
       })),
     );
   }
+
+  async saveMemoryFacts(
+    campaignId: string,
+    sessionId: string,
+    facts: SaveMemoryFactInput[],
+  ): Promise<StoredMemoryFact[]> {
+    if (facts.length === 0) return [];
+    const db = getDb();
+    const existingRows = await db
+      .select({
+        content: memoryFacts.content,
+        eventSeq: memoryFacts.eventSeq,
+      })
+      .from(memoryFacts)
+      .where(
+        and(
+          eq(memoryFacts.campaignId, campaignId),
+          isNull(memoryFacts.revertedBySeq),
+        ),
+      );
+
+    const seen = new Set(
+      existingRows.map((r) => `${r.eventSeq}::${r.content}`),
+    );
+    const toInsert: Array<{
+      campaignId: string;
+      sessionId: string;
+      category: string;
+      content: string;
+      importance: number;
+      eventSeq: number;
+      source: string;
+    }> = [];
+
+    for (const fact of facts) {
+      const content = fact.content.trim();
+      if (!content) continue;
+      const eventSeq = Math.max(0, Math.trunc(fact.eventSeq));
+      const dedupeKey = `${eventSeq}::${content}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      toInsert.push({
+        campaignId,
+        sessionId,
+        category: fact.category,
+        content,
+        importance: Math.min(10, Math.max(1, Math.trunc(fact.importance ?? 5))),
+        eventSeq,
+        source: fact.source ?? "engine",
+      });
+    }
+
+    if (toInsert.length === 0) return [];
+    const inserted = await db.insert(memoryFacts).values(toInsert).returning();
+    return inserted.map(mapMemoryFactRow);
+  }
+}
+
+interface InMemoryCampaignRecord {
+  ownerGuestId: string;
+  members: Array<{ guestId: string; role: string }>;
+  campaignId: string;
+  sessionId: string;
+  sessionNumber: number;
+  title: string;
+  adventureId: string;
+  ruleset: RulesetProfile;
+  worldSummary: string;
+  initialState: GameState;
+  state: GameState;
+  logHeadSeq: number;
+  events: GameEvent[];
+  messages: StoredMessage[];
+  sessions: SessionSummaryItem[];
+  memoryFacts: StoredMemoryFact[];
+  createdAtMs: number;
+  updatedAt: string;
 }
 
 /**
  * Deterministic in-memory GameStore for unit/integration tests without Postgres.
  */
 export class InMemoryGameStore implements GameStore {
-  private campaigns = new Map<
-    string,
-    LoadedCampaign & { ownerGuestId: string }
-  >();
+  private campaigns = new Map<string, InMemoryCampaignRecord>();
+
+  private hasAccess(record: InMemoryCampaignRecord, guestId: string): boolean {
+    return (
+      record.ownerGuestId === guestId ||
+      record.members.some((m) => m.guestId === guestId)
+    );
+  }
+
+  private getRole(record: InMemoryCampaignRecord, guestId: string): string {
+    if (record.ownerGuestId === guestId) return "owner";
+    return record.members.find((m) => m.guestId === guestId)?.role ?? "player";
+  }
 
   async createCampaign(input: CreateCampaignInput): Promise<LoadedCampaign> {
     const campaignId = randomUUID();
@@ -619,33 +1043,93 @@ export class InMemoryGameStore implements GameStore {
       mode,
       ruleset,
     });
+    const nowIso = new Date().toISOString();
 
-    const record: LoadedCampaign & { ownerGuestId: string } = {
+    const record: InMemoryCampaignRecord = {
       ownerGuestId: input.guestId,
+      members: [{ guestId: input.guestId, role: "owner" }],
       campaignId,
       sessionId,
+      sessionNumber: 1,
       title,
       adventureId: "aguas-quietas",
       ruleset,
+      worldSummary: DEFAULT_WORLD_SUMMARY,
       initialState,
       state: initialState,
       logHeadSeq: 0,
       events: [],
       messages: [],
+      sessions: [
+        {
+          id: sessionId,
+          sessionNumber: 1,
+          summary: "",
+          startedAt: nowIso,
+          endedAt: null,
+        },
+      ],
+      memoryFacts: [],
+      createdAtMs: Date.now(),
+      updatedAt: nowIso,
     };
     this.campaigns.set(campaignId, record);
-    return record;
+    return (await this.loadCampaign(campaignId, input.guestId))!;
   }
 
   async getLatestCampaignForGuest(
     guestId: string,
   ): Promise<LoadedCampaign | null> {
-    const list = Array.from(this.campaigns.values()).filter(
-      (c) => c.ownerGuestId === guestId,
+    const list = Array.from(this.campaigns.values()).filter((c) =>
+      this.hasAccess(c, guestId),
     );
     const latest = list.at(-1);
     if (!latest) return null;
     return this.loadCampaign(latest.campaignId, guestId);
+  }
+
+  async listCampaignsForGuest(
+    guestId: string,
+    options?: { limit?: number; offset?: number },
+  ): Promise<PaginatedCampaignList> {
+    const limit = Math.min(50, Math.max(1, Math.trunc(options?.limit ?? 20)));
+    const offset = Math.max(0, Math.trunc(options?.offset ?? 0));
+    const accessible = Array.from(this.campaigns.values())
+      .filter((c) => this.hasAccess(c, guestId))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+
+    const slice = accessible.slice(offset, offset + limit);
+    return {
+      items: slice.map((c) => ({
+        campaignId: c.campaignId,
+        title: c.title,
+        adventureId: c.adventureId,
+        ruleset: c.ruleset,
+        sceneId: c.state.sceneId,
+        lastSeq: c.state.lastSeq,
+        role: this.getRole(c, guestId),
+        updatedAt: c.updatedAt,
+      })),
+      total: accessible.length,
+      limit,
+      offset,
+    };
+  }
+
+  async addCampaignMember(
+    campaignId: string,
+    ownerGuestId: string,
+    memberGuestId: string,
+    role = "player",
+  ): Promise<boolean> {
+    const found = this.campaigns.get(campaignId);
+    if (!found || found.ownerGuestId !== ownerGuestId) {
+      return false;
+    }
+    if (!found.members.some((m) => m.guestId === memberGuestId)) {
+      found.members.push({ guestId: memberGuestId, role });
+    }
+    return true;
   }
 
   async loadCampaign(
@@ -653,17 +1137,68 @@ export class InMemoryGameStore implements GameStore {
     guestId: string,
   ): Promise<LoadedCampaign | null> {
     const found = this.campaigns.get(campaignId);
-    if (!found || found.ownerGuestId !== guestId) {
+    if (!found || !this.hasAccess(found, guestId)) {
       return null;
     }
+    const activeInitial: GameState = {
+      ...found.initialState,
+      sessionId: found.sessionId,
+    };
     return {
-      ...found,
-      state: reduceEvents(found.initialState, found.events),
+      campaignId: found.campaignId,
+      sessionId: found.sessionId,
+      sessionNumber: found.sessionNumber,
+      title: found.title,
+      adventureId: found.adventureId,
+      ruleset: found.ruleset,
+      worldSummary: found.worldSummary,
+      initialState: activeInitial,
+      state: reduceEvents(activeInitial, found.events),
       logHeadSeq: computeLogHeadSeq(found.events),
+      events: found.events.map((e) => ({ ...e })),
       messages: found.messages
         .filter((m) => m.revertedBySeq == null)
         .map((m) => ({ ...m })),
+      sessionSummaries: found.sessions.map((s) => ({ ...s })),
+      memoryFacts: sortMemoryFacts(
+        found.memoryFacts.filter((f) => f.revertedBySeq == null),
+      ).map((f) => ({ ...f })),
     };
+  }
+
+  async startNewSession(
+    campaignId: string,
+    guestId: string,
+    options?: { closingSummary?: string; worldSummary?: string },
+  ): Promise<LoadedCampaign | null> {
+    const found = this.campaigns.get(campaignId);
+    if (!found || !this.hasAccess(found, guestId)) {
+      return null;
+    }
+    const nowIso = new Date().toISOString();
+    const currentSession = found.sessions.at(-1);
+    if (currentSession) {
+      currentSession.endedAt = nowIso;
+      currentSession.summary =
+        options?.closingSummary?.trim() ||
+        `Sesión #${found.sessionNumber} cerrada en escena ${found.state.sceneId} (seq ${found.state.lastSeq}).`;
+    }
+    if (options?.worldSummary !== undefined) {
+      found.worldSummary = options.worldSummary;
+    }
+    const nextSessionNumber = found.sessionNumber + 1;
+    const nextSessionId = randomUUID();
+    found.sessionId = nextSessionId;
+    found.sessionNumber = nextSessionNumber;
+    found.updatedAt = nowIso;
+    found.sessions.push({
+      id: nextSessionId,
+      sessionNumber: nextSessionNumber,
+      summary: "",
+      startedAt: nowIso,
+      endedAt: null,
+    });
+    return this.loadCampaign(campaignId, guestId);
   }
 
   async appendEvent(
@@ -687,6 +1222,7 @@ export class InMemoryGameStore implements GameStore {
     found.events = [...found.events, event];
     found.state = nextState;
     found.logHeadSeq = nextSeq;
+    found.updatedAt = new Date().toISOString();
   }
 
   async rollbackCampaign(
@@ -714,6 +1250,7 @@ export class InMemoryGameStore implements GameStore {
     stored.events = rb.events;
     stored.state = rb.state;
     stored.logHeadSeq = computeLogHeadSeq(rb.events);
+    stored.updatedAt = new Date().toISOString();
     for (const msg of stored.messages) {
       if (
         msg.eventSeq != null &&
@@ -721,6 +1258,11 @@ export class InMemoryGameStore implements GameStore {
         msg.revertedBySeq == null
       ) {
         msg.revertedBySeq = rb.rollbackEvent.seq;
+      }
+    }
+    for (const fact of stored.memoryFacts) {
+      if (fact.eventSeq > targetSeq && fact.revertedBySeq == null) {
+        fact.revertedBySeq = rb.rollbackEvent.seq;
       }
     }
     return rb;
@@ -733,7 +1275,7 @@ export class InMemoryGameStore implements GameStore {
     mode: "digital" | "hybrid",
   ): Promise<LoadedCampaign | null> {
     const found = this.campaigns.get(campaignId);
-    if (!found || found.ownerGuestId !== guestId) return null;
+    if (!found || !this.hasAccess(found, guestId)) return null;
     const baseChar = found.initialState.characters[actorId];
     if (!baseChar) return null;
 
@@ -752,6 +1294,7 @@ export class InMemoryGameStore implements GameStore {
     };
     found.state = reduceEvents(found.initialState, found.events);
     found.logHeadSeq = computeLogHeadSeq(found.events);
+    found.updatedAt = new Date().toISOString();
     return this.loadCampaign(campaignId, guestId);
   }
 
@@ -775,6 +1318,46 @@ export class InMemoryGameStore implements GameStore {
         revertedBySeq: null,
       })),
     ];
+  }
+
+  async saveMemoryFacts(
+    campaignId: string,
+    sessionId: string,
+    facts: SaveMemoryFactInput[],
+  ): Promise<StoredMemoryFact[]> {
+    const found = this.campaigns.get(campaignId);
+    if (!found || facts.length === 0) return [];
+    const seen = new Set(
+      found.memoryFacts
+        .filter((f) => f.revertedBySeq == null)
+        .map((f) => `${f.eventSeq}::${f.content}`),
+    );
+    const created: StoredMemoryFact[] = [];
+    const now = new Date().toISOString();
+
+    for (const fact of facts) {
+      const content = fact.content.trim();
+      if (!content) continue;
+      const eventSeq = Math.max(0, Math.trunc(fact.eventSeq));
+      const dedupeKey = `${eventSeq}::${content}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      const row: StoredMemoryFact = {
+        id: randomUUID(),
+        campaignId,
+        sessionId,
+        category: fact.category,
+        content,
+        importance: Math.min(10, Math.max(1, Math.trunc(fact.importance ?? 5))),
+        eventSeq,
+        revertedBySeq: null,
+        source: fact.source ?? "engine",
+        createdAt: now,
+      };
+      found.memoryFacts.push(row);
+      created.push({ ...row });
+    }
+    return created;
   }
 }
 

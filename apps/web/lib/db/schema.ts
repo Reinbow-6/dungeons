@@ -1,5 +1,6 @@
 import type { Character, GameState, GameStateDelta } from "@dungeons/rules";
 import {
+  index,
   integer,
   jsonb,
   pgEnum,
@@ -48,18 +49,27 @@ export const campaigns = pgTable("campaigns", {
     .notNull(),
 });
 
-export const sessions = pgTable("sessions", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  campaignId: uuid("campaign_id")
-    .notNull()
-    .references(() => campaigns.id, { onDelete: "cascade" }),
-  sessionNumber: integer("session_number").notNull().default(1),
-  summary: text("summary").notNull().default(""),
-  startedAt: timestamp("started_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  endedAt: timestamp("ended_at", { withTimezone: true }),
-});
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    sessionNumber: integer("session_number").notNull().default(1),
+    summary: text("summary").notNull().default(""),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("sessions_campaign_number_idx").on(
+      table.campaignId,
+      table.sessionNumber,
+    ),
+  ],
+);
 
 export const characters = pgTable("characters", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -78,21 +88,31 @@ export const characters = pgTable("characters", {
     .notNull(),
 });
 
-export const campaignMembers = pgTable("campaign_members", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  campaignId: uuid("campaign_id")
-    .notNull()
-    .references(() => campaigns.id, { onDelete: "cascade" }),
-  guestId: text("guest_id").notNull(),
-  userId: text("user_id"),
-  characterId: uuid("character_id").references(() => characters.id, {
-    onDelete: "set null",
-  }),
-  role: text("role").notNull().default("player"),
-  joinedAt: timestamp("joined_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const campaignMembers = pgTable(
+  "campaign_members",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    guestId: text("guest_id").notNull(),
+    userId: text("user_id"),
+    characterId: uuid("character_id").references(() => characters.id, {
+      onDelete: "set null",
+    }),
+    role: text("role").notNull().default("player"),
+    joinedAt: timestamp("joined_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("campaign_members_campaign_guest_idx").on(
+      table.campaignId,
+      table.guestId,
+    ),
+    index("campaign_members_guest_idx").on(table.guestId),
+  ],
+);
 
 export const eventLog = pgTable(
   "event_log",
@@ -147,21 +167,33 @@ export const gameStateSnapshots = pgTable(
   ],
 );
 
-export const memoryFacts = pgTable("memory_facts", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  campaignId: uuid("campaign_id")
-    .notNull()
-    .references(() => campaigns.id, { onDelete: "cascade" }),
-  sessionId: uuid("session_id").references(() => sessions.id, {
-    onDelete: "set null",
-  }),
-  category: text("category").notNull(),
-  content: text("content").notNull(),
-  importance: integer("importance").notNull().default(5),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const memoryFacts = pgTable(
+  "memory_facts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    sessionId: uuid("session_id").references(() => sessions.id, {
+      onDelete: "set null",
+    }),
+    category: text("category").notNull(),
+    content: text("content").notNull(),
+    importance: integer("importance").notNull().default(5),
+    eventSeq: integer("event_seq").notNull().default(0),
+    revertedBySeq: integer("reverted_by_seq"),
+    source: text("source").notNull().default("engine"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("memory_facts_campaign_seq_idx").on(
+      table.campaignId,
+      table.eventSeq,
+    ),
+  ],
+);
 
 export const messages = pgTable("messages", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -218,6 +250,25 @@ export const providerHealth = pgTable(
       table.provider,
       table.modelId,
       table.dayKey,
+    ),
+  ],
+);
+
+export const rateLimitBuckets = pgTable(
+  "rate_limit_buckets",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    bucketKey: text("bucket_key").notNull(),
+    windowStart: integer("window_start").notNull(),
+    requestCount: integer("request_count").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("rate_limit_bucket_window_idx").on(
+      table.bucketKey,
+      table.windowStart,
     ),
   ],
 );

@@ -50,13 +50,16 @@ export function createResolveSaveTool(rt: DmToolRuntime) {
       }
       return {
         ok: true,
-        messageEs: res.success
-          ? `Salvación de ${input.ability.toUpperCase()} superada (${res.total} vs CD ${res.dc}).`
-          : `Salvación de ${input.ability.toUpperCase()} fallida (${res.total} vs CD ${res.dc}).`,
+        messageEs: res.autoFailed
+          ? `Fallo automático en salvación de ${input.ability.toUpperCase()} por condición activa.`
+          : res.success
+            ? `Salvación de ${input.ability.toUpperCase()} superada (${res.total} vs CD ${res.dc}).`
+            : `Salvación de ${input.ability.toUpperCase()} fallida (${res.total} vs CD ${res.dc}).`,
         checkId: res.checkId,
         ability: input.ability,
         dc: res.dc,
         dcRef: input.dcRef,
+        ...(res.autoFailed ? { autoFailed: true } : {}),
         rolls: res.rolls,
         naturalRoll: res.naturalRoll,
         modifier: res.modifier,

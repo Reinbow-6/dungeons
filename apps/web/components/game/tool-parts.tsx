@@ -26,6 +26,8 @@ const LABELS: Record<DmToolPart["type"], string> = {
   "tool-combat_attack": "Ataque en combate",
   "tool-combat_next_turn": "Siguiente turno",
   "tool-combat_end": "Fin de combate",
+  "tool-apply_condition": "Condiciones / Concentración",
+  "tool-remember_fact": "Memoria de campaña",
 };
 
 function summarizeTool(part: DmToolPart): {
@@ -179,6 +181,24 @@ function summarizeTool(part: DmToolPart): {
               : "";
       return {
         title: out.ok && outcomeLabel ? `${label}: ${outcomeLabel}` : label,
+        description: out.messageEs,
+        isError: !out.ok,
+        details: out,
+      };
+    }
+    case "tool-apply_condition": {
+      const out = part.output;
+      return {
+        title: `${label}: ${out.actorId ?? part.input?.actorId ?? ""}`,
+        description: out.messageEs,
+        isError: !out.ok,
+        details: out,
+      };
+    }
+    case "tool-remember_fact": {
+      const out = part.output;
+      return {
+        title: `${label}: ${out.category ?? part.input?.category ?? ""}`,
         description: out.messageEs,
         isError: !out.ok,
         details: out,

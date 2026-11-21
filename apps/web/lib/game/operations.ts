@@ -4,6 +4,7 @@ import {
   getDefaultGameStore,
   isStaleSeqError,
   type GameStore,
+  type StoredMemoryFact,
   type StoredMessage,
 } from "@/lib/game/store";
 
@@ -67,6 +68,7 @@ export async function commitEventWithRetry(params: {
 export type PerformRollbackOutcome =
   | (Extract<RollbackResult, { ok: true }> & {
       messages: StoredMessage[];
+      memoryFacts: StoredMemoryFact[];
       logHeadSeq: number;
     })
   | Extract<RollbackResult, { ok: false }>;
@@ -96,6 +98,7 @@ export async function performRollback(params: {
   return {
     ...rb,
     messages: reloaded?.messages ?? [],
+    memoryFacts: reloaded?.memoryFacts ?? [],
     logHeadSeq: reloaded?.logHeadSeq ?? rb.rollbackEvent.seq,
   };
 }

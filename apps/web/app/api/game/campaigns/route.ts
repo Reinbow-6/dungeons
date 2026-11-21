@@ -40,6 +40,30 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const requestedId = url.searchParams.get("campaignId");
 
+    const listParam = url.searchParams.get("list");
+    if (listParam === "1" || listParam === "true") {
+      const rawLimit = Number.parseInt(
+        url.searchParams.get("limit") ?? "20",
+        10,
+      );
+      const rawOffset = Number.parseInt(
+        url.searchParams.get("offset") ?? "0",
+        10,
+      );
+      const page = await store.listCampaignsForGuest(guest.guestId, {
+        limit: Number.isFinite(rawLimit) ? rawLimit : 20,
+        offset: Number.isFinite(rawOffset) ? rawOffset : 0,
+      });
+      return withGuestCookie(
+        {
+          ...page,
+          presets: CHARACTER_PRESETS,
+        },
+        200,
+        guest.setCookieHeader,
+      );
+    }
+
     if (requestedId) {
       const loaded = await store.loadCampaign(requestedId, guest.guestId);
       if (!loaded) {
@@ -58,12 +82,16 @@ export async function GET(req: Request) {
         {
           campaignId: loaded.campaignId,
           sessionId: loaded.sessionId,
+          sessionNumber: loaded.sessionNumber,
           title: loaded.title,
           ruleset: loaded.ruleset,
+          worldSummary: loaded.worldSummary,
           state: loaded.state,
           logHeadSeq: loaded.logHeadSeq,
           events: loaded.events,
           messages: loaded.messages,
+          sessionSummaries: loaded.sessionSummaries,
+          memoryFacts: loaded.memoryFacts,
           presets: CHARACTER_PRESETS,
         },
         200,
@@ -78,12 +106,16 @@ export async function GET(req: Request) {
         {
           campaignId: null,
           sessionId: null,
+          sessionNumber: 1,
           title: null,
           ruleset: "5e-lite",
+          worldSummary: "",
           state: null,
           logHeadSeq: 0,
           events: [],
           messages: [],
+          sessionSummaries: [],
+          memoryFacts: [],
           presets: CHARACTER_PRESETS,
         },
         200,
@@ -95,12 +127,16 @@ export async function GET(req: Request) {
       {
         campaignId: latest.campaignId,
         sessionId: latest.sessionId,
+        sessionNumber: latest.sessionNumber,
         title: latest.title,
         ruleset: latest.ruleset,
+        worldSummary: latest.worldSummary,
         state: latest.state,
         logHeadSeq: latest.logHeadSeq,
         events: latest.events,
         messages: latest.messages,
+        sessionSummaries: latest.sessionSummaries,
+        memoryFacts: latest.memoryFacts,
         presets: CHARACTER_PRESETS,
       },
       200,
@@ -174,12 +210,16 @@ export async function POST(req: Request) {
       {
         campaignId: created.campaignId,
         sessionId: created.sessionId,
+        sessionNumber: created.sessionNumber,
         title: created.title,
         ruleset: created.ruleset,
+        worldSummary: created.worldSummary,
         state: created.state,
         logHeadSeq: created.logHeadSeq,
         events: created.events,
         messages: created.messages,
+        sessionSummaries: created.sessionSummaries,
+        memoryFacts: created.memoryFacts,
         presets: CHARACTER_PRESETS,
       },
       201,

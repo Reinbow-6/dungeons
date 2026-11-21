@@ -42,11 +42,18 @@ export function createCombatAttackTool(rt: DmToolRuntime) {
         const relTag =
           res.damageRelation === "vulnerable"
             ? " (vulnerable ×2)"
-            : res.damageRelation === "immune"
-              ? " (inmune: 0 daño)"
-              : "";
+            : res.damageRelation === "resistant"
+              ? " (resistente ÷2)"
+              : res.damageRelation === "immune"
+                ? " (inmune: 0 daño)"
+                : "";
+        const concTag = res.concentrationCheck
+          ? res.concentrationCheck.maintained
+            ? ` [Mantiene concentración en ${res.concentrationCheck.spell}]`
+            : ` [¡Pierde concentración en ${res.concentrationCheck.spell}!]`
+          : "";
         const defeatedTag = res.targetDefeated ? " ¡Derrotado!" : "";
-        messageEs = `${res.attackerName} impacta con ${res.attackNameEs} (${res.attackTotal} vs CA ${res.targetAc})${critTag} e inflige ${res.damageApplied} de daño (${res.damageType})${relTag} a ${res.targetName} (${res.targetHpAfter} PG restantes).${defeatedTag}`;
+        messageEs = `${res.attackerName} impacta con ${res.attackNameEs} (${res.attackTotal} vs CA ${res.targetAc})${critTag} e inflige ${res.damageApplied} de daño (${res.damageType})${relTag} a ${res.targetName} (${res.targetHpAfter} PG restantes).${defeatedTag}${concTag}`;
       }
 
       return {
@@ -77,6 +84,9 @@ export function createCombatAttackTool(rt: DmToolRuntime) {
         targetDefeated: res.targetDefeated,
         allEnemiesDefeated: res.allEnemiesDefeated,
         allPcsDefeated: res.allPcsDefeated,
+        ...(res.concentrationCheck
+          ? { concentrationCheck: res.concentrationCheck }
+          : {}),
         seq: res.event.seq,
       };
     },

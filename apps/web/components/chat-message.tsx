@@ -37,7 +37,9 @@ type StepPart = Extract<
       | "tool-combat_start"
       | "tool-combat_attack"
       | "tool-combat_next_turn"
-      | "tool-combat_end";
+      | "tool-combat_end"
+      | "tool-apply_condition"
+      | "tool-remember_fact";
   }
 >;
 
@@ -54,7 +56,9 @@ function isDmToolPart(part: StepPart): part is DmToolPart {
     part.type === "tool-combat_start" ||
     part.type === "tool-combat_attack" ||
     part.type === "tool-combat_next_turn" ||
-    part.type === "tool-combat_end"
+    part.type === "tool-combat_end" ||
+    part.type === "tool-apply_condition" ||
+    part.type === "tool-remember_fact"
   );
 }
 
@@ -203,7 +207,9 @@ function isStepPart(part: ChatMessagePart): part is StepPart {
     part.type === "tool-combat_start" ||
     part.type === "tool-combat_attack" ||
     part.type === "tool-combat_next_turn" ||
-    part.type === "tool-combat_end"
+    part.type === "tool-combat_end" ||
+    part.type === "tool-apply_condition" ||
+    part.type === "tool-remember_fact"
   );
 }
 

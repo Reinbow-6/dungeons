@@ -1,5 +1,0 @@
-revisar en otro momento:
-- el unico modelo/provedor que realmente funciona es Openrouer Free Router, todos los demas tiran error. 
-- modelo/provedor deseado: groq/qwen3.8-27b
-- agregar Observabilidad? permite al agente a interceptar bugs.
-- UI SDK para el pulido visual? (https://github.com/vercel-labs/ui)

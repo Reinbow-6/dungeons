@@ -18,6 +18,7 @@ export function createResolveCheckTool(rt: DmToolRuntime) {
         dc: z.number().int().min(1).max(40).optional(),
         dcRef: z.string().min(1).optional(),
         mode: RollModeZod.optional(),
+        requiresSight: z.boolean().optional(),
       })
       .strict(),
     execute: async (input): Promise<ResolveCheckToolOutput> => {
@@ -50,13 +51,16 @@ export function createResolveCheckTool(rt: DmToolRuntime) {
       }
       return {
         ok: true,
-        messageEs: res.success
-          ? `Éxito en ${input.skill} (${res.total} vs CD ${res.dc}).`
-          : `Fallo en ${input.skill} (${res.total} vs CD ${res.dc}).`,
+        messageEs: res.autoFailed
+          ? `Fallo automático en ${input.skill} por condición activa (p. ej. cegado).`
+          : res.success
+            ? `Éxito en ${input.skill} (${res.total} vs CD ${res.dc}).`
+            : `Fallo en ${input.skill} (${res.total} vs CD ${res.dc}).`,
         checkId: res.checkId,
         skill: input.skill,
         dc: res.dc,
         dcRef: input.dcRef,
+        ...(res.autoFailed ? { autoFailed: true } : {}),
         rolls: res.rolls,
         naturalRoll: res.naturalRoll,
         modifier: res.modifier,

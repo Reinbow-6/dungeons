@@ -7,6 +7,7 @@ import {
   type Skill,
 } from "@dungeons/rules";
 
+import { createApplyConditionTool } from "@/agent/tools/apply-condition";
 import { createCombatAttackTool } from "@/agent/tools/combat-attack";
 import { createCombatEndTool } from "@/agent/tools/combat-end";
 import { createCombatNextTurnTool } from "@/agent/tools/combat-next-turn";
@@ -15,15 +16,26 @@ import { declareCheckTool } from "@/agent/tools/declare-check";
 import { createInventoryTool } from "@/agent/tools/inventory";
 import { createInvestigateTool } from "@/agent/tools/investigate";
 import { createLookupRulesTool } from "@/agent/tools/lookup-rules";
+import { createRememberFactTool } from "@/agent/tools/remember-fact";
 import { createResolveCheckTool } from "@/agent/tools/resolve-check";
 import { createResolveSaveTool } from "@/agent/tools/resolve-save";
 import { createRollbackTool } from "@/agent/tools/rollback-to-event";
 import type { DmToolRuntime } from "@/agent/tools/runtime";
 import { createTransitionSceneTool } from "@/agent/tools/transition-scene";
+import { sanitizeUntrustedText } from "@/lib/ai/prompt-safety";
+import type { SessionSummaryItem, StoredMemoryFact } from "@/lib/game/store";
 import { askUser } from "@/tools/ask_user";
 
 export * from "@/agent/types";
 export type { DmToolRuntime } from "@/agent/tools/runtime";
+
+export interface DmMemoryPromptContext {
+  sessionNumber?: number;
+  worldSummary?: string;
+  sessionSummaries?: readonly SessionSummaryItem[];
+  memoryFacts?: readonly StoredMemoryFact[];
+  olderTurnsDigest?: string;
+}
 
 const KEY_SKILLS: Skill[] = [
   "perception",
@@ -56,6 +68,7 @@ function loadInstructionsMarkdown(): string {
 export function buildDmSystemPrompt(
   state: GameState,
   events: readonly GameEvent[],
+  memoryContext?: DmMemoryPromptContext,
 ): string {
   const base = loadInstructionsMarkdown();
   const currentScene = state.scenes[state.sceneId];
@@ -91,14 +104,23 @@ export function buildDmSystemPrompt(
       }).join(", ");
       const inv =
         char.inventory.length > 0
-          ? char.inventory.map((i) => `${i.name} x${i.quantity}`).join(", ")
+          ? char.inventory
+              .map(
+                (i) =>
+                  `${sanitizeUntrustedText(i.name, 80)} x${i.quantity}`,
+              )
+              .join(", ")
           : "vacío";
       const cond =
         char.conditions.length > 0 ? char.conditions.join(", ") : "ninguna";
+      const safeName = sanitizeUntrustedText(char.name, 80);
+      const safeConc = char.concentratingOn
+        ? sanitizeUntrustedText(char.concentratingOn, 80)
+        : "ninguna";
 
       return [
-        `- **${char.name}** (actorId: \`${char.id}\`, ${char.species}, ${char.className} Nv.${char.level})`,
-        `  - PG: ${char.hp.current}/${char.hp.max} | CA: ${char.ac} | Condiciones: ${cond}`,
+        `- **${safeName}** (actorId: \`${char.id}\`, ${char.species}, ${char.className} Nv.${char.level})`,
+        `  - PG: ${char.hp.current}/${char.hp.max} (temp: ${char.hp.temp}) | CA: ${char.ac} | Condiciones: ${cond} | Agotamiento: ${char.exhaustionLevel} | Concentración: ${safeConc}`,
         `  - Modo de tiradas (\`rollAuthority\`): \`${char.rollAuthority}\` (${char.rollAuthority === "player-declared" ? "MODO HÍBRIDO: usá `declare_check` para las pruebas del jugador" : "MODO DIGITAL: usá `resolve_check`"})`,
         `  - Modificadores clave: ${mods}`,
         `  - Inventario: ${inv}`,
@@ -134,16 +156,22 @@ export function buildDmSystemPrompt(
             if (c.vulnerabilities.length > 0) {
               extras.push(`Vulnerable: ${c.vulnerabilities.join(", ")}`);
             }
+            if (c.resistances && c.resistances.length > 0) {
+              extras.push(`Resistente: ${c.resistances.join(", ")}`);
+            }
             if (c.immunities.length > 0) {
               extras.push(`Inmune: ${c.immunities.join(", ")}`);
             }
+            if (c.conditions && c.conditions.length > 0) {
+              extras.push(`Cond: ${c.conditions.join(", ")}`);
+            }
             const extrasStr = extras.length > 0 ? ` | ${extras.join(" · ")}` : "";
-            return `- ${idx + 1}. **${c.name}** (id: \`${c.id}\`, ${roleLabel})${statusTag} — Ini ${c.initiative} | PG ${c.hp.current}/${c.hp.max} | CA ${c.ac}${extrasStr}\n  - Ataques: ${attacksList || "ninguno"}`;
+            return `- ${idx + 1}. **${sanitizeUntrustedText(c.name, 80)}** (id: \`${c.id}\`, ${roleLabel})${statusTag} — Ini ${c.initiative} | PG ${c.hp.current}/${c.hp.max} | CA ${c.ac}${extrasStr}\n  - Ataques: ${attacksList || "ninguno"}`;
           })
           .join("\n");
 
         return `\n### Combate activo (Ronda ${activeCombat.round})
-- **Turno actual:** ${currentTurn ? `${currentTurn.name} (\`${currentTurn.id}\`)` : "ninguno"}
+- **Turno actual:** ${currentTurn ? `${sanitizeUntrustedText(currentTurn.name, 80)} (\`${currentTurn.id}\`)` : "ninguno"}
 ${rows}
 `;
       })()
@@ -162,12 +190,46 @@ ${rows}
           .join("\n")
       : "- Sin eventos todavía (seq 0).";
 
+  const activeFacts = (memoryContext?.memoryFacts ?? [])
+    .filter((f) => f.revertedBySeq == null)
+    .slice(0, 15);
+  const memoryBlock =
+    activeFacts.length > 0
+      ? `\n### Memoria persistente de la campaña\n<memory_facts>\n${activeFacts
+          .map(
+            (f) =>
+              `- [imp ${f.importance} · seq ${f.eventSeq} · ${sanitizeUntrustedText(f.category, 20)}] ${sanitizeUntrustedText(f.content, 280)}`,
+          )
+          .join("\n")}\n</memory_facts>\n`
+      : "";
+
+  const closedSessions = (memoryContext?.sessionSummaries ?? []).filter(
+    (s) => s.summary.trim().length > 0,
+  );
+  const worldLine = memoryContext?.worldSummary?.trim()
+    ? `Mundo: ${sanitizeUntrustedText(memoryContext.worldSummary, 300)}\n`
+    : "";
+  const recapsBlock =
+    worldLine || closedSessions.length > 0
+      ? `\n### Resumen de sesiones anteriores (Sesión activa #${memoryContext?.sessionNumber ?? 1})\n<session_recaps>\n${worldLine}${closedSessions
+          .slice(-5)
+          .map(
+            (s) =>
+              `- Sesión #${s.sessionNumber}: ${sanitizeUntrustedText(s.summary, 400)}`,
+          )
+          .join("\n")}\n</session_recaps>\n`
+      : "";
+
+  const digestBlock = memoryContext?.olderTurnsDigest?.trim()
+    ? `\n### Turnos antiguos compactados\n<older_turns_digest>\n${sanitizeUntrustedText(memoryContext.olderTurnsDigest, 1200)}\n</older_turns_digest>\n`
+    : "";
+
   return `${base}
 
 ---
 
 ## Estado vivo de la campaña (fuente autoritativa)
-- **Ruleset:** \`${state.ruleset}\` | **Última secuencia (\`lastSeq\`):** ${state.lastSeq}
+- **Ruleset:** \`${state.ruleset}\` | **Sesión actual:** #${memoryContext?.sessionNumber ?? 1} | **Última secuencia (\`lastSeq\`):** ${state.lastSeq}
 - **Escena actual (\`sceneId\`):** \`${state.sceneId}\` — **${currentScene?.titleEs ?? state.sceneId}**
 - **Resumen de escena:** ${currentScene?.summaryEs ?? ""}
 ${currentScene?.narrativeHookEs ? `- **Gancho narrativo:** ${currentScene.narrativeHookEs}` : ""}
@@ -180,7 +242,7 @@ ${cluesText}
 
 ### Personajes en escena
 ${charactersText}
-${combatText}
+${combatText}${recapsBlock}${memoryBlock}${digestBlock}
 ### Últimos eventos activos en \`event_log\`
 ${eventsText}
 `;
@@ -200,6 +262,8 @@ export function createDmTools(rt: DmToolRuntime) {
     combat_attack: createCombatAttackTool(rt),
     combat_next_turn: createCombatNextTurnTool(rt),
     combat_end: createCombatEndTool(rt),
+    apply_condition: createApplyConditionTool(rt),
+    remember_fact: createRememberFactTool(rt),
     ask_user: askUser,
   };
 }

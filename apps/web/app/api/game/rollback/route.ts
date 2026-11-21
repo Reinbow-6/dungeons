@@ -77,6 +77,7 @@ export async function POST(req: Request) {
         state: rb.state,
         events: rb.events,
         messages: rb.messages,
+        memoryFacts: rb.memoryFacts,
         logHeadSeq: rb.logHeadSeq,
       },
       { status: 200, headers },

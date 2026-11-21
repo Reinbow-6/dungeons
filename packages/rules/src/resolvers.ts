@@ -6,9 +6,15 @@ import {
 } from './events.js';
 import {
   combineRollMode,
+  evaluateConcentrationCheck,
   getCheckModifier,
+  getConditionPenalty,
   getProficiencyBonus,
   getSavingThrowModifier,
+  resolveDamageRelation,
+  resolveRollMode,
+  type ConcentrationCheckOutcome,
+  type DamageRelation,
 } from './modifiers.js';
 import {
   RollModeSchema,
@@ -21,8 +27,10 @@ import {
 import {
   AbilitySchema,
   CheckTargetSchema,
+  Condition5eSchema,
   VisibilitySchema,
   type Character,
+  type Condition5e,
   type GameState,
   type SceneClue,
   type Visibility,
@@ -91,6 +99,7 @@ export const ResolveCheckInputSchema = z
     dc: z.number().int().min(1).max(40).optional(),
     dcRef: z.string().min(1).optional(),
     mode: RollModeSchema.optional(),
+    requiresSight: z.boolean().optional(),
     visibility: VisibilitySchema.optional(),
     checkId: z.string().min(1).optional(),
   })
@@ -102,6 +111,7 @@ export type ResolveCheckResult =
       ok: true;
       checkId: string;
       success: boolean;
+      autoFailed?: boolean;
       margin: number;
       total: number;
       dc: number;
@@ -174,16 +184,21 @@ export function resolveCheck(
   }
 
   const modBreakdown = getCheckModifier(actor, input.skill, state.ruleset);
+  const condEffects = getConditionPenalty(actor, state.ruleset);
   const effectiveMode = combineRollMode(
     input.mode ?? 'normal',
     modBreakdown.imposesDisadvantage,
   );
-  const roll = rollD20(ctx.rng, effectiveMode);
-  const total = roll.chosen + modBreakdown.totalMod;
-  const success = total >= resolvedDc.dc;
-  const margin = total - resolvedDc.dc;
   const checkId = input.checkId ?? ctx.createId();
   const nextSeq = state.lastSeq + 1;
+
+  const autoFailed = Boolean(input.requiresSight && condEffects.autoFailSightChecks);
+  const roll = autoFailed ? null : rollD20(ctx.rng, effectiveMode);
+  const naturalRoll = roll ? roll.chosen : 0;
+  const rolls = roll ? roll.rolls : [];
+  const total = roll ? naturalRoll + modBreakdown.totalMod : 0;
+  const success = autoFailed ? false : total >= resolvedDc.dc;
+  const margin = autoFailed ? -resolvedDc.dc : total - resolvedDc.dc;
 
   const stateDelta: GameStateDelta = {
     flagsSet: {
@@ -202,7 +217,7 @@ export function resolveCheck(
     actor: actor.id,
     checkId,
     declaredTotal: null,
-    dieResults: roll.rolls,
+    dieResults: rolls,
     payload: {
       sceneId: input.sceneId,
       skill: input.skill,
@@ -215,6 +230,7 @@ export function resolveCheck(
       total,
       success,
       margin,
+      ...(autoFailed ? { autoFailed: true, autoFailReason: 'CONDITION_AUTO_FAIL' } : {}),
     },
     stateDelta,
     revertedByEventId: null,
@@ -227,13 +243,14 @@ export function resolveCheck(
     ok: true,
     checkId,
     success,
+    ...(autoFailed ? { autoFailed: true } : {}),
     margin,
     total,
     dc: resolvedDc.dc,
-    naturalRoll: roll.chosen,
+    naturalRoll,
     modifier: modBreakdown.totalMod,
     effectiveMode,
-    rolls: roll.rolls,
+    rolls,
     event,
     nextState,
   };
@@ -260,11 +277,13 @@ export type ResolveSaveResult =
       ok: true;
       checkId: string;
       success: boolean;
+      autoFailed?: boolean;
       margin: number;
       total: number;
       dc: number;
       naturalRoll: number;
       modifier: number;
+      effectiveMode?: RollMode;
       rolls: number[];
       event: GameEvent;
       nextState: GameState;
@@ -335,13 +354,22 @@ export function resolveSave(
     input.ability,
     state.ruleset,
   );
-  const mode = input.mode ?? 'normal';
-  const roll = rollD20(ctx.rng, mode);
-  const total = roll.chosen + saveBreakdown.totalMod;
-  const success = total >= resolvedDc.dc;
-  const margin = total - resolvedDc.dc;
+  const condEffects = getConditionPenalty(actor, state.ruleset);
+  const isStrOrDex = input.ability === 'str' || input.ability === 'dex';
+  const autoFailed = Boolean(condEffects.autoFailStrDexSaves && isStrOrDex);
+  const effectiveMode = resolveRollMode({
+    requested: input.mode ?? 'normal',
+    hasDisadvantage: condEffects.disadvantageOnDexSaves && input.ability === 'dex',
+  });
   const checkId = input.checkId ?? ctx.createId();
   const nextSeq = state.lastSeq + 1;
+
+  const roll = autoFailed ? null : rollD20(ctx.rng, effectiveMode);
+  const naturalRoll = roll ? roll.chosen : 0;
+  const rolls = roll ? roll.rolls : [];
+  const total = roll ? naturalRoll + saveBreakdown.totalMod : 0;
+  const success = autoFailed ? false : total >= resolvedDc.dc;
+  const margin = autoFailed ? -resolvedDc.dc : total - resolvedDc.dc;
 
   const stateDelta: GameStateDelta = {
     flagsSet: {
@@ -360,7 +388,7 @@ export function resolveSave(
     actor: actor.id,
     checkId,
     declaredTotal: null,
-    dieResults: roll.rolls,
+    dieResults: rolls,
     payload: {
       sceneId: input.sceneId,
       ability: input.ability,
@@ -368,11 +396,12 @@ export function resolveSave(
       dcRef: input.dcRef ?? null,
       dcSource: resolvedDc.source,
       dcDeclaredByModel: input.dc ?? null,
-      mode,
+      mode: effectiveMode,
       modifier: saveBreakdown.totalMod,
       total,
       success,
       margin,
+      ...(autoFailed ? { autoFailed: true, autoFailReason: 'CONDITION_AUTO_FAIL' } : {}),
     },
     stateDelta,
     revertedByEventId: null,
@@ -385,12 +414,14 @@ export function resolveSave(
     ok: true,
     checkId,
     success,
+    ...(autoFailed ? { autoFailed: true } : {}),
     margin,
     total,
     dc: resolvedDc.dc,
-    naturalRoll: roll.chosen,
+    naturalRoll,
     modifier: saveBreakdown.totalMod,
-    rolls: roll.rolls,
+    effectiveMode,
+    rolls,
     event,
     nextState,
   };
@@ -991,6 +1022,7 @@ export const ResolveDamageRollInputSchema = z
     sourceActorId: z.string().min(1),
     targetActorId: z.string().min(1),
     diceExpression: z.string().min(1),
+    damageType: z.string().min(1).optional(),
     visibility: VisibilitySchema.optional(),
   })
   .strict();
@@ -1002,9 +1034,12 @@ export type ResolveDamageRollResult =
   | {
       ok: true;
       damageRolled: number;
+      damageApplied: number;
+      damageRelation: DamageRelation;
       rolls: number[];
       hpBefore: number;
       hpAfter: number;
+      concentrationCheck?: ConcentrationCheckOutcome;
       event: GameEvent;
       nextState: GameState;
     }
@@ -1065,10 +1100,24 @@ export function resolveDamageRoll(
   }
 
   const damageRolled = Math.max(0, rollResult.total);
-  const absorbedByTemp = Math.min(target.hp.temp, damageRolled);
-  const remainingDamage = damageRolled - absorbedByTemp;
+  const dmgRel = input.damageType
+    ? resolveDamageRelation(damageRolled, input.damageType, {
+        resistances: target.resistances,
+      })
+    : { relation: 'normal' as DamageRelation, damageApplied: damageRolled };
+  const damageApplied = dmgRel.damageApplied;
+
+  const absorbedByTemp = Math.min(target.hp.temp, damageApplied);
+  const remainingDamage = damageApplied - absorbedByTemp;
   const hpBefore = target.hp.current;
   const hpAfter = Math.max(0, hpBefore - remainingDamage);
+  const concentrationCheck = evaluateConcentrationCheck({
+    character: target,
+    damageApplied,
+    hpAfter,
+    ruleset: state.ruleset,
+    rng: ctx.rng,
+  });
   const nextSeq = state.lastSeq + 1;
 
   const stateDelta: GameStateDelta = {
@@ -1086,6 +1135,17 @@ export function resolveDamageRoll(
               actorId: target.id,
               before: target.hp.temp,
               after: Math.max(0, target.hp.temp - absorbedByTemp),
+            },
+          ],
+        }
+      : {}),
+    ...(concentrationCheck && !concentrationCheck.maintained && target.concentratingOn
+      ? {
+          concentrationChanges: [
+            {
+              actorId: target.id,
+              before: target.concentratingOn,
+              after: null,
             },
           ],
         }
@@ -1109,9 +1169,13 @@ export function resolveDamageRoll(
       sourceActorId: input.sourceActorId,
       targetActorId: target.id,
       diceExpression: input.diceExpression,
+      damageType: input.damageType ?? null,
+      damageRelation: dmgRel.relation,
       rolls: rollResult.rolls,
       damageRolled,
+      damageApplied,
       absorbedByTemp,
+      concentrationCheck: concentrationCheck ?? null,
     },
     stateDelta,
     revertedByEventId: null,
@@ -1123,9 +1187,12 @@ export function resolveDamageRoll(
   return {
     ok: true,
     damageRolled,
+    damageApplied,
+    damageRelation: dmgRel.relation,
     rolls: rollResult.rolls,
     hpBefore,
     hpAfter,
+    ...(concentrationCheck ? { concentrationCheck } : {}),
     event,
     nextState,
   };
@@ -1252,6 +1319,218 @@ export function resolveInventoryChange(
     itemName: resolvedName,
     quantityBefore,
     quantityAfter,
+    event,
+    nextState,
+  };
+}
+
+// ---------- resolve_condition_change ----------
+
+const INCAPACITATING_CONDITIONS_SET = new Set<Condition5e>([
+  'incapacitated',
+  'paralyzed',
+  'petrified',
+  'stunned',
+  'unconscious',
+]);
+
+export const ResolveConditionChangeInputSchema = z
+  .object({
+    sceneId: z.string().min(1),
+    actorId: z.string().min(1),
+    addConditions: z.array(Condition5eSchema).min(1).optional(),
+    removeConditions: z.array(Condition5eSchema).min(1).optional(),
+    exhaustionDelta: z.number().int().min(-6).max(6).optional(),
+    concentratingOn: z.string().min(1).nullable().optional(),
+    reason: z.string().min(1),
+    visibility: VisibilitySchema.optional(),
+  })
+  .strict();
+export type ResolveConditionChangeInput = z.infer<
+  typeof ResolveConditionChangeInputSchema
+>;
+
+export type ResolveConditionChangeResult =
+  | {
+      ok: true;
+      actorId: string;
+      conditionsAfter: Condition5e[];
+      exhaustionLevelAfter: number;
+      concentratingOnAfter: string | null;
+      event: GameEvent;
+      nextState: GameState;
+    }
+  | {
+      ok: false;
+      code: 'INVALID_INPUT' | 'INVALID_SCENE' | 'UNKNOWN_ACTOR';
+      messageEs: string;
+    };
+
+export function resolveConditionChange(
+  state: GameState,
+  rawInput: unknown,
+  ctx: ResolverContext,
+): ResolveConditionChangeResult {
+  const parsed = ResolveConditionChangeInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      messageEs: `Parámetros inválidos en apply_condition: ${parsed.error.issues[0]?.message ?? 'formato incorrecto'}.`,
+    };
+  }
+
+  const input = parsed.data;
+  if (input.sceneId !== state.sceneId || !state.scenes[input.sceneId]) {
+    return {
+      ok: false,
+      code: 'INVALID_SCENE',
+      messageEs: `La escena "${input.sceneId}" no coincide con la escena activa ("${state.sceneId}").`,
+    };
+  }
+
+  const actor = state.characters[input.actorId];
+  if (!actor) {
+    return {
+      ok: false,
+      code: 'UNKNOWN_ACTOR',
+      messageEs: `No existe el personaje "${input.actorId}" en el estado actual.`,
+    };
+  }
+
+  const hasMutation =
+    (input.addConditions && input.addConditions.length > 0) ||
+    (input.removeConditions && input.removeConditions.length > 0) ||
+    (input.exhaustionDelta !== undefined && input.exhaustionDelta !== 0) ||
+    input.concentratingOn !== undefined;
+
+  if (!hasMutation) {
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      messageEs:
+        'Debés indicar al menos un cambio de condición, nivel de agotamiento o concentración.',
+    };
+  }
+
+  const uniqueAdd = Array.from(new Set(input.addConditions ?? []));
+  const uniqueRemove = Array.from(new Set(input.removeConditions ?? []));
+
+  let effectiveExhaustionDelta = input.exhaustionDelta;
+  if (effectiveExhaustionDelta === undefined) {
+    if (uniqueAdd.includes('exhaustion')) {
+      effectiveExhaustionDelta = 1;
+    } else if (uniqueRemove.includes('exhaustion')) {
+      effectiveExhaustionDelta = -actor.exhaustionLevel;
+    }
+  }
+
+  const nextExhaustion =
+    effectiveExhaustionDelta !== undefined
+      ? Math.max(0, Math.min(6, actor.exhaustionLevel + effectiveExhaustionDelta))
+      : actor.exhaustionLevel;
+
+  const conditionsAdded: Array<{ actorId: string; condition: Condition5e }> =
+    uniqueAdd
+      .filter((c) => c !== 'exhaustion')
+      .map((condition) => ({ actorId: actor.id, condition }));
+  if (nextExhaustion > 0 && !actor.conditions.includes('exhaustion')) {
+    conditionsAdded.push({ actorId: actor.id, condition: 'exhaustion' });
+  }
+
+  const conditionsRemoved: Array<{ actorId: string; condition: Condition5e }> =
+    uniqueRemove
+      .filter((c) => c !== 'exhaustion')
+      .map((condition) => ({ actorId: actor.id, condition }));
+  if (nextExhaustion === 0 && actor.conditions.includes('exhaustion')) {
+    conditionsRemoved.push({ actorId: actor.id, condition: 'exhaustion' });
+  }
+
+  const addedIncapacitating = uniqueAdd.some((c) =>
+    INCAPACITATING_CONDITIONS_SET.has(c),
+  );
+  const removedSet = new Set(uniqueRemove);
+  const remainsIncapacitated =
+    addedIncapacitating ||
+    actor.conditions.some(
+      (c) => !removedSet.has(c) && INCAPACITATING_CONDITIONS_SET.has(c),
+    );
+
+  let concentrationChanges:
+    | Array<{ actorId: string; before: string | null; after: string | null }>
+    | undefined;
+  if (addedIncapacitating || (input.concentratingOn && remainsIncapacitated)) {
+    if (actor.concentratingOn !== null) {
+      concentrationChanges = [
+        { actorId: actor.id, before: actor.concentratingOn, after: null },
+      ];
+    }
+  } else if (
+    input.concentratingOn !== undefined &&
+    input.concentratingOn !== actor.concentratingOn
+  ) {
+    concentrationChanges = [
+      {
+        actorId: actor.id,
+        before: actor.concentratingOn,
+        after: input.concentratingOn,
+      },
+    ];
+  }
+
+  const stateDelta: GameStateDelta = {
+    ...(conditionsAdded.length > 0 ? { conditionsAdded } : {}),
+    ...(conditionsRemoved.length > 0 ? { conditionsRemoved } : {}),
+    ...(nextExhaustion !== actor.exhaustionLevel
+      ? {
+          exhaustionChanges: [
+            {
+              actorId: actor.id,
+              before: actor.exhaustionLevel,
+              after: nextExhaustion,
+            },
+          ],
+        }
+      : {}),
+    ...(concentrationChanges ? { concentrationChanges } : {}),
+  };
+
+  const nextSeq = state.lastSeq + 1;
+  const event: GameEvent = {
+    id: ctx.createId(),
+    campaignId: state.campaignId,
+    sessionId: state.sessionId,
+    seq: nextSeq,
+    type: 'CONDITION_CHANGED',
+    source: 'engine',
+    visibility: input.visibility ?? 'public',
+    actor: actor.id,
+    checkId: null,
+    declaredTotal: null,
+    dieResults: null,
+    payload: {
+      sceneId: input.sceneId,
+      actorId: actor.id,
+      addConditions: uniqueAdd,
+      removeConditions: uniqueRemove,
+      exhaustionBefore: actor.exhaustionLevel,
+      exhaustionAfter: nextExhaustion,
+      reason: input.reason,
+    },
+    stateDelta,
+    revertedByEventId: null,
+    createdAt: ctx.now(),
+  };
+
+  const nextState = applyDelta(state, stateDelta, nextSeq);
+  const updatedActor = nextState.characters[actor.id]!;
+
+  return {
+    ok: true,
+    actorId: actor.id,
+    conditionsAfter: [...updatedActor.conditions],
+    exhaustionLevelAfter: updatedActor.exhaustionLevel,
+    concentratingOnAfter: updatedActor.concentratingOn,
     event,
     nextState,
   };

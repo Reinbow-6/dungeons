@@ -15,6 +15,7 @@ import { HybridCheckCard } from "@/components/game/hybrid-check-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { CharacterPresetInfo } from "@/lib/game/presets";
+import type { SessionSummaryItem, StoredMemoryFact } from "@/lib/game/store";
 
 const DISPLAY_SKILLS: Array<{ key: Skill; label: string }> = [
   { key: "perception", label: "Percepción" },
@@ -30,20 +31,28 @@ const DISPLAY_SKILLS: Array<{ key: Skill; label: string }> = [
 
 export function GameSidebar({
   campaignId,
+  sessionNumber = 1,
   state,
   events,
+  sessionSummaries = [],
+  memoryFacts = [],
   presets,
   onNewCampaign,
+  onStartNewSession,
   onStateUpdated,
   onToggleMode,
   onRollback,
   onManualDeclareVerified,
 }: {
   campaignId: string | null;
+  sessionNumber?: number;
   state: GameState | null;
   events: GameEvent[];
+  sessionSummaries?: SessionSummaryItem[];
+  memoryFacts?: StoredMemoryFact[];
   presets: CharacterPresetInfo[];
   onNewCampaign: (presetId: string, mode: "digital" | "hybrid") => Promise<void>;
+  onStartNewSession: () => Promise<void>;
   onStateUpdated: (nextState: GameState) => void;
   onToggleMode: (actorId: string, mode: "digital" | "hybrid") => Promise<void>;
   onRollback: (targetSeq: number) => Promise<void>;
@@ -58,6 +67,7 @@ export function GameSidebar({
     "digital",
   );
   const [busy, setBusy] = React.useState(false);
+  const [sessionBusy, setSessionBusy] = React.useState(false);
   const [manualSkill, setManualSkill] = React.useState<Skill>("perception");
   const [manualDc, setManualDc] = React.useState("12");
   const [showManualRoll, setShowManualRoll] = React.useState(false);
@@ -68,6 +78,7 @@ export function GameSidebar({
   const activeEvents = events.filter(
     (e) => e.revertedByEventId === null && e.type !== "ROLLBACK",
   );
+  const closedRecaps = sessionSummaries.filter((s) => s.summary.trim().length > 0);
 
   async function handleCreate() {
     setBusy(true);
@@ -78,11 +89,25 @@ export function GameSidebar({
     }
   }
 
+  async function handleRotateSession() {
+    setSessionBusy(true);
+    try {
+      await onStartNewSession();
+    } finally {
+      setSessionBusy(false);
+    }
+  }
+
   return (
     <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-t bg-muted/20 p-4 text-xs lg:w-96 lg:border-t-0 lg:border-l">
-      {/* Nueva aventura */}
+      {/* Nueva aventura y sesión */}
       <section className="flex flex-col gap-2 rounded-xl border bg-background p-3">
-        <h2 className="text-sm font-semibold">Aguas Quietas (5e Lite)</h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold">Aguas Quietas (5e Lite)</h2>
+          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+            Sesión #{sessionNumber}
+          </span>
+        </div>
         <div className="grid grid-cols-2 gap-2">
           <label className="flex flex-col gap-1">
             <span className="text-muted-foreground">Personaje</span>
@@ -112,9 +137,22 @@ export function GameSidebar({
             </select>
           </label>
         </div>
-        <Button size="sm" onClick={handleCreate} disabled={busy}>
-          {busy ? "Creando…" : "Nueva aventura"}
-        </Button>
+        <div className="flex gap-2">
+          <Button size="sm" className="flex-1" onClick={handleCreate} disabled={busy}>
+            {busy ? "Creando…" : "Nueva aventura"}
+          </Button>
+          {campaignId && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleRotateSession}
+              disabled={sessionBusy}
+              title="Cierra la sesión actual guardando un resumen y abre la siguiente"
+            >
+              {sessionBusy ? "Cerrando…" : `Cerrar → #${sessionNumber + 1}`}
+            </Button>
+          )}
+        </div>
       </section>
 
       {/* Escena actual */}
@@ -304,6 +342,53 @@ export function GameSidebar({
               </div>
             )}
           </div>
+        </section>
+      )}
+
+      {/* Memoria de campaña y resúmenes de sesión */}
+      {state && (memoryFacts.length > 0 || closedRecaps.length > 0) && (
+        <section className="flex flex-col gap-2 rounded-xl border bg-background p-3">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">Memoria de campaña</h3>
+            <span className="text-[10px] text-muted-foreground">
+              {memoryFacts.length} hecho(s)
+            </span>
+          </div>
+
+          {memoryFacts.length > 0 && (
+            <ul className="flex flex-col gap-1">
+              {memoryFacts.slice(0, 6).map((fact) => (
+                <li
+                  key={fact.id}
+                  className="rounded-md bg-muted/50 px-2 py-1 text-[11px]"
+                >
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    [seq {fact.eventSeq}]
+                  </span>{" "}
+                  {fact.content}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {closedRecaps.length > 0 && (
+            <div className="flex flex-col gap-1 border-t pt-2">
+              <span className="font-medium text-muted-foreground">
+                Sesiones cerradas:
+              </span>
+              {closedRecaps.slice(-3).map((recap) => (
+                <p
+                  key={recap.id}
+                  className="rounded bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground"
+                >
+                  <strong className="text-foreground">
+                    Sesión #{recap.sessionNumber}:
+                  </strong>{" "}
+                  {recap.summary}
+                </p>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
