@@ -75,7 +75,11 @@ export function ChatMessage({
     return (
       <Message align="end">
         <MessageContent>
-          <Bubble align="end" variant="muted">
+          <Bubble
+            align="end"
+            variant="muted"
+            className="*:data-[slot=bubble-content]:border-border/70 *:data-[slot=bubble-content]:bg-muted/75"
+          >
             <BubbleContent>
               {message.parts
                 .filter((part) => part.type === "text")

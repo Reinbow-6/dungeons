@@ -16,7 +16,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "smoke:providers": "node scripts/smoke-providers.mjs"
+    "smoke:providers": "node scripts/smoke-providers.mjs",
+    "smoke:stt": "node scripts/smoke-stt.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.65",

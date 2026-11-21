@@ -1,6 +1,7 @@
 "use client";
 
 import type { GameEvent, GameState } from "@dungeons/rules";
+import { DicesIcon } from "lucide-react";
 import * as React from "react";
 
 import type { DeclareCheckToolOutput } from "@/agent/types";
@@ -117,18 +118,23 @@ export function HybridCheckCard({
   const content = (
     <form
       onSubmit={handleSubmit}
-      className="flex flex-col gap-3 rounded-2xl border bg-popover p-4 text-sm text-popover-foreground shadow-sm"
+      className="flex flex-col gap-3 rounded-2xl border border-amber-500/35 bg-card/95 p-4 text-sm text-card-foreground shadow-lg backdrop-blur-md"
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="font-semibold">
-          Tirada física (Modo Híbrido) — {skill} ·{" "}
-          {dc !== undefined
-            ? `CD ${dc}`
-            : dcRef
-              ? `CD (${dcRef})`
-              : "CD escena"}
-        </span>
-        <span className="rounded-full bg-muted px-2 py-0.5 text-xs uppercase">
+        <div className="flex items-center gap-2 font-semibold">
+          <span className="inline-flex size-6 items-center justify-center rounded-md bg-amber-500/15 text-amber-600 dark:text-amber-400">
+            <DicesIcon className="size-3.5" />
+          </span>
+          <span className="font-mono text-xs tracking-tight sm:text-sm">
+            Tirada física · {skill} ·{" "}
+            {dc !== undefined
+              ? `CD ${dc}`
+              : dcRef
+                ? `CD (${dcRef})`
+                : "CD escena"}
+          </span>
+        </div>
+        <span className="rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] font-medium uppercase text-amber-700 dark:text-amber-300">
           {mode === "normal"
             ? "Normal"
             : mode === "advantage"
@@ -149,11 +155,14 @@ export function HybridCheckCard({
         }
       >
         <label className="flex flex-col gap-1 text-xs">
-          <span>Dado d20 {needsTwoDice ? "#1" : ""}</span>
+          <span className="text-muted-foreground">
+            Dado d20 {needsTwoDice ? "#1" : ""}
+          </span>
           <Input
             type="number"
             inputMode="numeric"
             placeholder="1..20"
+            className="h-10 font-mono text-base font-semibold tabular-nums"
             value={die1}
             onChange={(e) => setDie1(e.target.value)}
             required
@@ -162,11 +171,12 @@ export function HybridCheckCard({
 
         {needsTwoDice && (
           <label className="flex flex-col gap-1 text-xs">
-            <span>Dado d20 #2</span>
+            <span className="text-muted-foreground">Dado d20 #2</span>
             <Input
               type="number"
               inputMode="numeric"
               placeholder="1..20"
+              className="h-10 font-mono text-base font-semibold tabular-nums"
               value={die2}
               onChange={(e) => setDie2(e.target.value)}
               required

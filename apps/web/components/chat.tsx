@@ -38,6 +38,36 @@ import type { SessionSummaryItem, StoredMemoryFact } from "@/lib/game/store";
 import { type GatewayModel } from "@/lib/models";
 import { type ChatUIMessage } from "@/tools";
 
+function LiveTurnStatus({ status }: { status: "submitted" | "streaming" }) {
+  const [tenths, setTenths] = React.useState(0);
+
+  React.useEffect(() => {
+    const startedAt = Date.now();
+    const id = setInterval(() => {
+      setTenths(Math.floor((Date.now() - startedAt) / 100));
+    }, 100);
+    return () => {
+      clearInterval(id);
+    };
+  }, []);
+
+  return (
+    <div className="flex items-center justify-between gap-2 px-1 text-[11px] text-muted-foreground">
+      <div className="flex items-center gap-2">
+        <span className="size-1.5 animate-pulse rounded-full bg-indigo-400" />
+        <span>
+          {status === "submitted"
+            ? "El DM está resolviendo reglas y pensando…"
+            : "Narrando respuesta…"}
+        </span>
+      </div>
+      <span className="font-mono text-[11px] tabular-nums">
+        {(tenths / 10).toFixed(1)}s
+      </span>
+    </div>
+  );
+}
+
 interface CampaignApiPayload {
   campaignId: string | null;
   sessionId: string | null;
@@ -315,17 +345,21 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
       <div className="mx-auto flex min-h-0 w-full flex-1 flex-col">
         {messages.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center p-6">
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>Aguas Quietas — IA Dungeon Master</EmptyTitle>
+          <div className="flex flex-1 items-center justify-center bg-[radial-gradient(ellipse_at_top,oklch(0.62_0.16_265/0.09),transparent_65%)] p-6">
+            <Empty className="max-w-2xl border-none p-4 sm:p-8">
+              <EmptyHeader className="max-w-lg">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/25 bg-indigo-500/10 px-2.5 py-0.5 font-mono text-[10px] font-medium text-indigo-700 dark:text-indigo-300">
+                  SRD 5.2.1 · Motor determinista · Voz STT
+                </span>
+                <EmptyTitle className="mt-1 text-2xl font-semibold tracking-tight">
+                  Aguas Quietas
+                </EmptyTitle>
                 <EmptyDescription>
-                  Aventura D&amp;D 5e (SRD 5.2.1). El motor resuelve las reglas;
-                  podés alternar entre modo digital y mesa híbrida en el panel
-                  lateral.
+                  Campaña 5e-lite asistida por reglas deterministas. Escribí o
+                  usá el micrófono para jugar en modo digital o híbrido.
                 </EmptyDescription>
               </EmptyHeader>
-              <EmptyContent>
+              <EmptyContent className="max-w-xl">
                 <Suggestions
                   onSelect={(prompt) =>
                     sendMessage(
@@ -422,12 +456,15 @@ export function Chat({ models }: { models: GatewayModel[] }) {
           </MessageScrollerProvider>
         )}
 
-        <div className="mx-auto flex w-full max-w-2xl flex-col gap-2 px-6 pb-6">
+        <div className="mx-auto flex w-full max-w-2xl flex-col gap-2 px-6 pb-5 pt-2">
           {error && (
             <Alert variant="destructive">
               <AlertTitle>Error en la solicitud</AlertTitle>
               <AlertDescription>{error.message}</AlertDescription>
             </Alert>
+          )}
+          {(status === "submitted" || status === "streaming") && (
+            <LiveTurnStatus status={status} />
           )}
           <PromptForm
             models={models}

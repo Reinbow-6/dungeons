@@ -1,13 +1,20 @@
-import { PlusIcon } from "lucide-react"
+import { RotateCcwIcon } from "lucide-react";
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/button";
 
 export function NewChatButton() {
   return (
-    // eslint-disable-next-line @next/next/no-html-link-for-pages
-    <Button variant="secondary" render={<a href="/" />} nativeButton={false}>
-      <PlusIcon data-icon="inline-start" />
-      New Chat
+    <Button
+      variant="outline"
+      size="sm"
+      render={
+        // eslint-disable-next-line @next/next/no-html-link-for-pages
+        <a href="/" />
+      }
+      nativeButton={false}
+    >
+      <RotateCcwIcon data-icon="inline-start" className="size-3.5" />
+      Recargar mesa
     </Button>
-  )
+  );
 }

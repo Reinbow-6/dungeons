@@ -50,7 +50,7 @@ export function CombatTracker({
   return (
     <section
       aria-label="Rastreador de combate"
-      className="flex flex-col gap-2.5 rounded-xl border border-rose-500/30 bg-background p-3 shadow-xs"
+      className="flex flex-col gap-2.5 rounded-xl border border-rose-500/30 bg-card/90 p-3 shadow-xs"
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
@@ -149,16 +149,29 @@ export function CombatTracker({
                 </span>
               </div>
 
-              {(c.vulnerabilities.length > 0 || c.immunities.length > 0) && (
+              {(c.vulnerabilities.length > 0 ||
+                c.immunities.length > 0 ||
+                (c.resistances && c.resistances.length > 0) ||
+                (c.conditions && c.conditions.length > 0)) && (
                 <div className="flex flex-wrap gap-1 text-[10px] text-muted-foreground">
                   {c.vulnerabilities.length > 0 && (
                     <span className="rounded bg-amber-500/10 px-1 py-0.5 text-amber-700 dark:text-amber-300">
                       Vuln: {c.vulnerabilities.join(", ")}
                     </span>
                   )}
+                  {c.resistances && c.resistances.length > 0 && (
+                    <span className="rounded bg-indigo-500/10 px-1 py-0.5 text-indigo-700 dark:text-indigo-300">
+                      Res: {c.resistances.join(", ")}
+                    </span>
+                  )}
                   {c.immunities.length > 0 && (
                     <span className="rounded bg-muted px-1 py-0.5">
                       Inmune: {c.immunities.join(", ")}
+                    </span>
+                  )}
+                  {c.conditions && c.conditions.length > 0 && (
+                    <span className="rounded bg-rose-500/10 px-1 py-0.5 text-rose-700 dark:text-rose-300">
+                      Cond: {c.conditions.join(", ")}
                     </span>
                   )}
                 </div>

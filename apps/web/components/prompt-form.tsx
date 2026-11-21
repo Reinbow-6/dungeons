@@ -1,16 +1,34 @@
-"use client"
+"use client";
 
-import * as React from "react"
-import { ArrowUpIcon, SquareIcon } from "lucide-react"
+import * as React from "react";
+import {
+  ArrowUpIcon,
+  CheckIcon,
+  Loader2Icon,
+  MicIcon,
+  SendHorizontalIcon,
+  SquareIcon,
+  XIcon,
+} from "lucide-react";
 
-import { type GatewayModel } from "@/lib/models"
-import { ModelSelect } from "@/components/model-select"
+import { ModelSelect } from "@/components/model-select";
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupTextarea,
-} from "@/components/ui/input-group"
+} from "@/components/ui/input-group";
+import { useVoiceRecorder } from "@/hooks/use-voice-recorder";
+import { type GatewayModel } from "@/lib/models";
+import { cn } from "@/lib/utils";
+
+function formatElapsed(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${String(secs).padStart(2, "0")}`;
+}
+
+const EQ_MULTIPLIERS = [0.45, 0.85, 1.0, 0.72, 0.5] as const;
 
 export function PromptForm({
   models,
@@ -20,30 +38,105 @@ export function PromptForm({
   onSubmit,
   onStop,
 }: {
-  models: GatewayModel[]
-  model: string
-  onModelChange: (model: string) => void
-  isBusy: boolean
-  onSubmit: (text: string) => void
-  onStop: () => void
+  models: GatewayModel[];
+  model: string;
+  onModelChange: (model: string) => void;
+  isBusy: boolean;
+  onSubmit: (text: string) => void;
+  onStop: () => void;
 }) {
-  const [input, setInput] = React.useState("")
+  const [input, setInput] = React.useState("");
+  const [autoSendVoice, setAutoSendVoice] = React.useState(false);
+
+  const autoSendRef = React.useRef(autoSendVoice);
+  const isBusyRef = React.useRef(isBusy);
+  const onSubmitRef = React.useRef(onSubmit);
+
+  React.useEffect(() => {
+    autoSendRef.current = autoSendVoice;
+    isBusyRef.current = isBusy;
+    onSubmitRef.current = onSubmit;
+  }, [autoSendVoice, isBusy, onSubmit]);
+
+  const handleTranscript = React.useCallback((transcript: string) => {
+    const clean = transcript.trim();
+    if (!clean) return;
+
+    if (autoSendRef.current && !isBusyRef.current) {
+      onSubmitRef.current(clean);
+      setInput("");
+      return;
+    }
+
+    setInput((prev) => {
+      const base = prev.trimEnd();
+      return base ? `${base} ${clean}` : clean;
+    });
+  }, []);
+
+  const {
+    phase,
+    elapsedSec,
+    audioLevel,
+    errorMsg,
+    startRecording,
+    stopAndTranscribe,
+    cancelRecording,
+    clearError,
+  } = useVoiceRecorder({
+    onTranscript: handleTranscript,
+  });
+
+  React.useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "m") {
+        e.preventDefault();
+        if (phase === "recording") {
+          stopAndTranscribe();
+        } else if (phase === "idle" && !isBusyRef.current) {
+          void startRecording();
+        }
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [phase, startRecording, stopAndTranscribe]);
 
   function handleSubmit(event?: React.FormEvent) {
-    event?.preventDefault()
-    const text = input.trim()
-    if (!text || isBusy) return
-    onSubmit(text)
-    setInput("")
+    event?.preventDefault();
+    const text = input.trim();
+    if (!text || isBusy || phase !== "idle") return;
+    onSubmit(text);
+    setInput("");
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <InputGroup>
+    <form onSubmit={handleSubmit} className="flex flex-col gap-1.5">
+      {errorMsg && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-700 dark:text-rose-300"
+        >
+          <span className="truncate">{errorMsg}</span>
+          <button
+            type="button"
+            onClick={clearError}
+            aria-label="Cerrar aviso de voz"
+            className="shrink-0 rounded p-0.5 hover:bg-rose-500/15"
+          >
+            <XIcon className="size-3.5" />
+          </button>
+        </div>
+      )}
+
+      <InputGroup className="rounded-2xl border border-border/80 bg-card/90 shadow-sm focus-within:border-foreground/25 focus-within:ring-2 focus-within:ring-ring/25">
         <InputGroupTextarea
-          placeholder="Send a message…"
-          className="p-3.5"
+          placeholder="Describí tu acción, hablá con el micrófono o tirá una prueba…"
+          className="p-3.5 text-sm"
           value={input}
+          disabled={phase !== "idle"}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
             if (
@@ -51,42 +144,125 @@ export function PromptForm({
               !event.shiftKey &&
               !event.nativeEvent.isComposing
             ) {
-              event.preventDefault()
-              handleSubmit()
+              event.preventDefault();
+              handleSubmit();
             }
           }}
         />
-        <InputGroupAddon align="block-end">
+        <InputGroupAddon align="block-end" className="gap-1.5">
           <ModelSelect
             models={models}
             value={model}
             onValueChange={onModelChange}
           />
-          {isBusy ? (
-            <InputGroupButton
-              type="button"
-              size="icon-sm"
-              variant="outline"
-              aria-label="Stop generating"
-              className="ml-auto"
-              onClick={onStop}
-            >
-              <SquareIcon />
-            </InputGroupButton>
+
+          {phase === "recording" ? (
+            <div className="ml-auto flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-2.5 py-1">
+              <span className="size-2 shrink-0 animate-pulse rounded-full bg-rose-500" />
+              <div
+                aria-hidden="true"
+                className="flex h-3.5 items-center gap-0.5"
+              >
+                {EQ_MULTIPLIERS.map((mult, idx) => {
+                  const pct = Math.max(
+                    22,
+                    Math.min(100, Math.round((0.18 + audioLevel * mult) * 100)),
+                  );
+                  return (
+                    <span
+                      key={idx}
+                      className="w-0.5 rounded-full bg-rose-500/85 transition-[height] duration-75"
+                      style={{ height: `${pct}%` }}
+                    />
+                  );
+                })}
+              </div>
+              <span className="font-mono text-[11px] font-medium tabular-nums text-rose-700 dark:text-rose-300">
+                {formatElapsed(elapsedSec)}
+              </span>
+              <InputGroupButton
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Cancelar grabación"
+                title="Cancelar grabación"
+                onClick={cancelRecording}
+              >
+                <XIcon className="size-3.5" />
+              </InputGroupButton>
+              <InputGroupButton
+                type="button"
+                size="xs"
+                variant="default"
+                aria-label="Transcribir audio"
+                title="Detener y transcribir (Alt+M)"
+                className="bg-rose-600 text-white hover:bg-rose-500"
+                onClick={stopAndTranscribe}
+              >
+                <CheckIcon className="size-3.5" />
+                <span>Listo</span>
+              </InputGroupButton>
+            </div>
+          ) : phase === "transcribing" ? (
+            <div className="ml-auto flex items-center gap-1.5 rounded-xl border border-indigo-500/25 bg-indigo-500/10 px-2.5 py-1 text-xs text-indigo-700 dark:text-indigo-300">
+              <Loader2Icon className="size-3.5 animate-spin" />
+              <span>Transcribiendo con Whisper…</span>
+            </div>
           ) : (
-            <InputGroupButton
-              type="submit"
-              size="icon-sm"
-              variant="default"
-              aria-label="Send message"
-              className="ml-auto"
-              disabled={!input.trim()}
-            >
-              <ArrowUpIcon />
-            </InputGroupButton>
+            <div className="ml-auto flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setAutoSendVoice((prev) => !prev)}
+                aria-pressed={autoSendVoice}
+                title="Si está activo, envía automáticamente el mensaje al terminar la transcripción"
+                className={cn(
+                  "hidden h-7 items-center gap-1 rounded-xl border px-2 text-[11px] font-medium transition-colors sm:inline-flex",
+                  autoSendVoice
+                    ? "border-indigo-500/40 bg-indigo-500/15 text-indigo-700 dark:text-indigo-300"
+                    : "border-transparent text-muted-foreground hover:border-border hover:bg-muted/70 hover:text-foreground",
+                )}
+              >
+                <SendHorizontalIcon className="size-3" />
+                <span>Auto</span>
+              </button>
+
+              <InputGroupButton
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                aria-label="Grabar mensaje por voz (Alt+M)"
+                title="Hablar por micrófono · Groq Whisper (Alt+M)"
+                disabled={isBusy}
+                onClick={() => void startRecording()}
+              >
+                <MicIcon className="size-4" />
+              </InputGroupButton>
+
+              {isBusy ? (
+                <InputGroupButton
+                  type="button"
+                  size="icon-sm"
+                  variant="outline"
+                  aria-label="Detener generación"
+                  onClick={onStop}
+                >
+                  <SquareIcon />
+                </InputGroupButton>
+              ) : (
+                <InputGroupButton
+                  type="submit"
+                  size="icon-sm"
+                  variant="default"
+                  aria-label="Enviar mensaje"
+                  disabled={!input.trim()}
+                >
+                  <ArrowUpIcon />
+                </InputGroupButton>
+              )}
+            </div>
           )}
         </InputGroupAddon>
       </InputGroup>
     </form>
-  )
+  );
 }
