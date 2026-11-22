@@ -1,13 +1,18 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createGroq } from "@ai-sdk/groq";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import {
+  createOpenRouter,
+  type OpenRouterChatSettings,
+} from "@openrouter/ai-sdk-provider";
 import type { LanguageModel } from "ai";
 
 import {
   DEFAULT_MODEL,
   findModelOption,
   MODELS,
+  normalizeReasoningEffort,
   type LLMProviderId,
+  type ReasoningEffort,
 } from "@/lib/models";
 
 export type ProviderErrorCode =
@@ -55,7 +60,7 @@ function parseProviderEnv(raw?: string): LLMProviderId {
 function getDefaultModelIdForProvider(provider: LLMProviderId): string {
   switch (provider) {
     case "openrouter":
-      return "openrouter/free";
+      return "deepseek/deepseek-v4.1-flash-1017";
     case "groq":
       return "qwen/qwen3.8-27b";
     case "google":
@@ -89,7 +94,12 @@ export interface ResolvedLanguageModel {
   provider: LLMProviderId;
   modelId: string;
   selectionId: string;
+  reasoningEffort: ReasoningEffort;
   providerOptions?: Record<string, Record<string, string | number | boolean>>;
+}
+
+export interface ResolveLanguageModelOptions {
+  reasoningEffort?: ReasoningEffort;
 }
 
 /**
@@ -99,7 +109,9 @@ export interface ResolvedLanguageModel {
 export function resolveLanguageModel(
   requestedSelectionId?: string,
   env: Record<string, string | undefined> = process.env,
+  options?: ResolveLanguageModelOptions,
 ): ResolvedLanguageModel {
+  const reasoningEffort = normalizeReasoningEffort(options?.reasoningEffort);
   const config = getModelConfig(env);
   const effectiveSelection =
     requestedSelectionId && requestedSelectionId.trim().length > 0
@@ -131,11 +143,21 @@ export function resolveLanguageModel(
       );
     }
     const openrouter = createOpenRouter({ apiKey });
+    const settings: OpenRouterChatSettings = {
+      reasoning:
+        reasoningEffort === "none"
+          ? { enabled: false, exclude: true, effort: "none" }
+          : { enabled: true, effort: reasoningEffort },
+      ...(modelId === "deepseek/deepseek-v4.1-flash-1017"
+        ? { provider: { require_parameters: true } }
+        : {}),
+    };
     return {
-      model: openrouter.chat(modelId),
+      model: openrouter.chat(modelId, settings),
       provider: "openrouter",
       modelId,
       selectionId: option.id,
+      reasoningEffort,
     };
   }
 
@@ -157,6 +179,7 @@ export function resolveLanguageModel(
       provider: "groq",
       modelId,
       selectionId: option.id,
+      reasoningEffort,
       ...(providerOptions ? { providerOptions } : {}),
     };
   }
@@ -174,5 +197,6 @@ export function resolveLanguageModel(
     provider: "google",
     modelId,
     selectionId: option.id,
+    reasoningEffort,
   };
 }

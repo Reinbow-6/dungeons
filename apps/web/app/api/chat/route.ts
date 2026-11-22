@@ -26,6 +26,7 @@ import {
   resolveLanguageModel,
 } from "@/lib/ai/provider";
 import { resolveGuestSessionFromRequest } from "@/lib/auth/guest-session";
+import { resolveRequestAccess } from "@/lib/auth/whitelist";
 import { commitEventWithRetry, performRollback } from "@/lib/game/operations";
 import { getDefaultGameStore } from "@/lib/game/store";
 import {
@@ -38,7 +39,13 @@ import {
   recordSpendUsagePersistent,
 } from "@/lib/guardrails/spend-cap";
 import { createCorrelationId, serverErrorResponse } from "@/lib/http/errors";
-import { DEFAULT_MODEL, isModelAllowed } from "@/lib/models";
+import {
+  DEFAULT_MODEL,
+  GUEST_DEFAULT_MODEL,
+  isModelAllowed,
+  isModelAllowedForTier,
+  normalizeReasoningEffort,
+} from "@/lib/models";
 import {
   hashGuestId,
   logServerEvent,
@@ -81,6 +88,23 @@ export async function POST(req: Request) {
 
   const guestIdHash = hashGuestId(guest.guestId);
   const clientIp = extractClientIp(req);
+
+  let access;
+  try {
+    access = await resolveRequestAccess(req);
+  } catch (err) {
+    return serverErrorResponse({
+      route: "/api/chat",
+      err,
+      publicMessageEs: "Error interno al verificar permisos de acceso.",
+      status: 500,
+      errorCode: "ACCESS_CHECK_ERROR",
+      setCookieHeader: guest.setCookieHeader,
+      correlationId: requestId,
+      guestIdHash,
+    });
+  }
+
   let rateCheck;
   try {
     rateCheck = await checkRateLimitPersistent(guest.guestId, clientIp);
@@ -166,9 +190,19 @@ export async function POST(req: Request) {
     );
   }
 
-  const rawModel = (body as { model?: unknown })?.model;
+  const bodyRecord =
+    body && typeof body === "object" && !Array.isArray(body)
+      ? (body as Record<string, unknown>)
+      : {};
+  const rawModel = bodyRecord.model;
+  const rawReasoningEffort = bodyRecord.reasoningEffort;
+  const reasoningEffort = normalizeReasoningEffort(rawReasoningEffort);
+  const defaultModel =
+    access.tier === "whitelisted" ? DEFAULT_MODEL : GUEST_DEFAULT_MODEL;
   const requestedModelId =
-    typeof rawModel === "string" ? rawModel : DEFAULT_MODEL;
+    typeof rawModel === "string" && rawModel.trim().length > 0
+      ? rawModel.trim()
+      : defaultModel;
 
   if (!isModelAllowed(requestedModelId)) {
     return jsonWithGuestCookie(
@@ -181,9 +215,33 @@ export async function POST(req: Request) {
     );
   }
 
+  if (!isModelAllowedForTier(requestedModelId, access.tier)) {
+    logServerEvent({
+      level: "warn",
+      requestId,
+      route: "/api/chat",
+      event: "model_whitelist_required",
+      modelId: requestedModelId,
+      status: 403,
+      errorCode: "AUTH_WHITELIST_REQUIRED",
+      guestIdHash,
+    });
+    return jsonWithGuestCookie(
+      {
+        error:
+          "Iniciá sesión con una cuenta autorizada (whitelist) para usar DeepSeek V4.1 Flash.",
+        code: "AUTH_WHITELIST_REQUIRED",
+      },
+      403,
+      guest.setCookieHeader,
+    );
+  }
+
   let resolved;
   try {
-    resolved = resolveLanguageModel(requestedModelId);
+    resolved = resolveLanguageModel(requestedModelId, process.env, {
+      reasoningEffort,
+    });
   } catch (err) {
     if (err instanceof ProviderConfigError) {
       const status =
@@ -477,6 +535,11 @@ export async function POST(req: Request) {
       ? lastMessage.parts.filter((part) => part.type === "reasoning").length
       : 0;
   const reasoningStarts = new Map<string, { index: number; time: number }>();
+  let lastStepInputTokens = 0;
+  const systemPromptTokensEst = Math.ceil(systemPrompt.length / 4);
+  const fallbackContextTokensEst = Math.ceil(
+    (systemPrompt.length + compacted.estimatedRecentChars) / 4,
+  );
 
   const headers = new Headers();
   if (guest.setCookieHeader) {
@@ -497,18 +560,51 @@ export async function POST(req: Request) {
           });
         }
 
-        const start =
-          part.type === "reasoning-end"
-            ? reasoningStarts.get(part.id)
-            : undefined;
-
-        if (!start) {
+        if (part.type === "reasoning-end") {
+          const start = reasoningStarts.get(part.id);
+          if (start) {
+            return {
+              reasoningDurations: { [start.index]: Date.now() - start.time },
+            };
+          }
           return undefined;
         }
 
-        return {
-          reasoningDurations: { [start.index]: Date.now() - start.time },
-        };
+        if (part.type === "finish-step") {
+          const stepInput = part.usage?.inputTokens ?? 0;
+          if (stepInput > 0) {
+            lastStepInputTokens = stepInput;
+          }
+          return undefined;
+        }
+
+        if (part.type === "finish") {
+          const totalInput = part.totalUsage?.inputTokens ?? 0;
+          const outputTokens = part.totalUsage?.outputTokens ?? 0;
+          const reportedContext =
+            lastStepInputTokens > 0 ? lastStepInputTokens : totalInput;
+          const isExact = reportedContext > 0;
+          const contextTokens = isExact
+            ? reportedContext
+            : fallbackContextTokensEst;
+          const totalTurnTokens =
+            part.totalUsage?.totalTokens ?? contextTokens + outputTokens;
+
+          return {
+            contextUsage: {
+              contextTokens,
+              outputTokens,
+              totalTurnTokens,
+              windowMessages: compacted.recentMessages.length,
+              maxWindowMessages: compacted.maxRecentMessages,
+              trimmedMessages: compacted.trimmedCount,
+              systemPromptTokensEst,
+              isExact,
+            },
+          };
+        }
+
+        return undefined;
       },
       onFinish: async ({ messages: finalMessages, isAborted }) => {
         if (isAborted) return;

@@ -4,6 +4,7 @@ import { MoonIcon, SunIcon } from "lucide-react";
 import { useTheme } from "next-themes";
 
 import { Button } from "@/components/ui/button";
+import { usePlaySound } from "@/components/ui/sensory-ui/config/use-play-sound";
 import {
   Tooltip,
   TooltipContent,
@@ -12,6 +13,7 @@ import {
 
 export function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme();
+  const { play } = usePlaySound({ sound: "interaction.toggle" });
 
   return (
     <Tooltip>
@@ -22,9 +24,10 @@ export function ThemeToggle() {
             variant="ghost"
             size="icon-sm"
             aria-label="Cambiar tema (D)"
-            onClick={() =>
-              setTheme(resolvedTheme === "dark" ? "light" : "dark")
-            }
+            onClick={() => {
+              play();
+              setTheme(resolvedTheme === "dark" ? "light" : "dark");
+            }}
           >
             <SunIcon className="hidden size-4 dark:block" />
             <MoonIcon className="block size-4 dark:hidden" />

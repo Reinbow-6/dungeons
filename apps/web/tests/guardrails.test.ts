@@ -1,3 +1,4 @@
+import type { OpenRouterChatSettings } from "@openrouter/ai-sdk-provider";
 import { getTableColumns } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 
@@ -19,7 +20,14 @@ import {
 } from "@/lib/guardrails/rate-limit";
 import { createSpendCapGuard } from "@/lib/guardrails/spend-cap";
 import { serverErrorResponse } from "@/lib/http/errors";
-import { DEFAULT_MODEL, isModelAllowed, MODELS } from "@/lib/models";
+import {
+  DEFAULT_MODEL,
+  GUEST_DEFAULT_MODEL,
+  isModelAllowed,
+  isModelAllowedForTier,
+  MODELS,
+  normalizeReasoningEffort,
+} from "@/lib/models";
 
 describe("guest session cookies", () => {
   it("creates, verifies, and rejects tampered guest tokens", () => {
@@ -138,90 +146,145 @@ describe("rate limiter, IP extraction & daily spend cap guardrails", () => {
 });
 
 describe("provider config, error sanitization & Drizzle schema", () => {
-  it("defaults to OpenRouter free router and trims allowlist to the 3 curated free models", () => {
-    expect(DEFAULT_MODEL).toBe("openrouter:openrouter/free");
+  it("defaults to DeepSeek V4.1 Flash and exposes curated OpenRouter-only catalog without Groq chat models", () => {
+    expect(DEFAULT_MODEL).toBe("openrouter:deepseek/deepseek-v4.1-flash-1017");
+    expect(GUEST_DEFAULT_MODEL).toBe("openrouter:openrouter/free");
     expect(MODELS.map((m) => m.id)).toEqual([
+      "openrouter:deepseek/deepseek-v4.1-flash-1017",
       "openrouter:openrouter/free",
-      "groq:qwen/qwen3.8-27b",
-      "groq:openai/gpt-oss-120b",
     ]);
+    expect(MODELS.some((m) => m.provider === "groq")).toBe(false);
 
     const cfg = getModelConfig({});
     expect(cfg.provider).toBe("openrouter");
-    expect(cfg.modelId).toBe("openrouter/free");
-    expect(cfg.selectionId).toBe("openrouter:openrouter/free");
+    expect(cfg.modelId).toBe("deepseek/deepseek-v4.1-flash-1017");
+    expect(cfg.selectionId).toBe("openrouter:deepseek/deepseek-v4.1-flash-1017");
     expect(cfg.mechanicsModel).toBe(cfg.modelId);
     expect(cfg.narrativeModel).toBe(cfg.modelId);
-
-    const groqDefaultCfg = getModelConfig({ LLM_PROVIDER: "groq" });
-    expect(groqDefaultCfg.provider).toBe("groq");
-    expect(groqDefaultCfg.modelId).toBe("qwen/qwen3.8-27b");
-    expect(groqDefaultCfg.selectionId).toBe("groq:qwen/qwen3.8-27b");
-
-    const groqBackupCfg = getModelConfig({
-      LLM_PROVIDER: "groq",
-      LLM_MODEL: "openai/gpt-oss-120b",
-    });
-    expect(groqBackupCfg.modelId).toBe("openai/gpt-oss-120b");
 
     expect(() => getModelConfig({ LLM_PROVIDER: "unknown" })).toThrow(
       ProviderConfigError,
     );
   });
 
-  it("wires curated OpenRouter & Groq models safely and configures parsed reasoning for Qwen", () => {
-    // Discontinued and uncurated models must be rejected
+  it("enforces model allowlist by tier and normalizes reasoning effort", () => {
+    // Discontinued and Groq chat models must be rejected
     expect(isModelAllowed("openrouter:google/gemini-2.5-flash")).toBe(false);
     expect(isModelAllowed("google:gemini-2.5-flash")).toBe(false);
     expect(isModelAllowed("openrouter:anthropic/claude-sonnet-4.5")).toBe(false);
+    expect(isModelAllowed("groq:qwen/qwen3.8-27b")).toBe(false);
+    expect(isModelAllowed("groq:openai/gpt-oss-120b")).toBe(false);
     expect(isModelAllowed("groq:llama-3.1-8b-instant")).toBe(false);
     expect(isModelAllowed("groq:llama-3.3-70b-versatile")).toBe(false);
+
+    // Curated OpenRouter models are allowlisted
+    expect(
+      isModelAllowed("openrouter:deepseek/deepseek-v4.1-flash-1017"),
+    ).toBe(true);
+    expect(isModelAllowed("openrouter:openrouter/free")).toBe(true);
+
+    // Tier-based model gating
+    expect(
+      isModelAllowedForTier(
+        "openrouter:deepseek/deepseek-v4.1-flash-1017",
+        "guest",
+      ),
+    ).toBe(false);
+    expect(
+      isModelAllowedForTier(
+        "openrouter:deepseek/deepseek-v4.1-flash-1017",
+        "whitelisted",
+      ),
+    ).toBe(true);
+    expect(
+      isModelAllowedForTier("openrouter:openrouter/free", "guest"),
+    ).toBe(true);
+    expect(
+      isModelAllowedForTier("openrouter:openrouter/free", "whitelisted"),
+    ).toBe(true);
+    expect(
+      isModelAllowedForTier("openrouter:non-existent", "whitelisted"),
+    ).toBe(false);
+
+    // Reasoning effort normalization
+    expect(normalizeReasoningEffort(undefined)).toBe("none");
+    expect(normalizeReasoningEffort(null)).toBe("none");
+    expect(normalizeReasoningEffort("invalid")).toBe("none");
+    expect(normalizeReasoningEffort("none")).toBe("none");
+    expect(normalizeReasoningEffort("low")).toBe("low");
+    expect(normalizeReasoningEffort(" MEDIUM ")).toBe("medium");
+    expect(normalizeReasoningEffort("HIGH")).toBe("high");
+  });
+
+  it("wires OpenRouter models with require_parameters and reasoningEffort settings", () => {
     expect(() =>
-      resolveLanguageModel("google:gemini-2.5-flash", {
-        GOOGLE_GENERATIVE_AI_API_KEY: "test-key",
+      resolveLanguageModel("groq:qwen/qwen3.8-27b", {
+        GROQ_API_KEY: "test-key",
       }),
     ).toThrow(ProviderConfigError);
 
-    // Curated free/tool-calling models are allowlisted
-    expect(isModelAllowed("openrouter:openrouter/free")).toBe(true);
-    expect(isModelAllowed("groq:qwen/qwen3.8-27b")).toBe(true);
-    expect(isModelAllowed("groq:openai/gpt-oss-120b")).toBe(true);
-
-    // Missing API keys throw ProviderConfigError at request time (not import time)
+    expect(() =>
+      resolveLanguageModel("openrouter:deepseek/deepseek-v4.1-flash-1017", {}),
+    ).toThrow(ProviderConfigError);
     expect(() =>
       resolveLanguageModel("openrouter:openrouter/free", {}),
     ).toThrow(ProviderConfigError);
-    expect(() =>
-      resolveLanguageModel("groq:qwen/qwen3.8-27b", {}),
-    ).toThrow(ProviderConfigError);
-    expect(() =>
-      resolveLanguageModel("groq:openai/gpt-oss-120b", {}),
-    ).toThrow(ProviderConfigError);
 
-    // With API keys present, resolves concrete LanguageModel instances + providerOptions
-    const openrouterResolved = resolveLanguageModel(
-      "openrouter:openrouter/free",
-      { OPENROUTER_API_KEY: "test-openrouter-key" },
+    const env = { OPENROUTER_API_KEY: "test-openrouter-key" };
+
+    // Default DeepSeek V4.1 Flash with reasoning off ("none")
+    const deepseekNone = resolveLanguageModel(
+      "openrouter:deepseek/deepseek-v4.1-flash-1017",
+      env,
     );
-    expect(openrouterResolved.provider).toBe("openrouter");
-    expect(openrouterResolved.modelId).toBe("openrouter/free");
-    expect(openrouterResolved.model).toBeDefined();
+    expect(deepseekNone.provider).toBe("openrouter");
+    expect(deepseekNone.modelId).toBe("deepseek/deepseek-v4.1-flash-1017");
+    expect(deepseekNone.reasoningEffort).toBe("none");
+    const deepseekNoneSettings = (
+      deepseekNone.model as { settings?: OpenRouterChatSettings }
+    ).settings;
+    expect(deepseekNoneSettings?.provider).toEqual({
+      require_parameters: true,
+    });
+    expect(deepseekNoneSettings?.reasoning).toEqual({
+      enabled: false,
+      exclude: true,
+      effort: "none",
+    });
 
-    const qwenResolved = resolveLanguageModel("groq:qwen/qwen3.8-27b", {
-      GROQ_API_KEY: "test-groq-key",
+    // DeepSeek V4.1 Flash with reasoning high
+    const deepseekHigh = resolveLanguageModel(
+      "openrouter:deepseek/deepseek-v4.1-flash-1017",
+      env,
+      { reasoningEffort: "high" },
+    );
+    expect(deepseekHigh.reasoningEffort).toBe("high");
+    const deepseekHighSettings = (
+      deepseekHigh.model as { settings?: OpenRouterChatSettings }
+    ).settings;
+    expect(deepseekHighSettings?.provider).toEqual({
+      require_parameters: true,
     });
-    expect(qwenResolved.provider).toBe("groq");
-    expect(qwenResolved.modelId).toBe("qwen/qwen3.8-27b");
-    expect(qwenResolved.providerOptions).toEqual({
-      groq: { reasoningFormat: "parsed" },
+    expect(deepseekHighSettings?.reasoning).toEqual({
+      enabled: true,
+      effort: "high",
     });
 
-    const gptOssResolved = resolveLanguageModel("groq:openai/gpt-oss-120b", {
-      GROQ_API_KEY: "test-groq-key",
+    // OpenRouter Free Router with reasoning medium (no require_parameters)
+    const freeMedium = resolveLanguageModel("openrouter:openrouter/free", env, {
+      reasoningEffort: "medium",
     });
-    expect(gptOssResolved.provider).toBe("groq");
-    expect(gptOssResolved.modelId).toBe("openai/gpt-oss-120b");
-    expect(gptOssResolved.providerOptions).toBeUndefined();
+    expect(freeMedium.provider).toBe("openrouter");
+    expect(freeMedium.modelId).toBe("openrouter/free");
+    expect(freeMedium.reasoningEffort).toBe("medium");
+    const freeMediumSettings = (
+      freeMedium.model as { settings?: OpenRouterChatSettings }
+    ).settings;
+    expect(freeMediumSettings?.provider).toBeUndefined();
+    expect(freeMediumSettings?.reasoning).toEqual({
+      enabled: true,
+      effort: "medium",
+    });
   });
 
   it("never leaks internal err.message to clients via serverErrorResponse (P1.2)", async () => {

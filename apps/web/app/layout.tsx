@@ -39,6 +39,12 @@ export default function RootLayout({
       <body>
         <ThemeProvider>
           <TooltipProvider>
+            <a
+              href="#main-content"
+              className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-2 focus:z-50 focus:rounded-lg focus:border focus:border-border focus:bg-background focus:px-3 focus:py-1.5 focus:text-xs focus:font-medium focus:text-foreground focus:shadow-md"
+            >
+              Ir al contenido principal
+            </a>
             <div className="flex h-svh flex-col">
               <SiteHeader />
               {children}

@@ -14,10 +14,13 @@ import {
   SkullIcon,
   SparklesIcon,
   SwordsIcon,
+  XIcon,
 } from "lucide-react";
 import * as React from "react";
 
+import { useAuthAccess } from "@/components/auth-dialog";
 import { ChatMessage } from "@/components/chat-message";
+import { ContextMeter } from "@/components/game/context-meter";
 import { GameSidebar } from "@/components/game/game-sidebar";
 import { HybridCheckCard } from "@/components/game/hybrid-check-card";
 import { extractTurnOutcomeSummary } from "@/components/game/tool-parts";
@@ -25,7 +28,13 @@ import { PromptForm } from "@/components/prompt-form";
 import { QuestionCard } from "@/components/question-card";
 import { StatusIcon } from "@/components/status-icon";
 import { Suggestions } from "@/components/suggestions";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import {
   Empty,
   EmptyContent,
@@ -42,12 +51,44 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
+import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
 import { Trace, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace";
+import { useTtsPlayer } from "@/hooks/use-tts-player";
 import type { CharacterPresetInfo } from "@/lib/game/presets";
 import type { SessionSummaryItem, StoredMemoryFact } from "@/lib/game/store";
-import { type GatewayModel } from "@/lib/models";
+import {
+  DEFAULT_MODEL,
+  GUEST_DEFAULT_MODEL,
+  type GatewayModel,
+  type ReasoningEffort,
+} from "@/lib/models";
+import { useAppSettings } from "@/lib/settings/app-settings";
 import { cn } from "@/lib/utils";
 import { type ChatUIMessage } from "@/tools";
+
+function extractAssistantSpeechText(
+  message: ChatUIMessage | undefined,
+): string {
+  if (!message || message.role !== "assistant") {
+    return "";
+  }
+  const chunks: string[] = [];
+  let pending = "";
+  for (const part of message.parts) {
+    if (part.type === "text") {
+      pending += part.text;
+    } else if (part.type !== "source-url") {
+      if (pending.trim()) {
+        chunks.push(pending.trim());
+      }
+      pending = "";
+    }
+  }
+  if (pending.trim()) {
+    chunks.push(pending.trim());
+  }
+  return chunks.join("\n\n");
+}
 
 function LiveTurnStatus({ status }: { status: "submitted" | "streaming" }) {
   const [tenths, setTenths] = React.useState(0);
@@ -97,7 +138,14 @@ interface CampaignApiPayload {
 }
 
 export function Chat({ models }: { models: GatewayModel[] }) {
-  const [model, setModel] = React.useState(models[0]?.id ?? "");
+  const access = useAuthAccess();
+  const { settings, updateSettings } = useAppSettings();
+  const ttsPlayer = useTtsPlayer({
+    model: settings.ttsModel,
+    voice: settings.ttsVoice,
+    speed: settings.ttsSpeed,
+  });
+
   const [campaignId, setCampaignId] = React.useState<string | null>(null);
   const [sessionNumber, setSessionNumber] = React.useState<number>(1);
   const [gameState, setGameState] = React.useState<GameState | null>(null);
@@ -106,21 +154,96 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     SessionSummaryItem[]
   >([]);
   const [memoryFacts, setMemoryFacts] = React.useState<StoredMemoryFact[]>([]);
+  const { playSound } = useSensoryUI();
   const [presets, setPresets] = React.useState<CharacterPresetInfo[]>([]);
   // HUD lateral colapsado por defecto (estilo Old Greg's Tavern)
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
 
-  const resolvedModel = models.some((m) => m.id === model)
-    ? model
-    : (models[0]?.id ?? "");
+  const playSoundRef = React.useRef(playSound);
+  React.useEffect(() => {
+    playSoundRef.current = playSound;
+  }, [playSound]);
+
+  const ttsAutoPlayRef = React.useRef({
+    enabled:
+      access.tier === "whitelisted" &&
+      settings.ttsEnabled &&
+      settings.ttsAutoPlay,
+    model: settings.ttsModel,
+    voice: settings.ttsVoice,
+    speed: settings.ttsSpeed,
+    speak: ttsPlayer.speak,
+  });
+  React.useEffect(() => {
+    ttsAutoPlayRef.current = {
+      enabled:
+        access.tier === "whitelisted" &&
+        settings.ttsEnabled &&
+        settings.ttsAutoPlay,
+      model: settings.ttsModel,
+      voice: settings.ttsVoice,
+      speed: settings.ttsSpeed,
+      speak: ttsPlayer.speak,
+    };
+  }, [
+    access.tier,
+    settings.ttsEnabled,
+    settings.ttsAutoPlay,
+    settings.ttsModel,
+    settings.ttsVoice,
+    settings.ttsSpeed,
+    ttsPlayer.speak,
+  ]);
+
+  const lockedModelIds = React.useMemo(() => {
+    if (access.tier === "guest") {
+      return new Set(
+        models
+          .filter((item) => item.accessTier === "whitelisted")
+          .map((item) => item.id),
+      );
+    }
+    return new Set<string>();
+  }, [access.tier, models]);
+
+  const effectiveModel = React.useMemo(() => {
+    const selected = models.find((item) => item.id === settings.textModel);
+    if (access.tier === "guest") {
+      if (selected && selected.accessTier === "free") {
+        return selected.id;
+      }
+      return (
+        models.find((item) => item.id === GUEST_DEFAULT_MODEL)?.id ??
+        models.find((item) => item.accessTier === "free")?.id ??
+        GUEST_DEFAULT_MODEL
+      );
+    }
+    if (selected) {
+      return selected.id;
+    }
+    return (
+      models.find((item) => item.id === DEFAULT_MODEL)?.id ??
+      models[0]?.id ??
+      DEFAULT_MODEL
+    );
+  }, [access.tier, models, settings.textModel]);
 
   const [transportBundle] = React.useState(() => {
-    let currentBody: { model: string; campaignId: string | null } = {
-      model: models[0]?.id ?? "",
+    let currentBody: {
+      model: string;
+      campaignId: string | null;
+      reasoningEffort: ReasoningEffort;
+    } = {
+      model: GUEST_DEFAULT_MODEL,
       campaignId: null,
+      reasoningEffort: "none",
     };
     return {
-      updateBody(next: { model: string; campaignId: string | null }) {
+      updateBody(next: {
+        model: string;
+        campaignId: string | null;
+        reasoningEffort: ReasoningEffort;
+      }) {
         currentBody = next;
       },
       transport: new DefaultChatTransport({
@@ -131,16 +254,29 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   });
 
   React.useEffect(() => {
-    transportBundle.updateBody({ model: resolvedModel, campaignId });
-  }, [transportBundle, resolvedModel, campaignId]);
+    transportBundle.updateBody({
+      model: effectiveModel,
+      campaignId,
+      reasoningEffort: settings.reasoningEffort,
+    });
+  }, [transportBundle, effectiveModel, campaignId, settings.reasoningEffort]);
 
   React.useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
       if (event.altKey && event.key.toLowerCase() === "h") {
         event.preventDefault();
-        setSidebarOpen((prev) => !prev);
+        setSidebarOpen((prev) => {
+          const next = !prev;
+          playSoundRef.current(next ? "overlay.open" : "overlay.close");
+          return next;
+        });
       } else if (event.key === "Escape") {
-        setSidebarOpen(false);
+        setSidebarOpen((prev) => {
+          if (prev) {
+            playSoundRef.current("overlay.close");
+          }
+          return false;
+        });
       }
     }
     window.addEventListener("keydown", handleShortcut);
@@ -163,14 +299,8 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
   });
 
-  const refreshCampaign = React.useCallback(
-    async (targetCampaignId?: string, restoreMessages = false) => {
-      const url = targetCampaignId
-        ? `/api/game/campaigns?campaignId=${encodeURIComponent(targetCampaignId)}`
-        : "/api/game/campaigns";
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const data = (await res.json()) as CampaignApiPayload;
+  const applyCampaignPayload = React.useCallback(
+    (data: CampaignApiPayload, restoreMessages = false) => {
       setCampaignId(data.campaignId);
       setSessionNumber(data.sessionNumber ?? 1);
       setGameState(data.state);
@@ -235,18 +365,70 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     };
   }, [setMessages]);
 
+  const messagesRef = React.useRef(messages);
+  React.useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   const prevStatusRef = React.useRef(status);
   React.useEffect(() => {
+    let cancelled = false;
     const prev = prevStatusRef.current;
     prevStatusRef.current = status;
-    if (
+    if ((prev === "submitted" || prev === "streaming") && status === "ready") {
+      if (campaignId) {
+        const url = `/api/game/campaigns?campaignId=${encodeURIComponent(campaignId)}`;
+        void fetch(url)
+          .then((res) =>
+            res.ok ? (res.json() as Promise<CampaignApiPayload>) : null,
+          )
+          .then((data) => {
+            if (!cancelled && data) {
+              applyCampaignPayload(data, false);
+            }
+          })
+          .catch(() => undefined);
+      }
+      const lastMsg = messagesRef.current.at(-1);
+      if (lastMsg?.role === "assistant") {
+        const outcome = extractTurnOutcomeSummary(lastMsg);
+        if (
+          outcome?.outcomeLabel.includes("CRÍTICO") ||
+          outcome?.outcomeLabel.includes("NAT 20")
+        ) {
+          playSoundRef.current("hero.milestone");
+        } else if (outcome?.tone === "rose") {
+          playSoundRef.current("notification.warning");
+        } else if (outcome?.tone === "emerald") {
+          playSoundRef.current("notification.success");
+        } else {
+          playSoundRef.current("notification.info");
+        }
+
+        const autoPlay = ttsAutoPlayRef.current;
+        if (autoPlay.enabled) {
+          const speechText = extractAssistantSpeechText(lastMsg);
+          if (speechText) {
+            void autoPlay.speak({
+              id: lastMsg.id,
+              text: speechText,
+              model: autoPlay.model,
+              voice: autoPlay.voice,
+              speed: autoPlay.speed,
+            });
+          }
+        }
+      }
+    } else if (
       (prev === "submitted" || prev === "streaming") &&
-      status === "ready" &&
-      campaignId
+      status === "error"
     ) {
-      void refreshCampaign(campaignId, false);
+      playSoundRef.current("notification.error");
     }
-  }, [status, campaignId, refreshCampaign]);
+    return () => {
+      cancelled = true;
+    };
+  }, [status, campaignId, applyCampaignPayload]);
 
   async function handleNewCampaign(
     presetId: string,
@@ -389,27 +571,53 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   const firstAssistantIndex = messages.findIndex((m) => m.role === "assistant");
   const level1Slots = activeChar?.spellSlots["1"];
 
+  const ttsAvailable = access.tier === "whitelisted" && settings.ttsEnabled;
+  const showContextMeter = settings.showDevContextMeter;
+  const activeTurnStatus =
+    settings.showDevLatencyTimer &&
+    (status === "submitted" || status === "streaming")
+      ? status
+      : null;
+
   const submitPrompt = React.useCallback(
     (prompt: string) => {
       if (isBusy) return;
       void sendMessage(
         { text: prompt },
-        { body: { model: resolvedModel, campaignId } },
+        {
+          body: {
+            model: effectiveModel,
+            campaignId,
+            reasoningEffort: settings.reasoningEffort,
+          },
+        },
       );
     },
-    [isBusy, sendMessage, resolvedModel, campaignId],
+    [
+      isBusy,
+      sendMessage,
+      effectiveModel,
+      campaignId,
+      settings.reasoningEffort,
+    ],
   );
 
   return (
     <div className="tavern-backdrop relative flex min-h-0 flex-1 overflow-hidden">
-      {/* Lengüeta discreta en el borde izquierdo estilo Old Greg's Tavern */}
+      {/* Lengüeta discreta en el borde izquierdo estilo Old Greg's Tavern (en móvil usa la píldora superior derecha para evitar colisión) */}
       {!sidebarOpen && (
         <button
           type="button"
-          onClick={() => setSidebarOpen(true)}
+          onClick={() => {
+            playSound("overlay.open");
+            setSidebarOpen(true);
+          }}
           title="Abrir HUD de ficha, escena y combate (Alt+H)"
           aria-label="Abrir panel lateral de personaje"
-          className="fixed left-3 top-16 z-30 inline-flex size-7 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground shadow-xs backdrop-blur-md transition-colors hover:border-amber-500/40 hover:text-foreground"
+          className={cn(
+            "fixed left-3 top-16 z-30 size-8 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground shadow-xs backdrop-blur-md transition-colors hover:border-amber-500/40 hover:text-foreground",
+            activeChar && gameState ? "hidden md:inline-flex" : "inline-flex",
+          )}
         >
           <ChevronRightIcon className="size-3.5" />
         </button>
@@ -419,15 +627,18 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       {!sidebarOpen && activeChar && gameState && (
         <button
           type="button"
-          onClick={() => setSidebarOpen(true)}
+          onClick={() => {
+            playSound("overlay.open");
+            setSidebarOpen(true);
+          }}
           title="Ver ficha completa, conjuros, memoria y rollback (Alt+H)"
           className={cn(
-            "fixed right-4 top-16 z-30 flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] shadow-sm backdrop-blur-md transition-all hover:border-amber-500/45",
+            "fixed right-4 top-16 z-30 flex min-h-8 items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] shadow-sm backdrop-blur-md transition-all hover:border-amber-500/45",
             gameState.combat?.active
-              ? "border-rose-500/45 bg-rose-950/75 text-rose-100"
+              ? "border-rose-500/45 bg-rose-500/15 text-rose-950 dark:bg-rose-950/75 dark:text-rose-100"
               : activeChar.hp.current === 0
-                ? "border-rose-500/60 bg-rose-950/85 text-rose-100 animate-pulse"
-                : "border-border/70 bg-card/80 text-foreground/90",
+                ? "animate-pulse border-rose-500/60 bg-rose-500/20 text-rose-950 dark:bg-rose-950/85 dark:text-rose-100"
+                : "border-border/70 bg-card/85 text-foreground/90",
           )}
         >
           <span className="max-w-24 truncate font-medium text-amber-700 dark:text-amber-300">
@@ -435,9 +646,9 @@ export function Chat({ models }: { models: GatewayModel[] }) {
           </span>
           <span className="inline-flex items-center gap-1 font-mono tabular-nums">
             {activeChar.hp.current === 0 ? (
-              <SkullIcon className="size-3 text-rose-400" />
+              <SkullIcon className="size-3 text-rose-600 dark:text-rose-400" />
             ) : (
-              <HeartPulseIcon className="size-3 text-emerald-500" />
+              <HeartPulseIcon className="size-3 text-emerald-600 dark:text-emerald-400" />
             )}
             {activeChar.hp.current}/{activeChar.hp.max}
           </span>
@@ -446,13 +657,13 @@ export function Chat({ models }: { models: GatewayModel[] }) {
             {activeChar.ac}
           </span>
           {level1Slots && (
-            <span className="hidden items-center gap-0.5 font-mono tabular-nums text-violet-600 dark:text-violet-300 sm:inline-flex">
+            <span className="hidden items-center gap-0.5 font-mono tabular-nums text-violet-700 dark:text-violet-300 sm:inline-flex">
               <SparklesIcon className="size-3" />
               {level1Slots.current}/{level1Slots.max}
             </span>
           )}
           {gameState.combat?.active && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/25 px-1.5 py-0 font-mono text-[10px] font-semibold text-rose-200">
+            <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/20 px-1.5 py-0 font-mono text-[10px] font-semibold text-rose-800 dark:bg-rose-500/25 dark:text-rose-200">
               <SwordsIcon className="size-2.5" />R{gameState.combat.round}
             </span>
           )}
@@ -461,7 +672,10 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       )}
 
       {/* Columna editorial principal */}
-      <div className="mx-auto flex min-h-0 w-full flex-1 flex-col">
+      <main
+        id="main-content"
+        className="mx-auto flex min-h-0 w-full flex-1 flex-col"
+      >
         {messages.length === 0 ? (
           <div className="flex flex-1 items-center justify-center p-6">
             <Empty className="max-w-2xl border-none p-4 sm:p-8">
@@ -470,7 +684,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                   SRD 5.2.1 · {gameState?.ruleset ?? "5e-full"} · Motor determinista · Voz STT
                 </span>
                 <EmptyTitle className="mt-2 font-serif text-3xl font-semibold tracking-tight">
-                  Aguas Quietas
+                  <h1>Aguas Quietas</h1>
                 </EmptyTitle>
                 <EmptyDescription className="text-[14px] leading-relaxed">
                   Crónica interactiva 5e asistida por motor determinista. Escribí,
@@ -491,7 +705,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                 className="pointer-events-none sticky top-0 z-10 h-6 w-full bg-gradient-to-b from-background/90 to-transparent"
               />
               <MessageScrollerViewport>
-                <MessageScrollerContent className="mx-auto flex w-full max-w-[700px] flex-col gap-7 px-5 pb-8 pt-2 sm:px-6">
+                <MessageScrollerContent className="mx-auto flex w-full max-w-[700px] flex-col gap-7 px-5 pb-8 pt-12 sm:px-6 sm:pt-4">
                   {messages.map((message, idx) => {
                     const nextMessage = messages[idx + 1];
                     const turnOutcome =
@@ -533,6 +747,11 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                       message.role === "assistant" &&
                       idx === messages.length - 1;
 
+                    const speechText =
+                      ttsAvailable && message.role === "assistant"
+                        ? extractAssistantSpeechText(message)
+                        : "";
+
                     return (
                       <MessageScrollerItem
                         key={message.id}
@@ -546,6 +765,26 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                           hideSuggestions={Boolean(
                             pendingQuestion || pendingDeclareCheck,
                           )}
+                          showReasoning={settings.showDevReasoningView}
+                          ttsAvailable={ttsAvailable}
+                          isSpeaking={ttsPlayer.playingId === message.id}
+                          isLoadingAudio={ttsPlayer.loadingId === message.id}
+                          onSpeak={
+                            ttsAvailable && speechText
+                              ? () => {
+                                  void ttsPlayer.speak({
+                                    id: message.id,
+                                    text: speechText,
+                                    model: settings.ttsModel,
+                                    voice: settings.ttsVoice,
+                                    speed: settings.ttsSpeed,
+                                  });
+                                }
+                              : undefined
+                          }
+                          onStopAudio={
+                            ttsAvailable ? ttsPlayer.stop : undefined
+                          }
                           characterName={activeChar?.name}
                           characterClassName={activeChar?.className}
                           turnOutcome={turnOutcome}
@@ -558,7 +797,11 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                               ? () =>
                                   regenerate({
                                     messageId: message.id,
-                                    body: { model: resolvedModel, campaignId },
+                                    body: {
+                                      model: effectiveModel,
+                                      campaignId,
+                                      reasoningEffort: settings.reasoningEffort,
+                                    },
                                   })
                               : undefined
                           }
@@ -632,19 +875,49 @@ export function Chat({ models }: { models: GatewayModel[] }) {
               <AlertDescription>{error.message}</AlertDescription>
             </Alert>
           )}
-          {(status === "submitted" || status === "streaming") && (
-            <LiveTurnStatus status={status} />
+          {ttsPlayer.error && (
+            <Alert variant="destructive">
+              <AlertTitle>Error de audio (TTS)</AlertTitle>
+              <AlertDescription>{ttsPlayer.error}</AlertDescription>
+              <AlertAction>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Cerrar alerta de audio"
+                  onClick={ttsPlayer.clearError}
+                >
+                  <XIcon className="size-3.5" />
+                </Button>
+              </AlertAction>
+            </Alert>
+          )}
+          {(showContextMeter || activeTurnStatus !== null) && (
+            <div className="flex flex-wrap items-center justify-between gap-2 px-0.5">
+              {showContextMeter && (
+                <ContextMeter messages={messages} isBusy={isBusy} />
+              )}
+              {activeTurnStatus && (
+                <LiveTurnStatus status={activeTurnStatus} />
+              )}
+            </div>
           )}
           <PromptForm
             models={models}
-            model={resolvedModel}
-            onModelChange={setModel}
+            model={effectiveModel}
+            lockedModelIds={lockedModelIds}
+            onModelChange={(nextModel) => {
+              updateSettings({ textModel: nextModel });
+            }}
             isBusy={isBusy}
             onSubmit={submitPrompt}
-            onStop={() => stop()}
+            onStop={() => {
+              playSound("interaction.tap");
+              stop();
+            }}
           />
         </div>
-      </div>
+      </main>
 
       {/* HUD Lateral colapsable (drawer deslizable) */}
       <GameSidebar
@@ -663,6 +936,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         onToggleMode={handleToggleMode}
         onRollback={handleRollback}
         onQuickAction={(prompt) => {
+          playSound("interaction.confirm");
           setSidebarOpen(false);
           submitPrompt(prompt);
         }}
@@ -674,7 +948,13 @@ export function Chat({ models }: { models: GatewayModel[] }) {
               {
                 text: `[Tirada física validada] ${result.skill}: dados [${result.dieResults.join(", ")}], total ${result.declaredTotal} vs CD ${result.dc} → ${result.success ? "Éxito" : "Fallo"}.`,
               },
-              { body: { model: resolvedModel, campaignId } },
+              {
+                body: {
+                  model: effectiveModel,
+                  campaignId,
+                  reasoningEffort: settings.reasoningEffort,
+                },
+              },
             );
           }
         }}

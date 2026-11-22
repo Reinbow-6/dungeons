@@ -8,6 +8,7 @@ import type { DeclareCheckToolOutput } from "@/agent/types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
 
 export interface HybridCheckCardProps {
   campaignId: string;
@@ -40,6 +41,7 @@ export function HybridCheckCard({
   sticky = true,
   onVerified,
 }: HybridCheckCardProps) {
+  const { playSound } = useSensoryUI();
   const needsTwoDice = mode !== "normal";
   const [die1, setDie1] = React.useState("");
   const [die2, setDie2] = React.useState("");
@@ -61,11 +63,13 @@ export function HybridCheckCard({
     const parsedDie2 = trimmedDie2 === "" ? Number.NaN : Number(trimmedDie2);
 
     if (!Number.isInteger(parsedDie1)) {
+      playSound("notification.warning");
       setErrorMsg("Ingresá un número entero para el dado físico.");
       return;
     }
 
     if (needsTwoDice && !Number.isInteger(parsedDie2)) {
+      playSound("notification.warning");
       setErrorMsg("Ingresá números enteros para ambos dados físicos.");
       return;
     }
@@ -100,15 +104,22 @@ export function HybridCheckCard({
       };
 
       if (!res.ok || !data.ok || !data.result || !data.state || !data.event) {
+        playSound("notification.error");
         setErrorMsg(data.messageEs ?? "El motor rechazó la tirada declarada.");
         setExpectedRange(data.expectedRange ?? null);
         return;
       }
 
+      playSound(
+        data.result.naturalRoll === 20
+          ? "hero.milestone"
+          : "notification.success",
+      );
       setDie1("");
       setDie2("");
       onVerified(data.result, data.state, data.event);
     } catch {
+      playSound("notification.error");
       setErrorMsg("Error de red al validar la tirada.");
     } finally {
       setSubmitting(false);
@@ -210,7 +221,7 @@ export function HybridCheckCard({
   }
 
   return (
-    <div className="sticky bottom-2 isolate z-50 mx-auto w-full max-w-2xl px-6 pt-2">
+    <div className="sticky bottom-2 isolate z-50 mx-auto w-full max-w-[700px] px-5 pt-2 sm:px-6">
       {content}
     </div>
   );

@@ -6,6 +6,7 @@ import type {
   SuggestedActionItem,
   SuggestedActionTone,
 } from "@/agent/types";
+import { usePlaySound } from "@/components/ui/sensory-ui/config/use-play-sound";
 import { cn } from "@/lib/utils";
 
 function inferTone(
@@ -107,15 +108,18 @@ export function SuggestedActions({
   disabled?: boolean;
   onSelect: (prompt: string) => void;
 }) {
+  const { play } = usePlaySound({ sound: "interaction.confirm" });
   const onSelectRef = React.useRef(onSelect);
+  const playRef = React.useRef(play);
   const actionsRef = React.useRef(actions);
   const disabledRef = React.useRef(disabled);
 
   React.useEffect(() => {
     onSelectRef.current = onSelect;
+    playRef.current = play;
     actionsRef.current = actions;
     disabledRef.current = disabled;
-  }, [onSelect, actions, disabled]);
+  }, [onSelect, play, actions, disabled]);
 
   React.useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -142,6 +146,7 @@ export function SuggestedActions({
         const chosen = actionsRef.current[index];
         if (chosen) {
           event.preventDefault();
+          playRef.current();
           onSelectRef.current(chosen.label);
         }
       }
@@ -157,7 +162,7 @@ export function SuggestedActions({
 
   return (
     <div
-      className="mt-3 flex flex-col gap-1.5"
+      className="mt-3 flex flex-col gap-2"
       aria-label="Acciones sugeridas para este turno"
     >
       {actions.map((action, idx) => {
@@ -168,9 +173,12 @@ export function SuggestedActions({
             key={`${idx}-${action.skill}-${action.label.slice(0, 24)}`}
             type="button"
             disabled={disabled}
-            onClick={() => onSelect(action.label)}
+            onClick={() => {
+              play();
+              onSelect(action.label);
+            }}
             className={cn(
-              "group flex w-fit max-w-full items-start gap-2.5 rounded-lg border px-3 py-1.5 text-left transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+              "group flex min-h-10 w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 sm:w-fit sm:max-w-full",
               styles.container,
             )}
           >

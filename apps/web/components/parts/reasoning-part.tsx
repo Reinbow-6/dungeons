@@ -32,7 +32,7 @@ export function ReasoningPart({
       <TraceIcon>
         <StatusIcon status={status} />
       </TraceIcon>
-      <TraceTitle>{running ? "Thinking" : "Thought"}</TraceTitle>
+      <TraceTitle>{running ? "Deliberando" : "Razonamiento"}</TraceTitle>
       {!running && duration !== undefined && (
         <TraceDescription>
           {Math.max(1, Math.round(duration / 1000))}s

@@ -29,6 +29,7 @@ import { CombatTracker } from "@/components/game/combat-tracker";
 import { HybridCheckCard } from "@/components/game/hybrid-check-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
 import type { CharacterPresetInfo } from "@/lib/game/presets";
 import type { SessionSummaryItem, StoredMemoryFact } from "@/lib/game/store";
 import { cn } from "@/lib/utils";
@@ -100,6 +101,7 @@ export function GameSidebar({
     event: GameEvent,
   ) => void;
 }) {
+  const { playSound } = useSensoryUI();
   const [selectedPreset, setSelectedPreset] = React.useState("pc_seraphina");
   const [selectedMode, setSelectedMode] = React.useState<"digital" | "hybrid">(
     "digital",
@@ -130,10 +132,16 @@ export function GameSidebar({
       )
     : [];
 
+  function handleClose() {
+    playSound("overlay.close");
+    onClose();
+  }
+
   async function handleCreate() {
     setBusy(true);
     try {
       await onNewCampaign(selectedPreset, selectedMode, selectedRuleset);
+      playSound("notification.success");
       setShowNewCampaign(false);
     } finally {
       setBusy(false);
@@ -144,6 +152,7 @@ export function GameSidebar({
     setSessionBusy(true);
     try {
       await onStartNewSession();
+      playSound("notification.success");
     } finally {
       setSessionBusy(false);
     }
@@ -166,14 +175,17 @@ export function GameSidebar({
       {open && (
         <div
           aria-hidden
-          onClick={onClose}
+          onClick={handleClose}
           className="fixed inset-0 z-30 bg-black/45 backdrop-blur-[2px] transition-opacity"
         />
       )}
 
       <aside
+        role="dialog"
+        aria-modal={open ? "true" : undefined}
         aria-label="Panel HUD de campaña"
         aria-hidden={!open}
+        inert={!open || undefined}
         className={cn(
           "fixed inset-y-0 right-0 z-40 flex w-[388px] max-w-[92vw] flex-col gap-3 overflow-y-auto border-l border-border/80 bg-sidebar/95 p-3.5 text-xs shadow-2xl backdrop-blur-xl transition-transform duration-200 ease-out",
           open ? "translate-x-0" : "pointer-events-none translate-x-full",
@@ -197,7 +209,7 @@ export function GameSidebar({
             </div>
             <div className="flex items-center gap-1">
               {state && (
-                <span className="rounded border border-indigo-500/25 bg-indigo-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-indigo-700 dark:text-indigo-300">
+                <span className="rounded border border-border/70 bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-muted-foreground">
                   seq {state.lastSeq}
                 </span>
               )}
@@ -205,12 +217,12 @@ export function GameSidebar({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                className="size-7 text-muted-foreground hover:text-foreground"
-                onClick={onClose}
+                className="size-8 text-muted-foreground hover:text-foreground"
+                onClick={handleClose}
                 title="Cerrar panel (Esc / Alt+H)"
                 aria-label="Cerrar panel lateral"
               >
-                <XIcon className="size-3.5" />
+                <XIcon className="size-4" />
               </Button>
             </div>
           </div>
@@ -331,11 +343,12 @@ export function GameSidebar({
                   type="button"
                   onClick={() => {
                     if (activeChar.rollAuthority === "player-declared") {
+                      playSound("interaction.toggle");
                       void onToggleMode(activeChar.id, "digital");
                     }
                   }}
                   className={cn(
-                    "rounded-md px-2 py-0.5 font-medium transition-colors",
+                    "min-h-7 rounded-md px-2 py-0.5 font-medium transition-colors",
                     activeChar.rollAuthority !== "player-declared"
                       ? "bg-background text-foreground shadow-xs"
                       : "text-muted-foreground hover:text-foreground",
@@ -347,11 +360,12 @@ export function GameSidebar({
                   type="button"
                   onClick={() => {
                     if (activeChar.rollAuthority !== "player-declared") {
+                      playSound("interaction.toggle");
                       void onToggleMode(activeChar.id, "hybrid");
                     }
                   }}
                   className={cn(
-                    "rounded-md px-2 py-0.5 font-medium transition-colors",
+                    "min-h-7 rounded-md px-2 py-0.5 font-medium transition-colors",
                     activeChar.rollAuthority === "player-declared"
                       ? "bg-amber-500/20 text-amber-700 dark:text-amber-300 shadow-xs"
                       : "text-muted-foreground hover:text-foreground",
@@ -572,9 +586,14 @@ export function GameSidebar({
                     role="tab"
                     type="button"
                     aria-selected={selected}
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => {
+                      if (activeTab !== tab.id) {
+                        playSound("navigation.tab");
+                        setActiveTab(tab.id);
+                      }
+                    }}
                     className={cn(
-                      "flex items-center justify-center gap-1 rounded-lg px-1.5 py-1.5 text-[11px] font-medium transition-colors",
+                      "flex min-h-8 items-center justify-center gap-1 rounded-lg px-1.5 py-1.5 text-[11px] font-medium transition-colors",
                       selected
                         ? "bg-card text-foreground shadow-xs ring-1 ring-border/70"
                         : "text-muted-foreground hover:text-foreground",
@@ -672,28 +691,28 @@ export function GameSidebar({
                       type="button"
                       size="sm"
                       variant="outline"
-                      className="h-7 text-[11px]"
+                      className="min-h-8 text-[11px]"
                       onClick={() =>
                         onQuickAction(
                           "Tomo un descanso corto para recuperar fuerzas gastando Dados de Golpe.",
                         )
                       }
                     >
-                      <MoonIcon className="size-3 text-emerald-500" />
+                      <MoonIcon className="size-3 text-emerald-600 dark:text-emerald-400" />
                       Descanso corto
                     </Button>
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
-                      className="h-7 text-[11px]"
+                      className="min-h-8 text-[11px]"
                       onClick={() =>
                         onQuickAction(
                           "Buscamos un lugar seguro para tomar un descanso largo completo.",
                         )
                       }
                     >
-                      <MoonIcon className="size-3 text-indigo-400" />
+                      <MoonIcon className="size-3 text-violet-600 dark:text-violet-400" />
                       Descanso largo
                     </Button>
                   </div>
@@ -869,7 +888,7 @@ export function GameSidebar({
                         key={fact.id}
                         className="rounded-lg border border-border/60 bg-background/50 px-2.5 py-1.5 text-[11px]"
                       >
-                        <span className="font-mono text-[10px] tabular-nums text-indigo-600 dark:text-indigo-400">
+                        <span className="font-mono text-[10px] tabular-nums text-amber-700 dark:text-amber-400">
                           [seq {fact.eventSeq}]
                         </span>{" "}
                         {fact.content}
@@ -911,7 +930,10 @@ export function GameSidebar({
                       size="sm"
                       variant="outline"
                       className="h-7 text-[11px]"
-                      onClick={() => onRollback(0)}
+                      onClick={() => {
+                        playSound("navigation.backward");
+                        void onRollback(0);
+                      }}
                     >
                       Reiniciar a seq 0
                     </Button>
@@ -948,7 +970,10 @@ export function GameSidebar({
                             size="sm"
                             variant="ghost"
                             className="h-7 px-2 text-[11px]"
-                            onClick={() => onRollback(ev.seq)}
+                            onClick={() => {
+                              playSound("navigation.backward");
+                              void onRollback(ev.seq);
+                            }}
                             title={`Volver al estado en secuencia ${ev.seq}`}
                           >
                             Volver

@@ -1,8 +1,8 @@
 import type { DmChatUIMessage } from "@/agent/types";
 import { sanitizeUntrustedText } from "@/lib/ai/prompt-safety";
 
-const DEFAULT_MAX_RECENT_MESSAGES = 16;
-const DEFAULT_MAX_ESTIMATED_CHARS = 24_000;
+export const DEFAULT_MAX_RECENT_MESSAGES = 16;
+export const DEFAULT_MAX_ESTIMATED_CHARS = 24_000;
 const MAX_DIGEST_CHARS = 1_200;
 
 function extractMessageTextSnippet(msg: DmChatUIMessage): string {
@@ -26,7 +26,7 @@ function extractMessageTextSnippet(msg: DmChatUIMessage): string {
   return `${textSummary}${toolsSuffix}`.trim();
 }
 
-function estimateMessageChars(msg: DmChatUIMessage): number {
+export function estimateMessageChars(msg: DmChatUIMessage): number {
   let total = 24;
   for (const part of msg.parts) {
     if (part.type === "text" && typeof part.text === "string") {
@@ -44,6 +44,8 @@ export interface CompactContextResult {
   recentMessages: DmChatUIMessage[];
   trimmedCount: number;
   olderTurnsDigest: string;
+  maxRecentMessages: number;
+  estimatedRecentChars: number;
 }
 
 /**
@@ -71,6 +73,8 @@ export function compactConversationContext(params: {
       recentMessages: [],
       trimmedCount: 0,
       olderTurnsDigest: "",
+      maxRecentMessages,
+      estimatedRecentChars: 0,
     };
   }
 
@@ -104,12 +108,18 @@ export function compactConversationContext(params: {
 
   const trimmed = messages.slice(0, startIdx);
   const recentMessages = messages.slice(startIdx);
+  const estimatedRecentChars = recentMessages.reduce(
+    (sum, m) => sum + estimateMessageChars(m),
+    0,
+  );
 
   if (trimmed.length === 0) {
     return {
       recentMessages,
       trimmedCount: 0,
       olderTurnsDigest: "",
+      maxRecentMessages,
+      estimatedRecentChars,
     };
   }
 
@@ -137,5 +147,7 @@ export function compactConversationContext(params: {
     recentMessages,
     trimmedCount: trimmed.length,
     olderTurnsDigest,
+    maxRecentMessages,
+    estimatedRecentChars,
   };
 }

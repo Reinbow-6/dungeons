@@ -575,9 +575,21 @@ export type DmToolSetTypes = {
   };
 };
 
+export interface ContextUsageMetadata {
+  contextTokens: number;
+  outputTokens: number;
+  totalTurnTokens: number;
+  windowMessages: number;
+  maxWindowMessages: number;
+  trimmedMessages: number;
+  systemPromptTokensEst: number;
+  isExact: boolean;
+}
+
 export type DmChatUIMessage = UIMessage<
   {
     reasoningDurations?: Record<number, number>;
+    contextUsage?: ContextUsageMetadata;
   },
   UIDataTypes,
   DmToolSetTypes

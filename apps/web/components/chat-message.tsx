@@ -25,6 +25,7 @@ import { ReasoningPart } from "@/components/parts/reasoning-part";
 import { SourcesPart } from "@/components/parts/sources-part";
 import { WebSearchPart } from "@/components/parts/web-search-part";
 import { Message, MessageContent } from "@/components/ui/message";
+import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
 import { Trace } from "@/components/ui/trace";
 import { cn } from "@/lib/utils";
 import {
@@ -144,15 +145,26 @@ function CollapsibleEngineTrace({
   isStreaming,
   reasoningParts,
   message,
+  showReasoning = true,
 }: {
   block: StepPart[];
   isStreaming: boolean;
   reasoningParts: ChatMessagePart[];
   message: ChatUIMessage;
+  showReasoning?: boolean;
 }) {
+  const { playSound } = useSensoryUI();
   const [expanded, setExpanded] = React.useState(false);
 
-  const dmParts = block.filter(isDmToolPart);
+  const filteredBlock = showReasoning
+    ? block
+    : block.filter((part) => part.type !== "reasoning");
+
+  if (filteredBlock.length === 0) {
+    return null;
+  }
+
+  const dmParts = filteredBlock.filter(isDmToolPart);
   const highestSeq = dmParts.reduce<number | null>((max, part) => {
     if (part.state !== "output-available") return max;
     const out = part.output as { seq?: number; eventSeq?: number };
@@ -165,7 +177,7 @@ function CollapsibleEngineTrace({
 
   const traceBody = (
     <Trace>
-      {block.map((part, partIndex) => {
+      {filteredBlock.map((part, partIndex) => {
         if (isDmToolPart(part)) {
           return (
             <DmToolPartView
@@ -221,14 +233,19 @@ function CollapsibleEngineTrace({
     <div className="my-1">
       <button
         type="button"
-        onClick={() => setExpanded((prev) => !prev)}
-        className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/60 px-2.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+        aria-expanded={expanded}
+        onClick={() => {
+          const next = !expanded;
+          playSound(next ? "overlay.expand" : "overlay.collapse");
+          setExpanded(next);
+        }}
+        className="inline-flex min-h-7 items-center gap-1.5 rounded-full border border-border/60 bg-card/60 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <DicesIcon className="size-3 text-amber-600 dark:text-amber-400/80" />
         <span>
           {dmParts.length > 0
             ? `${dmParts.length} resolución${dmParts.length > 1 ? "es" : ""} del motor`
-            : `${block.length} paso${block.length > 1 ? "s" : ""}`}
+            : `${filteredBlock.length} paso${filteredBlock.length > 1 ? "s" : ""}`}
         </span>
         {highestSeq !== null && (
           <span className="font-mono text-[10px] tabular-nums text-muted-foreground/80">
@@ -251,11 +268,17 @@ function CollapsibleEngineTrace({
   );
 }
 
-export function ChatMessage({
+export const ChatMessage = React.memo(function ChatMessage({
   message,
   isStreaming = false,
   isLastAssistant = false,
   hideSuggestions = false,
+  showReasoning = true,
+  ttsAvailable = false,
+  isSpeaking = false,
+  isLoadingAudio = false,
+  onSpeak,
+  onStopAudio,
   characterName,
   characterClassName,
   turnOutcome,
@@ -269,6 +292,12 @@ export function ChatMessage({
   isStreaming?: boolean;
   isLastAssistant?: boolean;
   hideSuggestions?: boolean;
+  showReasoning?: boolean;
+  ttsAvailable?: boolean;
+  isSpeaking?: boolean;
+  isLoadingAudio?: boolean;
+  onSpeak?: () => void;
+  onStopAudio?: () => void;
   characterName?: string;
   characterClassName?: string;
   turnOutcome?: TurnOutcomeSummary | null;
@@ -286,7 +315,7 @@ export function ChatMessage({
 
     return (
       <div className="flex justify-end">
-        <div className="w-full max-w-[88%] rounded-xl border border-amber-500/25 bg-amber-500/[0.06] px-3.5 py-3 shadow-xs dark:border-amber-700/35 dark:bg-[#1a120d]/80 sm:max-w-[78%]">
+        <div className="w-full max-w-[88%] rounded-xl border border-amber-500/25 bg-amber-500/[0.06] px-3.5 py-3 shadow-xs dark:border-amber-700/35 dark:bg-amber-950/25 sm:max-w-[78%]">
           <div className="flex items-start gap-3">
             <CharacterEmblem
               characterName={characterName}
@@ -378,6 +407,7 @@ export function ChatMessage({
               isStreaming={isStreaming}
               reasoningParts={reasoningParts}
               message={message}
+              showReasoning={showReasoning}
             />
           ) : (
             <NarrativeText
@@ -403,12 +433,20 @@ export function ChatMessage({
 
         {!isStreaming && <SourcesPart parts={message.parts} />}
         {!isStreaming && text && (
-          <MessageActions text={text} onRetry={onRetry} />
+          <MessageActions
+            text={text}
+            onRetry={onRetry}
+            ttsAvailable={ttsAvailable}
+            isSpeaking={isSpeaking}
+            isLoadingAudio={isLoadingAudio}
+            onSpeak={onSpeak}
+            onStopAudio={onStopAudio}
+          />
         )}
       </MessageContent>
     </Message>
   );
-}
+});
 
 // Text splits the steps into runs, and each run of steps gets its own Trace.
 function groupParts(parts: ChatMessagePart[]) {

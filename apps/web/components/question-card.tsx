@@ -1,6 +1,7 @@
 "use client"
 
 import { type AskUserToolPart } from "@/tools"
+import { usePlaySound } from "@/components/ui/sensory-ui/config/use-play-sound"
 import {
   Questionnaire,
   QuestionnaireActions,
@@ -27,13 +28,14 @@ export function QuestionCard({
   ) => void
 }) {
   const questions = part.state === "input-available" ? part.input.questions : []
+  const { play } = usePlaySound({ sound: "interaction.confirm" })
 
   return (
-    <div className="sticky bottom-2 isolate z-50 mx-auto w-full max-w-2xl px-6 pt-2">
+    <div className="sticky bottom-2 isolate z-50 mx-auto w-full max-w-[700px] px-5 pt-2 sm:px-6">
       <div className="w-full rounded-3xl bg-popover p-4 text-sm text-popover-foreground shadow-lg ring-1 ring-foreground/5 dark:ring-foreground/10">
         {questions.length === 0 ? (
           <div className="flex shimmer items-center gap-2 py-2 text-muted-foreground">
-            Preparing a question…
+            Preparando pregunta…
           </div>
         ) : (
           <Questionnaire
@@ -46,6 +48,7 @@ export function QuestionCard({
             }))}
             onSubmit={(event) => {
               event.preventDefault()
+              play()
               const formData = new FormData(event.currentTarget)
               onAnswer(
                 part.toolCallId,
@@ -69,17 +72,17 @@ export function QuestionCard({
                     </QuestionnaireChoice>
                   ))}
                   <QuestionnaireInput
-                    aria-label="Another answer"
-                    placeholder="Type another answer…"
+                    aria-label="Otra respuesta"
+                    placeholder="Escribí otra respuesta…"
                   />
                 </QuestionnaireChoices>
                 <QuestionnaireError />
               </QuestionnaireItem>
             ))}
             <QuestionnaireActions>
-              <QuestionnairePrevious />
-              <QuestionnaireNext>Next</QuestionnaireNext>
-              <QuestionnaireSubmit>Answer</QuestionnaireSubmit>
+              <QuestionnairePrevious>Anterior</QuestionnairePrevious>
+              <QuestionnaireNext>Siguiente</QuestionnaireNext>
+              <QuestionnaireSubmit>Responder</QuestionnaireSubmit>
             </QuestionnaireActions>
           </Questionnaire>
         )}

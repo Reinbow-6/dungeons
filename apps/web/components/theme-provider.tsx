@@ -3,6 +3,22 @@
 import * as React from "react"
 import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes"
 
+import type { SensoryUIConfig } from "@/components/ui/sensory-ui/config/config"
+import { SensoryUIProvider } from "@/components/ui/sensory-ui/config/provider"
+
+const SENSORY_CRISP_CONFIG: Partial<SensoryUIConfig> = {
+  theme: "crisp",
+  volume: 0.35,
+  reducedMotion: "inherit",
+  categories: {
+    interaction: true,
+    overlay: true,
+    navigation: true,
+    notification: true,
+    hero: true,
+  },
+}
+
 function ThemeProvider({
   children,
   ...props
@@ -15,8 +31,10 @@ function ThemeProvider({
       disableTransitionOnChange
       {...props}
     >
-      <ThemeHotkey />
-      {children}
+      <SensoryUIProvider config={SENSORY_CRISP_CONFIG}>
+        <ThemeHotkey />
+        {children}
+      </SensoryUIProvider>
     </NextThemesProvider>
   )
 }
