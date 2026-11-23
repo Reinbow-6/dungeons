@@ -24,11 +24,8 @@ import {
 } from "lucide-react";
 import * as React from "react";
 
-import type { DeclareCheckToolOutput } from "@/agent/types";
 import { CombatTracker } from "@/components/game/combat-tracker";
-import { HybridCheckCard } from "@/components/game/hybrid-check-card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
 import type { CharacterPresetInfo } from "@/lib/game/presets";
 import type { SessionSummaryItem, StoredMemoryFact } from "@/lib/game/store";
@@ -70,11 +67,9 @@ export function GameSidebar({
   presets,
   onNewCampaign,
   onStartNewSession,
-  onStateUpdated,
   onToggleMode,
   onRollback,
   onQuickAction,
-  onManualDeclareVerified,
 }: {
   open: boolean;
   onClose: () => void;
@@ -91,15 +86,9 @@ export function GameSidebar({
     ruleset: RulesetProfile,
   ) => Promise<void>;
   onStartNewSession: () => Promise<void>;
-  onStateUpdated: (nextState: GameState) => void;
   onToggleMode: (actorId: string, mode: "digital" | "hybrid") => Promise<void>;
   onRollback: (targetSeq: number) => Promise<void>;
   onQuickAction?: (prompt: string) => void;
-  onManualDeclareVerified: (
-    result: DeclareCheckToolOutput,
-    nextState: GameState,
-    event: GameEvent,
-  ) => void;
 }) {
   const { playSound } = useSensoryUI();
   const [selectedPreset, setSelectedPreset] = React.useState("pc_seraphina");
@@ -112,9 +101,6 @@ export function GameSidebar({
   const [activeTab, setActiveTab] = React.useState<SidebarTab>("ficha");
   const [busy, setBusy] = React.useState(false);
   const [sessionBusy, setSessionBusy] = React.useState(false);
-  const [manualSkill, setManualSkill] = React.useState<Skill>("perception");
-  const [manualDc, setManualDc] = React.useState("12");
-  const [showManualRoll, setShowManualRoll] = React.useState(false);
 
   const activeChar = state ? Object.values(state.characters)[0] : undefined;
   const currentScene = state ? state.scenes[state.sceneId] : undefined;
@@ -767,58 +753,6 @@ export function GameSidebar({
                   </ul>
                 </div>
 
-                <div className="border-t border-border/70 pt-2.5">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    className="w-full"
-                    onClick={() => setShowManualRoll((prev) => !prev)}
-                  >
-                    {showManualRoll
-                      ? "Ocultar tirada física directa"
-                      : "Declarar tirada física (Papel)"}
-                  </Button>
-
-                  {showManualRoll && (
-                    <div className="mt-2 flex flex-col gap-2">
-                      <div className="grid grid-cols-2 gap-2">
-                        <select
-                          className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-                          value={manualSkill}
-                          onChange={(e) =>
-                            setManualSkill(e.target.value as Skill)
-                          }
-                        >
-                          {DISPLAY_SKILLS.map((sk) => (
-                            <option key={sk.key} value={sk.key}>
-                              {sk.label}
-                            </option>
-                          ))}
-                        </select>
-                        <Input
-                          type="number"
-                          value={manualDc}
-                          onChange={(e) => setManualDc(e.target.value)}
-                          placeholder="CD"
-                          className="h-8 font-mono text-xs tabular-nums"
-                        />
-                      </div>
-                      <HybridCheckCard
-                        sticky={false}
-                        campaignId={campaignId}
-                        sceneId={state.sceneId}
-                        actorId={activeChar.id}
-                        skill={manualSkill}
-                        dc={Math.max(1, Number.parseInt(manualDc, 10) || 12)}
-                        onVerified={(result, nextState, event) => {
-                          onStateUpdated(nextState);
-                          onManualDeclareVerified(result, nextState, event);
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
               </section>
             )}
 

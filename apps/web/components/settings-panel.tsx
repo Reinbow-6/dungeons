@@ -195,6 +195,7 @@ export function SettingsPanel() {
               aria-expanded={open}
               aria-haspopup="dialog"
               onClick={() => handleOpenChange(true)}
+              className="fixed bottom-[calc(env(safe-area-inset-bottom)+8rem)] left-3 z-30 border border-border/70 bg-card/90 shadow-sm backdrop-blur-md sm:bottom-5 sm:left-5"
             >
               <SlidersHorizontalIcon className="size-4" />
             </Button>
@@ -208,7 +209,7 @@ export function SettingsPanel() {
         <Dialog.Popup
           role="dialog"
           aria-modal="true"
-          className="fixed inset-y-0 right-0 z-50 flex w-[412px] max-w-[94vw] flex-col border-l border-border/80 bg-sidebar/95 text-xs shadow-2xl backdrop-blur-xl transition-transform duration-200 ease-out outline-none data-ending-style:translate-x-full data-starting-style:translate-x-full"
+              className="fixed inset-y-0 left-0 z-50 flex w-[412px] max-w-[94vw] flex-col border-r border-border/80 bg-sidebar/95 text-xs shadow-2xl backdrop-blur-xl transition-transform duration-200 ease-out outline-none data-ending-style:-translate-x-full data-starting-style:-translate-x-full"
         >
           {/* Cabecera */}
           <div className="flex items-start justify-between gap-3 border-b border-border/70 px-4 py-3.5">
@@ -230,7 +231,7 @@ export function SettingsPanel() {
                     : isGuest
                       ? authenticated
                         ? "Sin whitelist"
-                        : "Invitado (Free)"
+                        : "Invitado"
                       : "Autorizado"}
                 </span>
               </div>
@@ -657,6 +658,30 @@ export function SettingsPanel() {
                     updateSettings({ showDevReasoningView: checked });
                   }}
                 />
+              </div>
+            </section>
+
+            <section
+              aria-labelledby="settings-shortcuts-title"
+              className="flex flex-col gap-2 rounded-xl border border-border/70 bg-card/60 p-3"
+            >
+              <h3
+                id="settings-shortcuts-title"
+                className="font-serif text-sm font-semibold text-foreground"
+              >
+                Atajos de teclado
+              </h3>
+              <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                <span>Abrir o cerrar la ficha</span>
+                <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
+                  Alt + H
+                </kbd>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                <span>Iniciar o terminar dictado</span>
+                <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
+                  Alt + M
+                </kbd>
               </div>
             </section>
           </div>

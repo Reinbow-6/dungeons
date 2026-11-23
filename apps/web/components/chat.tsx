@@ -7,7 +7,6 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
 } from "ai";
 import {
-  ChevronRightIcon,
   HeartPulseIcon,
   PanelRightIcon,
   ShieldIcon,
@@ -661,27 +660,6 @@ export function Chat({ models }: { models: GatewayModel[] }) {
 
   return (
     <div className="tavern-backdrop relative flex min-h-0 flex-1 overflow-hidden">
-      {/* Lengüeta discreta en el borde izquierdo estilo Old Greg's Tavern (en móvil usa la píldora superior derecha para evitar colisión) */}
-      {!sidebarOpen && (
-        <button
-          type="button"
-          onClick={() => {
-            playSound("overlay.open");
-            setSidebarOpen(true);
-          }}
-          title="Abrir HUD de ficha, escena y combate (Alt+H)"
-          aria-label="Abrir panel lateral de personaje"
-          aria-controls="campaign-hud-panel"
-          aria-expanded={false}
-          className={cn(
-            "fixed left-3 top-16 z-30 size-8 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground shadow-xs backdrop-blur-md transition-colors hover:border-amber-500/40 hover:text-foreground",
-            activeChar && gameState ? "hidden md:inline-flex" : "inline-flex",
-          )}
-        >
-          <ChevronRightIcon className="size-3.5" />
-        </button>
-      )}
-
       {/* Píldora flotante compacta de estado vital cuando el HUD está colapsado */}
       {!sidebarOpen && activeChar && gameState && (
         <button
@@ -1017,7 +995,6 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         presets={presets}
         onNewCampaign={handleNewCampaign}
         onStartNewSession={handleStartNewSession}
-        onStateUpdated={setGameState}
         onToggleMode={handleToggleMode}
         onRollback={handleRollback}
         onQuickAction={(prompt) => {
@@ -1026,25 +1003,6 @@ export function Chat({ models }: { models: GatewayModel[] }) {
             setSidebarOpen(false);
           }
           submitPrompt(prompt);
-        }}
-        onManualDeclareVerified={(result, nextState, event) => {
-          setGameState(nextState);
-          setEvents((prev) => [...prev, event]);
-          notifyNewEvents([event], false);
-          if (!pendingDeclareCheck && !isBusy) {
-            void sendMessage(
-              {
-                text: `[Tirada física validada] ${result.skill}: dados [${result.dieResults.join(", ")}], total ${result.declaredTotal} vs CD ${result.dc} → ${result.success ? "Éxito" : "Fallo"}.`,
-              },
-              {
-                body: {
-                  model: effectiveModel,
-                  campaignId,
-                  reasoningEffort: settings.reasoningEffort,
-                },
-              },
-            );
-          }
         }}
       />
     </div>

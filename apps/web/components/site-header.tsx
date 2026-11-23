@@ -2,8 +2,6 @@ import { FlameIcon } from "lucide-react";
 import Link from "next/link";
 
 import { AuthButton } from "@/components/auth-dialog";
-import { NewChatButton } from "@/components/new-chat-button";
-import { SettingsPanel } from "@/components/settings-panel";
 import { SoundToggle } from "@/components/sound-toggle";
 import { ThemeToggle } from "@/components/theme-toggle";
 
@@ -29,7 +27,6 @@ export function SiteHeader() {
       </div>
       <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
         <AuthButton className="max-w-[94px] px-2 sm:max-w-none sm:px-2.5" />
-        <SettingsPanel />
         <div
           role="group"
           aria-label="Preferencias rápidas"
@@ -38,7 +35,6 @@ export function SiteHeader() {
           <SoundToggle />
           <ThemeToggle />
         </div>
-        <NewChatButton />
       </div>
     </header>
   );

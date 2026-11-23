@@ -330,7 +330,7 @@ export function getAccessTierLabel(
   access: Pick<RequestAccess, "authenticated" | "whitelisted">,
 ): string {
   if (!access.authenticated) {
-    return "Invitado (Free)";
+    return "Invitado";
   }
   if (!access.whitelisted) {
     return "Cuenta sin whitelist";
@@ -488,7 +488,7 @@ export function AuthDialog({
     if (!supabase) {
       playSound("notification.warning");
       setErrorMsg(
-        "Supabase Auth no está configurado en este entorno. Continuás en modo Invitado (Free).",
+        "Supabase Auth no está configurado en este entorno. Continuás en modo Invitado.",
       );
       return;
     }
@@ -604,7 +604,7 @@ export function AuthDialog({
       await access.refresh();
       window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
       playSound("notification.success");
-      setNoticeMsg("Sesión cerrada. Volviste al modo Invitado (Free).");
+      setNoticeMsg("Sesión cerrada. Volviste al modo Invitado.");
     } catch {
       playSound("notification.error");
       setErrorMsg("No se pudo cerrar la sesión. Intentá nuevamente.");
@@ -750,7 +750,7 @@ export function AuthDialog({
             <AlertTitle>Supabase Auth sin configurar</AlertTitle>
             <AlertDescription>
               Faltan variables públicas de Supabase en este entorno. Podés
-              seguir jugando en modo Invitado (Free).
+              seguir jugando en modo Invitado.
             </AlertDescription>
           </Alert>
         ) : (
@@ -887,7 +887,7 @@ export function AuthButton({ className }: { className?: string }) {
     ? access.whitelisted
       ? `Autorizado (${access.email ?? "cuenta verificada"}) · Modelos principales y TTS habilitados`
       : `Cuenta sin whitelist (${access.email ?? "sin correo"}) · Modo gratuito activo`
-    : "Invitado (Free) · Iniciá sesión para desbloquear DeepSeek V4.1 Flash y TTS";
+    : "Invitado · Iniciá sesión para desbloquear DeepSeek V4.1 Flash y TTS";
 
   function handleOpen() {
     playSound("overlay.open");
