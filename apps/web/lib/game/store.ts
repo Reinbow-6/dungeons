@@ -23,6 +23,7 @@ import {
   messages,
   sessions,
 } from "@/lib/db/schema";
+import { buildSeededIntroParts } from "@/lib/game/intro";
 import {
   buildInitialCampaignState,
   type CharacterPresetId,
@@ -304,6 +305,8 @@ export class SupabaseGameStore implements GameStore {
       ruleset,
     });
     const mainCharacter = Object.values(initialState.characters)[0]!;
+    const introParts = buildSeededIntroParts(initialState);
+    const introMessageId = randomUUID();
     const now = new Date();
 
     await db.transaction(async (tx) => {
@@ -348,6 +351,16 @@ export class SupabaseGameStore implements GameStore {
         sceneId: initialState.sceneId,
         state: initialState,
       });
+
+      await tx.insert(messages).values({
+        id: introMessageId,
+        campaignId,
+        sessionId,
+        role: "assistant",
+        parts: introParts,
+        eventSeq: 0,
+        createdAt: now,
+      });
     });
 
     return {
@@ -362,7 +375,16 @@ export class SupabaseGameStore implements GameStore {
       state: initialState,
       logHeadSeq: 0,
       events: [],
-      messages: [],
+      messages: [
+        {
+          id: introMessageId,
+          role: "assistant",
+          parts: introParts,
+          createdAt: now.toISOString(),
+          eventSeq: 0,
+          revertedBySeq: null,
+        },
+      ],
       sessionSummaries: [
         {
           id: sessionId,
@@ -1043,6 +1065,8 @@ export class InMemoryGameStore implements GameStore {
       mode,
       ruleset,
     });
+    const introParts = buildSeededIntroParts(initialState);
+    const introMessageId = randomUUID();
     const nowIso = new Date().toISOString();
 
     const record: InMemoryCampaignRecord = {
@@ -1059,7 +1083,16 @@ export class InMemoryGameStore implements GameStore {
       state: initialState,
       logHeadSeq: 0,
       events: [],
-      messages: [],
+      messages: [
+        {
+          id: introMessageId,
+          role: "assistant",
+          parts: introParts,
+          createdAt: nowIso,
+          eventSeq: 0,
+          revertedBySeq: null,
+        },
+      ],
       sessions: [
         {
           id: sessionId,

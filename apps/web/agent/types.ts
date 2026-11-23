@@ -579,6 +579,8 @@ export interface ContextUsageMetadata {
   contextTokens: number;
   outputTokens: number;
   totalTurnTokens: number;
+  cachedTokens?: number;
+  cacheHitRate?: number;
   windowMessages: number;
   maxWindowMessages: number;
   trimmedMessages: number;

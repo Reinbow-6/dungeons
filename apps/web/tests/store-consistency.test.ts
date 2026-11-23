@@ -347,7 +347,7 @@ describe("rollback sincronizado con mensajes (P0 fix 5 + performRollback)", () =
 
     expect(
       (await store.loadCampaign(loaded.campaignId, GUEST))?.messages,
-    ).toHaveLength(2);
+    ).toHaveLength(3);
 
     const rb = await performRollback({
       campaignId: loaded.campaignId,
@@ -358,7 +358,7 @@ describe("rollback sincronizado con mensajes (P0 fix 5 + performRollback)", () =
     expect(rb.ok).toBe(true);
     if (!rb.ok) return;
 
-    expect(rb.messages).toHaveLength(1);
+    expect(rb.messages).toHaveLength(2);
     expect(JSON.stringify(rb.messages)).not.toContain("mensaje posterior");
     expect(JSON.stringify(rb.messages)).toContain("mensaje anterior");
 
@@ -370,7 +370,9 @@ describe("rollback sincronizado con mensajes (P0 fix 5 + performRollback)", () =
     });
     expect(rbZero.ok).toBe(true);
     if (!rbZero.ok) return;
-    expect(rbZero.messages).toHaveLength(0);
+    // La intro sembrada en seq 0 sobrevive al rollback a seq 0 (0 tokens LLM).
+    expect(rbZero.messages).toHaveLength(1);
+    expect(rbZero.messages[0]?.role).toBe("assistant");
   });
 });
 

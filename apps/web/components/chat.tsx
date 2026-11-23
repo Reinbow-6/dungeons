@@ -478,7 +478,13 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     setSessionSummaries(data.sessionSummaries ?? []);
     setMemoryFacts(data.memoryFacts ?? []);
     setPresets(data.presets ?? []);
-    setMessages([]);
+    setMessages(
+      (data.messages ?? []).map((m) => ({
+        id: m.id,
+        role: m.role,
+        parts: m.parts,
+      })),
+    );
     pushToast({
       title: "Nueva campaña iniciada",
       description: `Aguas Quietas · ${ruleset}`,

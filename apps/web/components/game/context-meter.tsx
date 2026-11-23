@@ -49,7 +49,36 @@ export function ContextMeter({
   isBusy?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
+  const [dailyUsage, setDailyUsage] = React.useState<{
+    totalRequests: number;
+    totalPromptTokens: number;
+    totalCompletionTokens: number;
+    totalCachedTokens: number;
+    cacheHitRate: number;
+  } | null>(null);
   const { play } = usePlaySound({ sound: "interaction.subtle" });
+
+  React.useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void fetch("/api/usage")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data && typeof data.totalRequests === "number") {
+          setDailyUsage({
+            totalRequests: data.totalRequests,
+            totalPromptTokens: data.totalPromptTokens ?? 0,
+            totalCompletionTokens: data.totalCompletionTokens ?? 0,
+            totalCachedTokens: data.totalCachedTokens ?? 0,
+            cacheHitRate: data.cacheHitRate ?? 0,
+          });
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [open, messages.length]);
   const latestUsage = React.useMemo<ContextUsageMetadata | null>(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const msg = messages[i];
@@ -176,6 +205,16 @@ export function ContextMeter({
               </span>
             </>
           )}
+          {typeof metrics.cachedTokens === "number" &&
+            metrics.cachedTokens > 0 && (
+              <>
+                <span>En caché (turno):</span>
+                <span className="text-right">
+                  {metrics.cachedTokens.toLocaleString("es-AR")} tok (
+                  {Math.round((metrics.cacheHitRate ?? 0) * 100)}%)
+                </span>
+              </>
+            )}
           <span>Ventana activa:</span>
           <span className="text-right">
             {metrics.windowMessages}/{metrics.maxWindowMessages} msg
@@ -184,6 +223,15 @@ export function ContextMeter({
             <>
               <span>Turnos compactados:</span>
               <span className="text-right">{metrics.trimmedMessages}</span>
+            </>
+          )}
+          {dailyUsage && dailyUsage.totalRequests > 0 && (
+            <>
+              <span>Hoy ({dailyUsage.totalRequests} req):</span>
+              <span className="text-right">
+                {formatTokenCount(dailyUsage.totalPromptTokens)} in ·{" "}
+                {Math.round(dailyUsage.cacheHitRate * 100)}% caché
+              </span>
             </>
           )}
         </div>

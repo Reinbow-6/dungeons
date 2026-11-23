@@ -1,5 +1,6 @@
 import type { Character, GameState, GameStateDelta } from "@dungeons/rules";
 import {
+  bigint,
   index,
   integer,
   jsonb,
@@ -240,6 +241,15 @@ export const providerHealth = pgTable(
     requestCount: integer("request_count").notNull().default(0),
     errorCount: integer("error_count").notNull().default(0),
     totalLatencyMs: integer("total_latency_ms").notNull().default(0),
+    promptTokens: bigint("prompt_tokens", { mode: "number" })
+      .notNull()
+      .default(0),
+    completionTokens: bigint("completion_tokens", { mode: "number" })
+      .notNull()
+      .default(0),
+    cachedTokens: bigint("cached_tokens", { mode: "number" })
+      .notNull()
+      .default(0),
     lastErrorCode: text("last_error_code"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
@@ -251,6 +261,41 @@ export const providerHealth = pgTable(
       table.modelId,
       table.dayKey,
     ),
+  ],
+);
+
+export const modelUsage = pgTable(
+  "model_usage",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    guestId: text("guest_id").notNull(),
+    userId: text("user_id"),
+    accessTier: text("access_tier").notNull().default("guest"),
+    provider: text("provider").notNull(),
+    modelId: text("model_id").notNull(),
+    dayKey: text("day_key").notNull(),
+    requestCount: integer("request_count").notNull().default(0),
+    promptTokens: bigint("prompt_tokens", { mode: "number" })
+      .notNull()
+      .default(0),
+    completionTokens: bigint("completion_tokens", { mode: "number" })
+      .notNull()
+      .default(0),
+    cachedTokens: bigint("cached_tokens", { mode: "number" })
+      .notNull()
+      .default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("model_usage_guest_model_day_idx").on(
+      table.guestId,
+      table.provider,
+      table.modelId,
+      table.dayKey,
+    ),
+    index("model_usage_day_idx").on(table.dayKey),
   ],
 );
 

@@ -25,6 +25,7 @@ import {
   ProviderConfigError,
   resolveLanguageModel,
 } from "@/lib/ai/provider";
+import { pruneHistoricalToolOutputs } from "@/lib/ai/prune-tool-history";
 import { resolveGuestSessionFromRequest } from "@/lib/auth/guest-session";
 import { resolveRequestAccess } from "@/lib/auth/whitelist";
 import { commitEventWithRetry, performRollback } from "@/lib/game/operations";
@@ -49,8 +50,13 @@ import {
 import {
   hashGuestId,
   logServerEvent,
+  recordModelUsage,
   recordProviderHealth,
 } from "@/lib/observability/logger";
+import {
+  extractTurnUsageTelemetry,
+  extractUsageTelemetry,
+} from "@/lib/observability/usage";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -472,8 +478,11 @@ export async function POST(req: Request) {
     memoryFacts: currentMemoryFacts,
     olderTurnsDigest: compacted.olderTurnsDigest,
   });
+  const prunedRecentMessages = pruneHistoricalToolOutputs(
+    compacted.recentMessages,
+  );
   const modelMessages = wrapUserMessagesForModel(
-    await convertToModelMessages(compacted.recentMessages),
+    await convertToModelMessages(prunedRecentMessages),
   );
 
   const result = streamText({
@@ -498,9 +507,17 @@ export async function POST(req: Request) {
     maxOutputTokens: chatSpendCap.config.maxOutputTokens,
     abortSignal: req.signal,
     onFinish: ({ totalUsage, steps }) => {
-      const promptTokens = totalUsage?.inputTokens ?? 0;
-      const completionTokens = totalUsage?.outputTokens ?? 0;
-      const totalTokens = promptTokens + completionTokens;
+      const usageStats = extractTurnUsageTelemetry(
+        totalUsage,
+        steps.map((step) => step.usage),
+      );
+      const {
+        promptTokens,
+        completionTokens,
+        cachedTokens,
+        totalTokens,
+        cacheHitRate,
+      } = usageStats;
       const toolCalls = steps.flatMap((step) =>
         step.toolCalls.map((tc) => tc.toolName),
       );
@@ -512,11 +529,24 @@ export async function POST(req: Request) {
           totalTokens,
         });
       }
+      void recordModelUsage({
+        guestId: guest.guestId,
+        userId: access.userId,
+        accessTier: access.tier,
+        provider: resolved.provider,
+        modelId: resolved.modelId,
+        promptTokens,
+        completionTokens,
+        cachedTokens,
+      });
       void recordProviderHealth({
         provider: resolved.provider,
         modelId: resolved.modelId,
         ok: true,
         latencyMs,
+        promptTokens,
+        completionTokens,
+        cachedTokens,
       });
       logServerEvent({
         level: "info",
@@ -525,9 +555,12 @@ export async function POST(req: Request) {
         event: "chat_completed",
         provider: resolved.provider,
         modelId: resolved.modelId,
+        accessTier: access.tier,
         status: 200,
         promptTokens,
         completionTokens,
+        cachedTokens,
+        cacheHitRate,
         toolCalls,
         lastSeq: currentState.lastSeq,
         latencyMs,
@@ -543,6 +576,7 @@ export async function POST(req: Request) {
       : 0;
   const reasoningStarts = new Map<string, { index: number; time: number }>();
   let lastStepInputTokens = 0;
+  let stepCachedTokens = 0;
   const systemPromptTokensEst = Math.ceil(systemPrompt.length / 4);
   const fallbackContextTokensEst = Math.ceil(
     (systemPrompt.length + compacted.estimatedRecentChars) / 4,
@@ -578,16 +612,30 @@ export async function POST(req: Request) {
         }
 
         if (part.type === "finish-step") {
-          const stepInput = part.usage?.inputTokens ?? 0;
-          if (stepInput > 0) {
-            lastStepInputTokens = stepInput;
+          const stepStats = extractUsageTelemetry(part.usage);
+          if (stepStats.promptTokens > 0) {
+            lastStepInputTokens = stepStats.promptTokens;
+          }
+          if (stepStats.cachedTokens > 0) {
+            stepCachedTokens += stepStats.cachedTokens;
           }
           return undefined;
         }
 
         if (part.type === "finish") {
-          const totalInput = part.totalUsage?.inputTokens ?? 0;
-          const outputTokens = part.totalUsage?.outputTokens ?? 0;
+          const finishUsage = extractUsageTelemetry(part.totalUsage);
+          const totalInput = finishUsage.promptTokens;
+          const outputTokens = finishUsage.completionTokens;
+          const cachedTokens =
+            finishUsage.cachedTokens > 0
+              ? finishUsage.cachedTokens
+              : totalInput > 0
+                ? Math.min(stepCachedTokens, totalInput)
+                : stepCachedTokens;
+          const cacheHitRate =
+            totalInput > 0
+              ? Math.round((cachedTokens / totalInput) * 1000) / 1000
+              : 0;
           const reportedContext =
             lastStepInputTokens > 0 ? lastStepInputTokens : totalInput;
           const isExact = reportedContext > 0;
@@ -595,13 +643,17 @@ export async function POST(req: Request) {
             ? reportedContext
             : fallbackContextTokensEst;
           const totalTurnTokens =
-            part.totalUsage?.totalTokens ?? contextTokens + outputTokens;
+            finishUsage.totalTokens > 0
+              ? finishUsage.totalTokens
+              : contextTokens + outputTokens;
 
           return {
             contextUsage: {
               contextTokens,
               outputTokens,
               totalTurnTokens,
+              cachedTokens,
+              cacheHitRate,
               windowMessages: compacted.recentMessages.length,
               maxWindowMessages: compacted.maxRecentMessages,
               trimmedMessages: compacted.trimmedCount,
