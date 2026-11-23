@@ -25,9 +25,22 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { MODELS, type ReasoningEffort } from "@/lib/models";
-import { useAppSettings } from "@/lib/settings/app-settings";
+import {
+  type StreamSpeed,
+  useAppSettings,
+} from "@/lib/settings/app-settings";
 import { TTS_MODELS, type TtsModelId } from "@/lib/tts-models";
 import { cn } from "@/lib/utils";
+
+const STREAM_SPEED_OPTIONS: ReadonlyArray<{
+  value: StreamSpeed;
+  label: string;
+}> = [
+  { value: "slow", label: "Lenta" },
+  { value: "normal", label: "Normal" },
+  { value: "fast", label: "Rápida" },
+  { value: "instant", label: "Sin pausa" },
+];
 
 const REASONING_OPTIONS: ReadonlyArray<{
   value: ReasoningEffort;
@@ -269,7 +282,7 @@ export function SettingsPanel() {
               <div
                 role="radiogroup"
                 aria-labelledby="settings-text-model-title"
-                className="flex flex-col gap-1.5"
+                className="grid grid-cols-2 gap-1.5"
               >
                 {MODELS.map((model) => {
                   const locked = model.accessTier === "whitelisted" && isGuest;
@@ -288,7 +301,7 @@ export function SettingsPanel() {
                         updateSettings({ textModel: model.id });
                       }}
                       className={cn(
-                        "flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        "flex min-h-10 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
                         locked
                           ? "cursor-not-allowed border-border/60 bg-muted/35 opacity-65"
                           : selected
@@ -296,25 +309,18 @@ export function SettingsPanel() {
                             : "border-border/70 bg-background/60 text-foreground/90 hover:border-border hover:bg-muted/50",
                       )}
                     >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="truncate font-medium">
-                            {model.name}
-                          </span>
-                        </div>
-                        <span className="block truncate font-mono text-[10px] text-muted-foreground">
-                          {model.modelId}
-                        </span>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1.5">
+                      <span className="truncate text-xs font-medium">
+                        {model.name}
+                      </span>
+                      <div className="flex shrink-0 items-center gap-1">
                         {locked ? (
-                          <span className="inline-flex items-center gap-1 rounded border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-amber-700 dark:text-amber-300">
-                            <LockIcon className="size-2.5" />
-                            Solo Whitelist
-                          </span>
+                          <LockIcon
+                            className="size-3 text-amber-700 dark:text-amber-300"
+                            aria-label="Solo Whitelist"
+                          />
                         ) : selected ? (
-                          <span className="inline-flex size-5 items-center justify-center rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300">
-                            <CheckIcon className="size-3" />
+                          <span className="inline-flex size-4 items-center justify-center rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                            <CheckIcon className="size-2.5" />
                           </span>
                         ) : null}
                       </div>
@@ -323,12 +329,49 @@ export function SettingsPanel() {
                 })}
               </div>
 
+              <div className="flex flex-col gap-1.5 border-t border-border/60 pt-2">
+                <span className="text-[11px] font-medium text-muted-foreground">
+                  Velocidad del texto
+                </span>
+                <div
+                  role="radiogroup"
+                  aria-label="Velocidad del streaming de texto"
+                  className="grid grid-cols-4 gap-1 rounded-xl border border-border/80 bg-muted/50 p-1"
+                >
+                  {STREAM_SPEED_OPTIONS.map((opt) => {
+                    const active = settings.streamSpeed === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => {
+                          if (settings.streamSpeed !== opt.value) {
+                            handleToggleSound();
+                            updateSettings({ streamSpeed: opt.value });
+                          }
+                        }}
+                        className={cn(
+                          "min-h-7 rounded-lg px-1.5 py-1 text-[11px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          active
+                            ? "bg-card text-foreground shadow-xs ring-1 ring-amber-500/35"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               {isGuest && (
                 <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-2.5 py-2 text-[11px]">
                   <span className="text-muted-foreground">
                     {authenticated
                       ? "Tu cuenta aún no está en la whitelist."
-                      : "Desbloqueá DeepSeek V4.1 Flash iniciando sesión."}
+                      : "Desbloqueá Main iniciando sesión."}
                   </span>
                   <button
                     type="button"
@@ -425,8 +468,8 @@ export function SettingsPanel() {
                 <div className="flex flex-col gap-2.5 rounded-lg border border-border/70 bg-background/55 p-3">
                   <p className="text-[11px] leading-relaxed text-muted-foreground">
                     {authenticated
-                      ? "Tu cuenta está autenticada, pero la síntesis de voz con HeyGen Voice Turbo y Fish Audio S2.1 Pro requiere estar en la whitelist."
-                      : "Iniciá sesión con una cuenta autorizada para escuchar al Dungeon Master narrar cada escena con HeyGen Voice Turbo o Fish Audio S2.1 Pro."}
+                      ? "Tu cuenta está autenticada, pero la voz con HeyGen y Fish requiere estar en la whitelist."
+                      : "Iniciá sesión con una cuenta autorizada para escuchar al Dungeon Master con HeyGen o Fish."}
                   </p>
                   <Button
                     type="button"
@@ -466,7 +509,7 @@ export function SettingsPanel() {
                       <div
                         role="radiogroup"
                         aria-label="Selector de modelo de voz TTS"
-                        className="flex flex-col gap-1.5"
+                        className="grid grid-cols-2 gap-1.5"
                       >
                         {TTS_MODELS.map((ttsModel) => {
                           const active = settings.ttsModel === ttsModel.id;
@@ -484,23 +527,18 @@ export function SettingsPanel() {
                                 });
                               }}
                               className={cn(
-                                "flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                "flex min-h-10 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
                                 active
                                   ? "border-emerald-500/45 bg-emerald-500/10 text-foreground"
                                   : "border-border/70 bg-background/60 text-foreground/90 hover:border-border hover:bg-muted/50",
                               )}
                             >
-                              <div className="min-w-0 flex-1">
-                                <div className="truncate font-medium">
-                                  {ttsModel.name}
-                                </div>
-                                <div className="mt-0.5 text-[10.5px] leading-snug text-muted-foreground">
-                                  {ttsModel.description}
-                                </div>
-                              </div>
+                              <span className="truncate text-xs font-medium">
+                                {ttsModel.name}
+                              </span>
                               {active && (
-                                <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
-                                  <CheckIcon className="size-3" />
+                                <span className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
+                                  <CheckIcon className="size-2.5" />
                                 </span>
                               )}
                             </button>

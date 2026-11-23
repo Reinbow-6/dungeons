@@ -13,12 +13,15 @@ import {
   type TtsModelId,
 } from "@/lib/tts-models";
 
-export const APP_SETTINGS_STORAGE_KEY = "dungeons:app-settings";
+export const APP_SETTINGS_STORAGE_KEY = "dungeons:app-settings:v2";
 export const APP_SETTINGS_CHANGED_EVENT = "dungeons:settings-changed";
+
+export type StreamSpeed = "slow" | "normal" | "fast" | "instant";
 
 export interface AppSettings {
   textModel: string;
   reasoningEffort: ReasoningEffort;
+  streamSpeed: StreamSpeed;
   ttsEnabled: boolean;
   ttsModel: TtsModelId;
   ttsVoice: string;
@@ -32,14 +35,15 @@ export interface AppSettings {
 export const DEFAULT_APP_SETTINGS: AppSettings = Object.freeze({
   textModel: DEFAULT_MODEL,
   reasoningEffort: "none",
+  streamSpeed: "normal",
   ttsEnabled: true,
   ttsModel: DEFAULT_TTS_MODEL,
   ttsVoice: "default",
   ttsAutoPlay: false,
   ttsSpeed: 1.0,
-  showDevContextMeter: true,
-  showDevLatencyTimer: true,
-  showDevReasoningView: true,
+  showDevContextMeter: false,
+  showDevLatencyTimer: false,
+  showDevReasoningView: false,
 });
 
 const VALID_REASONING_EFFORTS = new Set<ReasoningEffort>([
@@ -47,6 +51,13 @@ const VALID_REASONING_EFFORTS = new Set<ReasoningEffort>([
   "low",
   "medium",
   "high",
+]);
+
+const VALID_STREAM_SPEEDS = new Set<StreamSpeed>([
+  "slow",
+  "normal",
+  "fast",
+  "instant",
 ]);
 
 function normalizeReasoningEffortValue(raw: unknown): ReasoningEffort {
@@ -57,6 +68,16 @@ function normalizeReasoningEffortValue(raw: unknown): ReasoningEffort {
     return raw as ReasoningEffort;
   }
   return DEFAULT_APP_SETTINGS.reasoningEffort;
+}
+
+function normalizeStreamSpeedValue(raw: unknown): StreamSpeed {
+  if (
+    typeof raw === "string" &&
+    VALID_STREAM_SPEEDS.has(raw as StreamSpeed)
+  ) {
+    return raw as StreamSpeed;
+  }
+  return DEFAULT_APP_SETTINGS.streamSpeed;
 }
 
 function normalizeTtsModelValue(raw: unknown): TtsModelId {
@@ -94,6 +115,7 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
   return {
     textModel: normalizeTextModelValue(obj.textModel),
     reasoningEffort: normalizeReasoningEffortValue(obj.reasoningEffort),
+    streamSpeed: normalizeStreamSpeedValue(obj.streamSpeed),
     ttsEnabled:
       typeof obj.ttsEnabled === "boolean"
         ? obj.ttsEnabled

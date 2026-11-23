@@ -22,6 +22,7 @@ describe("tts-models catalog", () => {
       "heygen/heygen-voice-1-turbo:free",
       "fish-audio/s2.1-pro-free:free",
     ]);
+    expect(TTS_MODELS.map((m) => m.name)).toEqual(["HeyGen", "Fish"]);
     expect(isTtsModelAllowed("heygen/heygen-voice-1-turbo:free")).toBe(true);
     expect(isTtsModelAllowed("fish-audio/s2.1-pro-free:free")).toBe(true);
     expect(isTtsModelAllowed("openai/gpt-4o-mini-tts")).toBe(false);
@@ -145,6 +146,52 @@ describe("synthesizeSpeechWithOpenRouter", () => {
     expect(result.contentType).toBe("audio/wav");
     expect(result.audioBytes.byteLength).toBe(44 + pcmPayload.byteLength);
     expect(String.fromCharCode(...result.audioBytes.slice(0, 4))).toBe("RIFF");
+  });
+
+  it("resolves placeholder voice 'default' to the curated Fish Audio voice ID and preserves explicit voice IDs", async () => {
+    const mp3Payload = new Uint8Array([0x49, 0x44, 0x33, 0x04]);
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchMock: typeof fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(mp3Payload, {
+        status: 200,
+        headers: { "Content-Type": "audio/mpeg" },
+      });
+    };
+
+    await synthesizeSpeechWithOpenRouter({
+      text: "La bruma se eleva.",
+      modelId: "fish-audio/s2.1-pro-free:free",
+      voice: "default",
+      speed: 1.15,
+      env: { OPENROUTER_API_KEY: "test-key" },
+      fetchImpl: fetchMock,
+    });
+
+    await synthesizeSpeechWithOpenRouter({
+      text: "Voz personalizada.",
+      modelId: "fish-audio/s2.1-pro-free:free",
+      voice: "802e3bc2b27e49c2995d23ef70e6ac89",
+      speed: 0.9,
+      env: { OPENROUTER_API_KEY: "test-key" },
+      fetchImpl: fetchMock,
+    });
+
+    expect(bodies[0]).toEqual({
+      model: "fish-audio/s2.1-pro-free:free",
+      input: "La bruma se eleva.",
+      voice: "872aed4c691c4cbb830649f8af64bd59",
+      response_format: "mp3",
+      speed: 1.15,
+    });
+
+    expect(bodies[1]).toEqual({
+      model: "fish-audio/s2.1-pro-free:free",
+      input: "Voz personalizada.",
+      voice: "802e3bc2b27e49c2995d23ef70e6ac89",
+      response_format: "mp3",
+      speed: 0.9,
+    });
   });
 
   it("falls back from HeyGen Voice Turbo to Fish Audio S2.1 Pro on 429", async () => {

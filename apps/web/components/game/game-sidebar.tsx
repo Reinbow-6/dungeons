@@ -176,18 +176,16 @@ export function GameSidebar({
         <div
           aria-hidden
           onClick={handleClose}
-          className="fixed inset-0 z-30 bg-black/45 backdrop-blur-[2px] transition-opacity"
+          className="fixed inset-0 z-30 bg-black/45 backdrop-blur-[2px] transition-opacity lg:hidden"
         />
       )}
 
       <aside
-        role="dialog"
-        aria-modal={open ? "true" : undefined}
         aria-label="Panel HUD de campaña"
         aria-hidden={!open}
         inert={!open || undefined}
         className={cn(
-          "fixed inset-y-0 right-0 z-40 flex w-[388px] max-w-[92vw] flex-col gap-3 overflow-y-auto border-l border-border/80 bg-sidebar/95 p-3.5 text-xs shadow-2xl backdrop-blur-xl transition-transform duration-200 ease-out",
+          "fixed inset-y-0 right-0 z-40 flex w-[388px] max-w-[92vw] flex-col gap-3 overflow-y-auto border-l border-border/80 bg-sidebar/95 p-3.5 text-xs shadow-2xl backdrop-blur-xl transition-transform duration-200 ease-out lg:top-12 lg:z-20 lg:shadow-none",
           open ? "translate-x-0" : "pointer-events-none translate-x-full",
         )}
       >

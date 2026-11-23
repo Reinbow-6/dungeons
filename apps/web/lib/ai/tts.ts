@@ -199,20 +199,23 @@ function buildOpenRouterSpeechBody(params: {
 }): Record<string, unknown> {
   const option = findTtsModelOption(params.modelId);
   const rawVoice = params.voice?.trim();
+  const isDefaultPlaceholder =
+    !rawVoice || rawVoice.toLowerCase() === "default";
   const isHeygen = params.modelId === "heygen/heygen-voice-1-turbo:free";
-
-  const resolvedVoice = isHeygen
-    ? !rawVoice || rawVoice.toLowerCase() === "default"
-      ? (option?.defaultVoice ?? "vincent")
-      : rawVoice
-    : rawVoice || option?.defaultVoice || "default";
 
   const body: Record<string, unknown> = {
     model: params.modelId,
     input: params.input,
-    voice: resolvedVoice,
     response_format: isHeygen ? "pcm" : "mp3",
   };
+
+  const resolvedVoice = isDefaultPlaceholder
+    ? (option?.defaultVoice?.trim() || (isHeygen ? "vincent" : ""))
+    : rawVoice;
+
+  if (resolvedVoice) {
+    body.voice = resolvedVoice;
+  }
 
   if (
     option?.supportsSpeed &&

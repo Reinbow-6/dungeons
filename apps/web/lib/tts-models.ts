@@ -14,19 +14,19 @@ export interface TtsModelOption {
 export const TTS_MODELS: TtsModelOption[] = [
   {
     id: "heygen/heygen-voice-1-turbo:free",
-    name: "HeyGen Voice Turbo (Gratis)",
+    name: "HeyGen",
     provider: "openrouter",
-    description: "Baja latencia; entrega PCM 44.1 kHz mono convertido a WAV.",
+    description: "Voz rápida de baja latencia.",
     supportsSpeed: false,
     defaultVoice: "vincent",
   },
   {
     id: "fish-audio/s2.1-pro-free:free",
-    name: "Fish Audio S2.1 Pro (Gratis)",
+    name: "Fish",
     provider: "openrouter",
-    description: "Narración expresiva multilingüe con soporte de velocidad.",
+    description: "Voz expresiva con control de velocidad.",
     supportsSpeed: true,
-    defaultVoice: "default",
+    defaultVoice: "872aed4c691c4cbb830649f8af64bd59",
   },
 ];
 

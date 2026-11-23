@@ -141,42 +141,45 @@ export async function POST(req: Request) {
     );
   }
 
-  let capCheck;
-  try {
-    capCheck = await checkSpendCapPersistent(guest.guestId);
-  } catch (err) {
-    return serverErrorResponse({
-      route: "/api/chat",
-      err,
-      publicMessageEs: "Error interno al validar el cupo de uso.",
-      status: 500,
-      errorCode: "USAGE_CHECK_ERROR",
-      setCookieHeader: guest.setCookieHeader,
-      correlationId: requestId,
-      guestIdHash,
-    });
-  }
+  // El límite diario de invitado aplica únicamente a visitantes sin whitelist.
+  if (access.tier !== "whitelisted") {
+    let capCheck;
+    try {
+      capCheck = await checkSpendCapPersistent(guest.guestId);
+    } catch (err) {
+      return serverErrorResponse({
+        route: "/api/chat",
+        err,
+        publicMessageEs: "Error interno al validar el cupo de uso.",
+        status: 500,
+        errorCode: "USAGE_CHECK_ERROR",
+        setCookieHeader: guest.setCookieHeader,
+        correlationId: requestId,
+        guestIdHash,
+      });
+    }
 
-  if (!capCheck.allowed) {
-    logServerEvent({
-      level: "warn",
-      requestId,
-      route: "/api/chat",
-      event: "spend_cap_reached",
-      status: 429,
-      errorCode: "SPEND_CAP_REACHED",
-      guestIdHash,
-    });
-    return jsonWithGuestCookie(
-      {
-        error:
-          capCheck.reasonEs ??
-          "Alcanzaste el límite diario de uso para esta sesión.",
-        code: "SPEND_CAP_REACHED",
-      },
-      429,
-      guest.setCookieHeader,
-    );
+    if (!capCheck.allowed) {
+      logServerEvent({
+        level: "warn",
+        requestId,
+        route: "/api/chat",
+        event: "spend_cap_reached",
+        status: 429,
+        errorCode: "SPEND_CAP_REACHED",
+        guestIdHash,
+      });
+      return jsonWithGuestCookie(
+        {
+          error:
+            capCheck.reasonEs ??
+            "Alcanzaste el límite diario de uso para esta sesión.",
+          code: "SPEND_CAP_REACHED",
+        },
+        429,
+        guest.setCookieHeader,
+      );
+    }
   }
 
   let body: unknown;
@@ -229,7 +232,7 @@ export async function POST(req: Request) {
     return jsonWithGuestCookie(
       {
         error:
-          "Iniciá sesión con una cuenta autorizada (whitelist) para usar DeepSeek V4.1 Flash.",
+          "Iniciá sesión con una cuenta autorizada (whitelist) para usar el modelo Main.",
         code: "AUTH_WHITELIST_REQUIRED",
       },
       403,
@@ -450,13 +453,15 @@ export async function POST(req: Request) {
     }
   }
 
-  try {
-    await recordSpendUsagePersistent(guest.guestId, {
-      requests: 1,
-      totalTokens: 0,
-    });
-  } catch {
-    // Non-fatal usage counter hiccup; do not abort turn
+  if (access.tier !== "whitelisted") {
+    try {
+      await recordSpendUsagePersistent(guest.guestId, {
+        requests: 1,
+        totalTokens: 0,
+      });
+    } catch {
+      // Non-fatal usage counter hiccup; do not abort turn
+    }
   }
 
   const compacted = compactConversationContext({ messages });
@@ -501,10 +506,12 @@ export async function POST(req: Request) {
       );
       const latencyMs = Date.now() - startedAt;
 
-      void recordSpendUsagePersistent(guest.guestId, {
-        requests: 0,
-        totalTokens,
-      });
+      if (access.tier !== "whitelisted") {
+        void recordSpendUsagePersistent(guest.guestId, {
+          requests: 0,
+          totalTokens,
+        });
+      }
       void recordProviderHealth({
         provider: resolved.provider,
         modelId: resolved.modelId,

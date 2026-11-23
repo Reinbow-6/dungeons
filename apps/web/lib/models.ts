@@ -19,7 +19,7 @@ export type GatewayModel = ModelOption;
 export const MODELS: ModelOption[] = [
   {
     id: "openrouter:deepseek/deepseek-v4.1-flash-1017",
-    name: "DeepSeek V4.1 Flash (Principal)",
+    name: "Main",
     provider: "openrouter",
     modelId: "deepseek/deepseek-v4.1-flash-1017",
     accessTier: "whitelisted",
@@ -27,7 +27,7 @@ export const MODELS: ModelOption[] = [
   },
   {
     id: "openrouter:openrouter/free",
-    name: "OpenRouter Free Router (Gratis · Auto)",
+    name: "Free",
     provider: "openrouter",
     modelId: "openrouter/free",
     accessTier: "free",

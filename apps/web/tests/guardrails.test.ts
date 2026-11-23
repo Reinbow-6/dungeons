@@ -153,6 +153,7 @@ describe("provider config, error sanitization & Drizzle schema", () => {
       "openrouter:deepseek/deepseek-v4.1-flash-1017",
       "openrouter:openrouter/free",
     ]);
+    expect(MODELS.map((m) => m.name)).toEqual(["Main", "Free"]);
     expect(MODELS.some((m) => m.provider === "groq")).toBe(false);
 
     const cfg = getModelConfig({});

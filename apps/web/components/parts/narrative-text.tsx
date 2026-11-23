@@ -5,6 +5,8 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { MarkdownPre } from "@/components/markdown-code";
+import { useSmoothText } from "@/hooks/use-smooth-text";
+import type { StreamSpeed } from "@/lib/settings/app-settings";
 
 const DEFAULT_NPC_ENTITIES = [
   "Comandante Mireia",
@@ -190,13 +192,19 @@ function transformChildren(
 
 export function NarrativeText({
   text,
+  isStreaming = false,
+  streamSpeed = "normal",
   pcNames = [],
   npcNames = [],
 }: {
   text: string;
+  isStreaming?: boolean;
+  streamSpeed?: StreamSpeed;
   pcNames?: readonly string[];
   npcNames?: readonly string[];
 }) {
+  const displayedText = useSmoothText(text, isStreaming, streamSpeed);
+
   const { pcRegex, npcRegex } = React.useMemo(() => {
     const expandedPcNames: string[] = [];
     for (const full of pcNames) {
@@ -237,7 +245,7 @@ export function NarrativeText({
   return (
     <div className="typeset typeset-docs text-foreground/92">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {text}
+        {displayedText}
       </ReactMarkdown>
     </div>
   );

@@ -52,7 +52,9 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
 import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
+import { pushToast } from "@/components/ui/toaster";
 import { Trace, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace";
+import { formatGameEventToast } from "@/lib/game/event-toast";
 import { useTtsPlayer } from "@/hooks/use-tts-player";
 import type { CharacterPresetInfo } from "@/lib/game/presets";
 import type { SessionSummaryItem, StoredMemoryFact } from "@/lib/game/store";
@@ -299,12 +301,37 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
   });
 
+  const lastToastedSeqRef = React.useRef<number | null>(null);
+
+  const notifyNewEvents = React.useCallback(
+    (nextEvents: readonly GameEvent[], silent = false) => {
+      const maxSeq = nextEvents.reduce(
+        (max, ev) => (ev.seq > max ? ev.seq : max),
+        0,
+      );
+      if (silent || lastToastedSeqRef.current === null) {
+        lastToastedSeqRef.current = maxSeq;
+        return;
+      }
+      const prevSeq = lastToastedSeqRef.current;
+      const fresh = nextEvents.filter(
+        (ev) => ev.revertedByEventId === null && ev.seq > prevSeq,
+      );
+      lastToastedSeqRef.current = Math.max(prevSeq, maxSeq);
+      for (const ev of fresh.slice(-3)) {
+        pushToast(formatGameEventToast(ev));
+      }
+    },
+    [],
+  );
+
   const applyCampaignPayload = React.useCallback(
     (data: CampaignApiPayload, restoreMessages = false) => {
       setCampaignId(data.campaignId);
       setSessionNumber(data.sessionNumber ?? 1);
       setGameState(data.state);
       setEvents(data.events);
+      notifyNewEvents(data.events, restoreMessages);
       setSessionSummaries(data.sessionSummaries ?? []);
       setMemoryFacts(data.memoryFacts ?? []);
       setPresets(data.presets ?? []);
@@ -318,7 +345,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         );
       }
     },
-    [setMessages],
+    [notifyNewEvents, setMessages],
   );
 
   React.useEffect(() => {
@@ -347,6 +374,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       setSessionNumber(data.sessionNumber ?? 1);
       setGameState(data.state);
       setEvents(data.events);
+      notifyNewEvents(data.events, true);
       setSessionSummaries(data.sessionSummaries ?? []);
       setMemoryFacts(data.memoryFacts ?? []);
       setPresets(data.presets ?? []);
@@ -363,7 +391,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     return () => {
       cancelled = true;
     };
-  }, [setMessages]);
+  }, [notifyNewEvents, setMessages]);
 
   const messagesRef = React.useRef(messages);
   React.useEffect(() => {
@@ -446,10 +474,16 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     setSessionNumber(data.sessionNumber ?? 1);
     setGameState(data.state);
     setEvents(data.events);
+    notifyNewEvents(data.events, true);
     setSessionSummaries(data.sessionSummaries ?? []);
     setMemoryFacts(data.memoryFacts ?? []);
     setPresets(data.presets ?? []);
     setMessages([]);
+    pushToast({
+      title: "Nueva campaña iniciada",
+      description: `Aguas Quietas · ${ruleset}`,
+      tone: "amber",
+    });
   }
 
   async function handleStartNewSession() {
@@ -473,7 +507,15 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       if (data.sessionSummaries) setSessionSummaries(data.sessionSummaries);
       if (data.memoryFacts) setMemoryFacts(data.memoryFacts);
       if (data.state) setGameState(data.state);
-      if (data.events) setEvents(data.events);
+      if (data.events) {
+        setEvents(data.events);
+        notifyNewEvents(data.events, true);
+      }
+      pushToast({
+        title: `Sesión #${data.sessionNumber ?? sessionNumber + 1} abierta`,
+        description: "Resumen guardado en la memoria de campaña.",
+        tone: "emerald",
+      });
     }
   }
 
@@ -491,6 +533,14 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     const data = (await res.json()) as { ok: boolean; state: GameState };
     if (data.ok) {
       setGameState(data.state);
+      pushToast({
+        title: mode === "hybrid" ? "Modo Híbrido" : "Modo Digital",
+        description:
+          mode === "hybrid"
+            ? "Ingresá el resultado de tus dados físicos en mesa."
+            : "El motor resolverá las tiradas automáticamente.",
+        tone: "amber",
+      });
     }
   }
 
@@ -512,6 +562,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     if (data.ok) {
       setGameState(data.state);
       setEvents(data.events);
+      notifyNewEvents(data.events, true);
       if (Array.isArray(data.memoryFacts)) {
         setMemoryFacts(data.memoryFacts);
       }
@@ -524,6 +575,12 @@ export function Chat({ models }: { models: GatewayModel[] }) {
           })),
         );
       }
+      pushToast({
+        title: "Línea temporal restaurada",
+        description: `Estado devuelto a secuencia #${targetSeq}.`,
+        tone: "amber",
+        meta: `#${targetSeq}`,
+      });
     }
   }
 
@@ -674,10 +731,13 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       {/* Columna editorial principal */}
       <main
         id="main-content"
-        className="mx-auto flex min-h-0 w-full flex-1 flex-col"
+        className={cn(
+          "mx-auto flex min-h-0 w-full flex-1 flex-col transition-[padding] duration-200 ease-out",
+          sidebarOpen && "lg:pr-[388px]",
+        )}
       >
         {messages.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center p-6">
+          <div className="flex flex-1 items-center justify-center p-6 pt-16 sm:pt-6">
             <Empty className="max-w-2xl border-none p-4 sm:p-8">
               <EmptyHeader className="max-w-lg">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-0.5 font-mono text-[10px] font-medium text-amber-700 dark:text-amber-300">
@@ -761,6 +821,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                         <ChatMessage
                           message={message}
                           isStreaming={isBusy && message.id === lastMessage?.id}
+                          streamSpeed={settings.streamSpeed}
                           isLastAssistant={isLastAssistant}
                           hideSuggestions={Boolean(
                             pendingQuestion || pendingDeclareCheck,
@@ -854,6 +915,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                       onVerified={(output, nextState, event) => {
                         setGameState(nextState);
                         setEvents((prev) => [...prev, event]);
+                        notifyNewEvents([event], false);
                         void addToolOutput({
                           tool: "declare_check",
                           toolCallId: pendingDeclareCheck.toolCallId,
@@ -919,7 +981,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         </div>
       </main>
 
-      {/* HUD Lateral colapsable (drawer deslizable) */}
+      {/* HUD Lateral colapsable (acoplado en desktop lg+, drawer en móvil) */}
       <GameSidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -937,12 +999,15 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         onRollback={handleRollback}
         onQuickAction={(prompt) => {
           playSound("interaction.confirm");
-          setSidebarOpen(false);
+          if (typeof window !== "undefined" && window.innerWidth < 1024) {
+            setSidebarOpen(false);
+          }
           submitPrompt(prompt);
         }}
         onManualDeclareVerified={(result, nextState, event) => {
           setGameState(nextState);
           setEvents((prev) => [...prev, event]);
+          notifyNewEvents([event], false);
           if (!pendingDeclareCheck && !isBusy) {
             void sendMessage(
               {

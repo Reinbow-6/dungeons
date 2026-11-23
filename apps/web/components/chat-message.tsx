@@ -27,6 +27,7 @@ import { WebSearchPart } from "@/components/parts/web-search-part";
 import { Message, MessageContent } from "@/components/ui/message";
 import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
 import { Trace } from "@/components/ui/trace";
+import type { StreamSpeed } from "@/lib/settings/app-settings";
 import { cn } from "@/lib/utils";
 import {
   type ChatMessagePart,
@@ -271,6 +272,7 @@ function CollapsibleEngineTrace({
 export const ChatMessage = React.memo(function ChatMessage({
   message,
   isStreaming = false,
+  streamSpeed = "normal",
   isLastAssistant = false,
   hideSuggestions = false,
   showReasoning = true,
@@ -290,6 +292,7 @@ export const ChatMessage = React.memo(function ChatMessage({
 }: {
   message: ChatUIMessage;
   isStreaming?: boolean;
+  streamSpeed?: StreamSpeed;
   isLastAssistant?: boolean;
   hideSuggestions?: boolean;
   showReasoning?: boolean;
@@ -413,6 +416,8 @@ export const ChatMessage = React.memo(function ChatMessage({
             <NarrativeText
               key={index}
               text={block.text}
+              isStreaming={isStreaming}
+              streamSpeed={streamSpeed}
               pcNames={pcNames}
               npcNames={npcNames}
             />
