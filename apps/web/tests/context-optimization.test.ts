@@ -300,12 +300,14 @@ describe("Phase 1b: Historical tool output pruning", () => {
     const pruned = pruneHistoricalToolOutputs(messages);
     expect(pruned).toHaveLength(6);
 
-    // Historical a1 collapsed to 1 text part without reasoning or suggest_actions
+    // Historical a1 collapsed to 1 text part inside <resumen_motor> without reasoning or suggest_actions
     expect(pruned[1]!.parts).toHaveLength(1);
     expect(pruned[1]!.parts[0]!.type).toBe("text");
     const a1Text =
       pruned[1]!.parts[0]!.type === "text" ? pruned[1]!.parts[0]!.text : "";
+    expect(a1Text).toContain("<resumen_motor>");
     expect(a1Text).toContain("[resolve_check → perception 15 vs CD 12, éxito]");
+    expect(a1Text).toContain("</resumen_motor>");
     expect(a1Text).toContain("dos siluetas con arcos tensos");
     expect(a1Text).not.toContain("suggest_actions");
     expect(a1Text).not.toContain("Voy a pedir tirada");
@@ -314,6 +316,7 @@ describe("Phase 1b: Historical tool output pruning", () => {
     expect(pruned[3]!.parts).toHaveLength(1);
     const a2Text =
       pruned[3]!.parts[0]!.type === "text" ? pruned[3]!.parts[0]!.text : "";
+    expect(a2Text).toContain("<resumen_motor>");
     expect(a2Text).toContain("[investigate → total 16, +1 pista]");
     expect(a2Text).toContain("[combat_attack → impacto, 7 daño a Bandido]");
     expect(a2Text).toContain("hace retroceder al bandido");
@@ -362,7 +365,7 @@ describe("Phase 1b: Historical tool output pruning", () => {
     expect(pruned[1]!.parts).toHaveLength(1);
     expect(pruned[1]!.parts[0]).toEqual({
       type: "text",
-      text: "[transition_scene → El Parlamento en la Ciénaga]\n\nLlegás al claro.",
+      text: "<resumen_motor>\n[transition_scene → El Parlamento en la Ciénaga]\n</resumen_motor>\n\nLlegás al claro.",
     });
   });
 

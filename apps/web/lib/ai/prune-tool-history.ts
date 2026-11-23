@@ -321,7 +321,9 @@ export function pruneHistoricalToolOutputs(
     }
 
     const summaryPrefix =
-      toolSummaries.length > 0 ? toolSummaries.join("\n") : "";
+      toolSummaries.length > 0
+        ? `<resumen_motor>\n${toolSummaries.join("\n")}\n</resumen_motor>`
+        : "";
     const narrativeBody = textPieces.join("\n\n").trim();
     const combinedText = [summaryPrefix, narrativeBody]
       .filter((chunk) => chunk.length > 0)

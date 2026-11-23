@@ -271,6 +271,16 @@ describe("provider config, error sanitization & Drizzle schema", () => {
       effort: "high",
     });
 
+    // OpenRouter Free Router with reasoning none omits reasoning override to avoid 400 on reasoning-only endpoints
+    const freeNone = resolveLanguageModel("openrouter:openrouter/free", env, {
+      reasoningEffort: "none",
+    });
+    const freeNoneSettings = (
+      freeNone.model as { settings?: OpenRouterChatSettings }
+    ).settings;
+    expect(freeNoneSettings?.reasoning).toBeUndefined();
+    expect(freeNoneSettings?.usage).toEqual({ include: true });
+
     // OpenRouter Free Router with reasoning medium (no require_parameters)
     const freeMedium = resolveLanguageModel("openrouter:openrouter/free", env, {
       reasoningEffort: "medium",

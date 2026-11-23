@@ -143,11 +143,16 @@ export function resolveLanguageModel(
       );
     }
     const openrouter = createOpenRouter({ apiKey });
+    const isFreeRouter = modelId === "openrouter/free";
+    const reasoning =
+      reasoningEffort === "none"
+        ? isFreeRouter
+          ? undefined
+          : ({ enabled: false, exclude: true, effort: "none" } as const)
+        : ({ enabled: true, effort: reasoningEffort } as const);
     const settings: OpenRouterChatSettings = {
-      reasoning:
-        reasoningEffort === "none"
-          ? { enabled: false, exclude: true, effort: "none" }
-          : { enabled: true, effort: reasoningEffort },
+      ...(reasoning ? { reasoning } : {}),
+      usage: { include: true },
       ...(modelId === "deepseek/deepseek-v4.1-flash-1017"
         ? { provider: { require_parameters: true } }
         : {}),
