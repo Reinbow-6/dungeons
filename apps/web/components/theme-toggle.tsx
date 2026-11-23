@@ -23,7 +23,7 @@ export function ThemeToggle() {
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label="Cambiar tema (D)"
+            aria-label="Cambiar tema (N)"
             onClick={() => {
               play();
               setTheme(resolvedTheme === "dark" ? "light" : "dark");
@@ -34,7 +34,7 @@ export function ThemeToggle() {
           </Button>
         }
       />
-      <TooltipContent>Cambiar tema (tecla D)</TooltipContent>
+      <TooltipContent>Cambiar tema (tecla N)</TooltipContent>
     </Tooltip>
   );
 }

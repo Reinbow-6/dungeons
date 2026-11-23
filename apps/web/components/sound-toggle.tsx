@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { Volume2Icon, VolumeXIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,37 @@ import {
 
 export function SoundToggle() {
   const { muted, setMuted, playSound, reducedMotion } = useSensoryUI();
+
+  React.useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.key.toLowerCase() !== "d"
+      ) {
+        return;
+      }
+
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT")
+      ) {
+        return;
+      }
+
+      setMuted(!muted);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [muted, setMuted]);
 
   function handleToggle() {
     const nextMuted = !muted;
@@ -33,7 +65,7 @@ export function SoundToggle() {
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label={label}
+            aria-label={`${label} (D)`}
             aria-pressed={!muted}
             onClick={handleToggle}
           >
@@ -48,7 +80,7 @@ export function SoundToggle() {
       <TooltipContent>
         {reducedMotion
           ? "Sonidos atenuados por preferencia de movimiento reducido del sistema"
-          : `${label} · Pack Crisp`}
+          : `${label} (tecla D) · Pack Crisp`}
       </TooltipContent>
     </Tooltip>
   );

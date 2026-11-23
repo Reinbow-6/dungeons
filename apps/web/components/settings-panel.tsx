@@ -683,6 +683,18 @@ export function SettingsPanel() {
                   Alt + M
                 </kbd>
               </div>
+              <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                <span>Silenciar o activar sonido</span>
+                <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
+                  D
+                </kbd>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                <span>Cambiar tema</span>
+                <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
+                  N
+                </kbd>
+              </div>
             </section>
           </div>
 
