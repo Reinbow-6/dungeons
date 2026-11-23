@@ -28,16 +28,17 @@ export function SiteHeader() {
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
-        <AuthButton className="max-w-[118px] px-2 sm:max-w-none sm:px-2.5" />
+        <AuthButton className="max-w-[94px] px-2 sm:max-w-none sm:px-2.5" />
         <SettingsPanel />
-        <SoundToggle />
-        <ThemeToggle />
-        <span
-          title="Recargar mesa"
-          className="inline-flex shrink-0 max-sm:[&_a]:w-7 max-sm:[&_a]:gap-0 max-sm:[&_a]:px-0 max-sm:[&_a]:has-data-[icon=inline-start]:pl-0 max-sm:[&_a]:text-[0px]"
+        <div
+          role="group"
+          aria-label="Preferencias rápidas"
+          className="inline-flex items-center gap-0.5 rounded-lg border border-border/60 bg-muted/25 p-0.5"
         >
-          <NewChatButton />
-        </span>
+          <SoundToggle />
+          <ThemeToggle />
+        </div>
+        <NewChatButton />
       </div>
     </header>
   );

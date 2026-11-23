@@ -671,6 +671,8 @@ export function Chat({ models }: { models: GatewayModel[] }) {
           }}
           title="Abrir HUD de ficha, escena y combate (Alt+H)"
           aria-label="Abrir panel lateral de personaje"
+          aria-controls="campaign-hud-panel"
+          aria-expanded={false}
           className={cn(
             "fixed left-3 top-16 z-30 size-8 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground shadow-xs backdrop-blur-md transition-colors hover:border-amber-500/40 hover:text-foreground",
             activeChar && gameState ? "hidden md:inline-flex" : "inline-flex",
@@ -689,8 +691,11 @@ export function Chat({ models }: { models: GatewayModel[] }) {
             setSidebarOpen(true);
           }}
           title="Ver ficha completa, conjuros, memoria y rollback (Alt+H)"
+          aria-label={`Abrir ficha de ${activeChar.name}. Puntos de golpe: ${activeChar.hp.current} de ${activeChar.hp.max}${gameState.combat?.active ? `; combate, ronda ${gameState.combat.round}` : ""}`}
+          aria-controls="campaign-hud-panel"
+          aria-expanded={false}
           className={cn(
-            "fixed right-4 top-16 z-30 flex min-h-8 items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] shadow-sm backdrop-blur-md transition-all hover:border-amber-500/45",
+            "fixed right-3 top-14 z-30 flex min-h-10 max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] shadow-sm backdrop-blur-md transition-all hover:border-amber-500/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:right-4 sm:top-16",
             gameState.combat?.active
               ? "border-rose-500/45 bg-rose-500/15 text-rose-950 dark:bg-rose-950/75 dark:text-rose-100"
               : activeChar.hp.current === 0
@@ -708,6 +713,24 @@ export function Chat({ models }: { models: GatewayModel[] }) {
               <HeartPulseIcon className="size-3 text-emerald-600 dark:text-emerald-400" />
             )}
             {activeChar.hp.current}/{activeChar.hp.max}
+          </span>
+          <span
+            aria-hidden="true"
+            className="h-1.5 w-8 overflow-hidden rounded-full bg-foreground/15"
+          >
+            <span
+              className={cn(
+                "block h-full rounded-full transition-[width]",
+                activeChar.hp.current === 0
+                  ? "bg-rose-500"
+                  : activeChar.hp.current / Math.max(1, activeChar.hp.max) <= 0.25
+                    ? "bg-amber-500"
+                    : "bg-emerald-500",
+              )}
+              style={{
+                width: `${Math.max(0, Math.min(100, (activeChar.hp.current / Math.max(1, activeChar.hp.max)) * 100))}%`,
+              }}
+            />
           </span>
           <span className="hidden items-center gap-0.5 font-mono tabular-nums text-muted-foreground sm:inline-flex">
             <ShieldIcon className="size-3" />

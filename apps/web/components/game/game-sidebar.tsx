@@ -181,6 +181,7 @@ export function GameSidebar({
       )}
 
       <aside
+        id="campaign-hud-panel"
         aria-label="Panel HUD de campaña"
         aria-hidden={!open}
         inert={!open || undefined}
@@ -322,6 +323,9 @@ export function GameSidebar({
           <section className="flex flex-col gap-2.5 rounded-xl border border-border/80 bg-card/85 p-3">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
+                <p className="mb-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                  Ficha del personaje
+                </p>
                 <h3 className="truncate font-serif text-base font-semibold tracking-tight text-amber-700 dark:text-amber-300">
                   {activeChar.name}
                 </h3>
@@ -339,6 +343,7 @@ export function GameSidebar({
               >
                 <button
                   type="button"
+                  aria-pressed={activeChar.rollAuthority !== "player-declared"}
                   onClick={() => {
                     if (activeChar.rollAuthority === "player-declared") {
                       playSound("interaction.toggle");
@@ -356,6 +361,7 @@ export function GameSidebar({
                 </button>
                 <button
                   type="button"
+                  aria-pressed={activeChar.rollAuthority === "player-declared"}
                   onClick={() => {
                     if (activeChar.rollAuthority !== "player-declared") {
                       playSound("interaction.toggle");

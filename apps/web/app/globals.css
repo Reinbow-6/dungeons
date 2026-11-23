@@ -9,9 +9,9 @@
   --typeset-font-body: var(--font-sans);
   --typeset-font-heading: var(--font-serif);
   --typeset-font-mono: var(--font-mono);
-  --typeset-size: 15.5px;
-  --typeset-leading: 1.78;
-  --typeset-flow: 1.18em;
+  --typeset-size: 16px;
+  --typeset-leading: 1.8;
+  --typeset-flow: 1.22em;
 }
 
 @theme inline {
