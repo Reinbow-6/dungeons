@@ -166,7 +166,7 @@ export function Toaster() {
     <div
       aria-live="polite"
       aria-label="Notificaciones del registro de campaña"
-      className="pointer-events-none fixed inset-x-3 top-14 z-50 flex flex-col gap-2 sm:inset-x-auto sm:top-auto sm:bottom-4 sm:left-4 sm:w-80"
+      className="pointer-events-none fixed top-14 right-3 z-50 flex w-[calc(100vw-1.5rem)] max-w-80 flex-col gap-2 sm:top-auto sm:right-4 sm:bottom-4"
     >
       {items.map((item) => {
         const style = TONE_STYLES[item.tone];

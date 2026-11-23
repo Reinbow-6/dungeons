@@ -228,7 +228,9 @@ export function NarrativeText({
     () => ({
       pre: MarkdownPre,
       p: ({ children }) => (
-        <p>{transformChildren(children, pcRegex, npcRegex, "p")}</p>
+        <p className="max-w-[68ch] text-foreground">
+          {transformChildren(children, pcRegex, npcRegex, "p")}
+        </p>
       ),
       li: ({ children }) => (
         <li>{transformChildren(children, pcRegex, npcRegex, "li")}</li>

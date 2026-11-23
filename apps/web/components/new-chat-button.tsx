@@ -7,6 +7,9 @@ export function NewChatButton() {
     <Button
       variant="outline"
       size="sm"
+      aria-label="Recargar mesa"
+      title="Recargar mesa"
+      className="max-sm:size-8 max-sm:gap-0 max-sm:px-0 max-sm:text-[0px]"
       render={
         // eslint-disable-next-line @next/next/no-html-link-for-pages
         <a href="/" />
