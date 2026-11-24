@@ -182,6 +182,7 @@ export type DeathSaves = z.infer<typeof DeathSavesSchema>;
 export const CharacterSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
+  playerName: z.string().trim().min(1).max(40).optional(),
   species: z.string().min(1),
   className: z.string().min(1),
   level: z.number().int().min(1).max(20),

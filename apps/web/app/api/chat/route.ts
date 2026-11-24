@@ -29,6 +29,7 @@ import { pruneHistoricalToolOutputs } from "@/lib/ai/prune-tool-history";
 import { resolveGuestSessionFromRequest } from "@/lib/auth/guest-session";
 import { resolveRequestAccess } from "@/lib/auth/whitelist";
 import { commitEventWithRetry, performRollback } from "@/lib/game/operations";
+import { expandPartyMessageForDm } from "@/lib/game/party-messages";
 import { getDefaultGameStore } from "@/lib/game/store";
 import {
   checkRateLimitPersistent,
@@ -470,8 +471,31 @@ export async function POST(req: Request) {
     }
   }
 
+  const requestedActiveActorId =
+    typeof (body as { activeActorId?: unknown })?.activeActorId === "string"
+      ? ((body as { activeActorId: string }).activeActorId in
+        currentState.characters
+          ? (body as { activeActorId: string }).activeActorId
+          : undefined)
+      : undefined;
+
   const compacted = compactConversationContext({ messages });
-  const lastUserMessage = [...messages]
+  const expandedMessages = compacted.recentMessages.map((msg) => {
+    if (msg.role !== "user") return msg;
+    return {
+      ...msg,
+      parts: msg.parts.map((part) =>
+        part.type === "text"
+          ? {
+              ...part,
+              text: expandPartyMessageForDm(part.text, currentState.characters),
+            }
+          : part,
+      ),
+    };
+  });
+
+  const lastUserMessage = [...expandedMessages]
     .reverse()
     .find((m) => m.role === "user");
   const latestUserText = lastUserMessage
@@ -487,10 +511,9 @@ export async function POST(req: Request) {
     memoryFacts: currentMemoryFacts,
     olderTurnsDigest: compacted.olderTurnsDigest,
     latestUserText,
+    activeActorId: requestedActiveActorId,
   });
-  const prunedRecentMessages = pruneHistoricalToolOutputs(
-    compacted.recentMessages,
-  );
+  const prunedRecentMessages = pruneHistoricalToolOutputs(expandedMessages);
   const modelMessages = wrapUserMessagesForModel(
     await convertToModelMessages(prunedRecentMessages),
   );

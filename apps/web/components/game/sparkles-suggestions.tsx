@@ -46,11 +46,15 @@ interface TurnCacheState {
 
 export function SparklesSuggestions({
   campaignId,
+  actorId,
+  actorName,
   lastDmText,
   disabled,
   onSelectAction,
 }: {
   campaignId?: string | null;
+  actorId?: string | null;
+  actorName?: string | null;
   lastDmText?: string;
   disabled?: boolean;
   onSelectAction: (text: string) => void;
@@ -60,7 +64,7 @@ export function SparklesSuggestions({
   const [category, setCategory] = React.useState<SparkleCategory>("general");
   const [loading, setLoading] = React.useState(false);
 
-  const turnKey = `${campaignId ?? ""}::${lastDmText ?? ""}`;
+  const turnKey = `${campaignId ?? ""}::${actorId ?? ""}::${lastDmText ?? ""}`;
   const [turnCache, setTurnCache] = React.useState<TurnCacheState>(() => ({
     turnKey,
     byCategory: {},
@@ -93,6 +97,7 @@ export function SparklesSuggestions({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             campaignId,
+            ...(actorId ? { actorId } : {}),
             category: targetCategory,
             lastDmText,
           }),
@@ -123,7 +128,7 @@ export function SparklesSuggestions({
         setLoading(false);
       }
     },
-    [campaignId, effectiveCache.byCategory, lastDmText, turnKey],
+    [campaignId, actorId, effectiveCache.byCategory, lastDmText, turnKey],
   );
 
   function handleOpenChange(nextOpen: boolean) {
@@ -220,6 +225,11 @@ export function SparklesSuggestions({
             </div>
 
             <div className="flex flex-col gap-2">
+              {actorName && (
+                <p className="px-0.5 text-[10.5px] font-medium text-muted-foreground">
+                  Para <span className="text-foreground">{actorName}</span>
+                </p>
+              )}
               {loading && items.length === 0 ? (
                 <div className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground">
                   <Loader2Icon className="size-4 animate-spin text-sky-500" />

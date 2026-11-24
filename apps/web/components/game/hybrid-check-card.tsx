@@ -21,6 +21,9 @@ export interface HybridCheckCardProps {
   campaignId: string
   sceneId: string
   actorId: string
+  actorName?: string
+  playerName?: string
+  queuePosition?: { current: number; total: number }
   skill: string
   dc?: number
   dcRef?: string
@@ -73,6 +76,9 @@ export function HybridCheckCard({
   campaignId,
   sceneId,
   actorId,
+  actorName,
+  playerName,
+  queuePosition,
   skill,
   dc,
   dcRef,
@@ -206,21 +212,31 @@ export function HybridCheckCard({
             <div className="min-w-0">
               <p className="text-[10px] font-semibold tracking-[0.18em] text-amber-700 uppercase dark:text-amber-300">
                 Tirada física
+                {actorName
+                  ? ` · ${actorName}${playerName ? ` (${playerName})` : ""}`
+                  : ""}
               </p>
               <h2 className="mt-0.5 truncate font-serif text-lg leading-tight font-semibold sm:text-xl">
                 {SKILL_LABELS[skill] ?? skill}
               </h2>
             </div>
           </div>
-          <span className="shrink-0 rounded-full border border-border/70 bg-background/70 px-2.5 py-1 font-mono text-xs font-semibold text-foreground tabular-nums">
-            {verifiedCheck
-              ? `CD ${verifiedCheck.result.dc}`
-              : dc !== undefined
-                ? `CD ${dc}`
-                : dcRef
-                  ? `CD · ${dcRef}`
-                  : "CD de escena"}
-          </span>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {queuePosition && queuePosition.total > 1 && (
+              <span className="rounded-full border border-amber-500/35 bg-amber-500/15 px-2.5 py-1 font-mono text-[11px] font-semibold text-amber-700 tabular-nums dark:text-amber-300">
+                Tirada {queuePosition.current} de {queuePosition.total}
+              </span>
+            )}
+            <span className="rounded-full border border-border/70 bg-background/70 px-2.5 py-1 font-mono text-xs font-semibold text-foreground tabular-nums">
+              {verifiedCheck
+                ? `CD ${verifiedCheck.result.dc}`
+                : dc !== undefined
+                  ? `CD ${dc}`
+                  : dcRef
+                    ? `CD · ${dcRef}`
+                    : "CD de escena"}
+            </span>
+          </div>
         </div>
 
         <ol
@@ -397,7 +413,10 @@ export function HybridCheckCard({
                 </>
               ) : (
                 <>
-                  Continuar narración
+                  {queuePosition &&
+                  queuePosition.current < queuePosition.total
+                    ? "Siguiente tirada"
+                    : "Continuar narración"}
                   <ArrowRightIcon data-icon="inline-end" />
                 </>
               )}

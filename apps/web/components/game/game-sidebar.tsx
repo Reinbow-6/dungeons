@@ -24,14 +24,21 @@ import {
   SkullIcon,
   SparklesIcon,
   UserIcon,
+  UserPlusIcon,
+  UsersIcon,
   XIcon,
 } from "lucide-react";
 import * as React from "react";
 
 import { CombatTracker } from "@/components/game/combat-tracker";
+import { PartyBuilder } from "@/components/game/party-builder";
 import { Button } from "@/components/ui/button";
 import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
-import type { CharacterPresetInfo } from "@/lib/game/presets";
+import type {
+  CharacterPresetId,
+  CharacterPresetInfo,
+  PartyMemberSpec,
+} from "@/lib/game/presets";
 import type { SessionSummaryItem, StoredMemoryFact } from "@/lib/game/store";
 import { cn } from "@/lib/utils";
 
@@ -69,6 +76,10 @@ export function GameSidebar({
   sessionSummaries = [],
   memoryFacts = [],
   presets,
+  activeActorId,
+  onSelectActor,
+  onAddPartyMember,
+  onRemovePartyMember,
   onNewCampaign,
   onStartNewSession,
   onToggleMode,
@@ -84,29 +95,46 @@ export function GameSidebar({
   sessionSummaries?: SessionSummaryItem[];
   memoryFacts?: StoredMemoryFact[];
   presets: CharacterPresetInfo[];
+  activeActorId?: string | null;
+  onSelectActor?: (actorId: string) => void;
+  onAddPartyMember?: (
+    presetId: CharacterPresetId,
+    playerName?: string,
+  ) => Promise<void>;
+  onRemovePartyMember?: (actorId: string) => Promise<void>;
   onNewCampaign: (
-    presetId: string,
+    party: PartyMemberSpec[],
     mode: "digital" | "hybrid",
     ruleset: RulesetProfile,
   ) => Promise<void>;
   onStartNewSession: () => Promise<void>;
-  onToggleMode: (actorId: string, mode: "digital" | "hybrid") => Promise<void>;
+  onToggleMode: (mode: "digital" | "hybrid") => Promise<void>;
   onRollback: (targetSeq: number) => Promise<void>;
   onQuickAction?: (prompt: string) => void;
 }) {
   const { playSound } = useSensoryUI();
-  const [selectedPreset, setSelectedPreset] = React.useState("pc_seraphina");
-  const [selectedMode, setSelectedMode] = React.useState<"digital" | "hybrid">(
-    "digital",
-  );
-  const [selectedRuleset, setSelectedRuleset] =
-    React.useState<RulesetProfile>("5e-full");
   const [showNewCampaign, setShowNewCampaign] = React.useState(false);
+  const [showAddMember, setShowAddMember] = React.useState(false);
+  const [addPresetId, setAddPresetId] = React.useState<CharacterPresetId>("pc_brenna");
+  const [addPlayerName, setAddPlayerName] = React.useState("");
+  const [partyBusy, setPartyBusy] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<SidebarTab>("ficha");
   const [busy, setBusy] = React.useState(false);
   const [sessionBusy, setSessionBusy] = React.useState(false);
 
-  const activeChar = state ? Object.values(state.characters)[0] : undefined;
+  const partyChars = React.useMemo(
+    () => (state ? Object.values(state.characters) : []),
+    [state],
+  );
+  const activeChar =
+    (activeActorId && state ? state.characters[activeActorId] : undefined) ??
+    partyChars[0];
+  const unusedPresets = React.useMemo(() => {
+    const taken = new Set(partyChars.map((c) => c.id));
+    return presets.filter((p) => !taken.has(p.id));
+  }, [partyChars, presets]);
+  const isGroup = partyChars.length > 1;
+  const combatActive = Boolean(state?.combat?.active);
   const currentScene = state ? state.scenes[state.sceneId] : undefined;
   const unlockedIds = state ? (state.unlockedClues[state.sceneId] ?? []) : [];
   const activeEvents = events.filter(
@@ -127,14 +155,44 @@ export function GameSidebar({
     onClose();
   }
 
-  async function handleCreate() {
+  async function handleCreate(
+    party: PartyMemberSpec[],
+    mode: "digital" | "hybrid",
+    ruleset: RulesetProfile,
+  ) {
     setBusy(true);
     try {
-      await onNewCampaign(selectedPreset, selectedMode, selectedRuleset);
+      await onNewCampaign(party, mode, ruleset);
       playSound("notification.success");
       setShowNewCampaign(false);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleAddMember() {
+    if (!onAddPartyMember || partyBusy) return;
+    const targetPreset =
+      unusedPresets.find((p) => p.id === addPresetId)?.id ??
+      unusedPresets[0]?.id;
+    if (!targetPreset) return;
+    setPartyBusy(true);
+    try {
+      await onAddPartyMember(targetPreset, addPlayerName.trim() || undefined);
+      setAddPlayerName("");
+      setShowAddMember(false);
+    } finally {
+      setPartyBusy(false);
+    }
+  }
+
+  async function handleRemoveMember(actorId: string) {
+    if (!onRemovePartyMember || partyBusy) return;
+    setPartyBusy(true);
+    try {
+      await onRemovePartyMember(actorId);
+    } finally {
+      setPartyBusy(false);
     }
   }
 
@@ -241,66 +299,14 @@ export function GameSidebar({
           </div>
 
           {showNewCampaign && (
-            <div className="flex flex-col gap-2 border-t border-border/70 pt-2.5">
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] text-muted-foreground">
-                  Personaje inicial
-                </span>
-                <select
-                  className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-                  value={selectedPreset}
-                  onChange={(e) => setSelectedPreset(e.target.value)}
-                >
-                  {presets.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} — {p.className}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <div className="grid grid-cols-2 gap-2">
-                <label className="flex flex-col gap-1">
-                  <span className="text-[11px] text-muted-foreground">
-                    Modo inicial
-                  </span>
-                  <select
-                    className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-                    value={selectedMode}
-                    onChange={(e) =>
-                      setSelectedMode(e.target.value as "digital" | "hybrid")
-                    }
-                  >
-                    <option value="digital">Digital (dados IA)</option>
-                    <option value="hybrid">Híbrido (papel + dado)</option>
-                  </select>
-                </label>
-
-                <label className="flex flex-col gap-1">
-                  <span className="text-[11px] text-muted-foreground">
-                    Reglas
-                  </span>
-                  <select
-                    className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-                    value={selectedRuleset}
-                    onChange={(e) =>
-                      setSelectedRuleset(e.target.value as RulesetProfile)
-                    }
-                  >
-                    <option value="5e-full">5e-full (completo)</option>
-                    <option value="5e-lite">5e-lite (rápido)</option>
-                  </select>
-                </label>
-              </div>
-
-              <Button
-                size="sm"
-                className="w-full"
-                onClick={handleCreate}
-                disabled={busy}
-              >
-                {busy ? "Creando campaña…" : "Crear nueva campaña"}
-              </Button>
+            <div className="border-t border-border/70 pt-2.5">
+              <PartyBuilder
+                presets={presets}
+                busy={busy}
+                compact
+                submitLabel="Crear nueva campaña"
+                onSubmit={handleCreate}
+              />
             </div>
           )}
         </section>
@@ -308,13 +314,134 @@ export function GameSidebar({
         {/* Combate activo anclado arriba cuando corresponde */}
         {state?.combat?.active && <CombatTracker combat={state.combat} />}
 
-        {/* Tarjeta HUD del Personaje Activo */}
+        {/* Tarjeta HUD del Personaje Activo + Selector de Grupo Local */}
         {state && activeChar && campaignId && (
           <section className="flex flex-col gap-2.5 rounded-xl border border-border/80 bg-card/85 p-3">
+            {/* Barra de integrantes de la mesa local + botón + Sumar PJ */}
+            <div className="flex flex-col gap-1.5 border-b border-border/60 pb-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                  <UsersIcon className="size-3 text-amber-500" />
+                  Mesa local ({partyChars.length}/4)
+                </span>
+                {onAddPartyMember && partyChars.length < 4 && !combatActive && unusedPresets.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playSound("interaction.subtle");
+                      setAddPresetId(unusedPresets[0]!.id);
+                      setShowAddMember((prev) => !prev);
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 hover:bg-amber-500/20 dark:text-amber-300"
+                  >
+                    <UserPlusIcon className="size-2.5" />
+                    Sumar PJ
+                  </button>
+                )}
+              </div>
+
+              {partyChars.length > 1 && (
+                <div className="flex flex-wrap gap-1">
+                  {partyChars.map((ch) => {
+                    const selected = ch.id === activeChar.id;
+                    const first = ch.name.trim().split(/\s+/)[0] ?? ch.name;
+                    return (
+                      <div
+                        key={ch.id}
+                        className={cn(
+                          "inline-flex items-center rounded-lg border text-[11px] transition-colors",
+                          selected
+                            ? "border-amber-500/60 bg-amber-500/15 font-semibold text-foreground"
+                            : "border-border/70 bg-background/60 text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playSound("interaction.subtle");
+                            onSelectActor?.(ch.id);
+                          }}
+                          className="px-2 py-1 text-left"
+                        >
+                          <span>{first}</span>
+                          {ch.playerName ? (
+                            <span className="ml-1 font-normal opacity-75">
+                              ({ch.playerName})
+                            </span>
+                          ) : null}
+                          <span className="ml-1 font-mono text-[9.5px] opacity-80">
+                            {ch.hp.current}/{ch.hp.max}
+                          </span>
+                        </button>
+                        {onRemovePartyMember && !combatActive && (
+                          <button
+                            type="button"
+                            disabled={partyBusy}
+                            aria-label={`Retirar a ${ch.name}`}
+                            title={`Retirar a ${ch.name} de la mesa`}
+                            onClick={() => void handleRemoveMember(ch.id)}
+                            className="pr-1.5 text-muted-foreground hover:text-rose-500 disabled:opacity-40"
+                          >
+                            <XIcon className="size-2.5" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {showAddMember && unusedPresets.length > 0 && (
+                <div className="flex flex-col gap-1.5 rounded-lg border border-border/70 bg-background/70 p-2">
+                  <select
+                    className="h-7 rounded-md border border-border bg-background px-2 text-[11px]"
+                    value={addPresetId}
+                    onChange={(e) =>
+                      setAddPresetId(e.target.value as CharacterPresetId)
+                    }
+                  >
+                    {unusedPresets.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} — {p.className}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    maxLength={40}
+                    value={addPlayerName}
+                    onChange={(e) => setAddPlayerName(e.target.value)}
+                    placeholder="Nombre del jugador (opcional)"
+                    className="h-7 rounded-md border border-border bg-background px-2 text-[11px]"
+                  />
+                  <div className="flex justify-end gap-1.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-2 text-[10.5px]"
+                      onClick={() => setShowAddMember(false)}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={partyBusy}
+                      className="h-6 px-2.5 text-[10.5px]"
+                      onClick={() => void handleAddMember()}
+                    >
+                      {partyBusy ? "Sumando…" : "Agregar a la mesa"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="mb-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                  Ficha del personaje
+                  Ficha del personaje{activeChar.playerName ? ` · ${activeChar.playerName}` : ""}
                 </p>
                 <h3 className="truncate font-serif text-base font-semibold tracking-tight text-amber-700 dark:text-amber-300">
                   {activeChar.name}
@@ -325,10 +452,11 @@ export function GameSidebar({
                 </p>
               </div>
 
-              {/* Segmented Mode Control (Digital | Híbrido) */}
+              {/* Segmented Mode Control (Digital | Híbrido) — Modo global de mesa */}
               <div
                 role="group"
-                aria-label="Modo de tiradas del personaje"
+                aria-label={isGroup ? "Modo de tiradas de la mesa" : "Modo de tiradas del personaje"}
+                title={isGroup ? "Aplica a todos los personajes de la mesa" : "Modo de tiradas"}
                 className="inline-flex shrink-0 rounded-lg border border-border/80 bg-muted/60 p-0.5 text-[11px]"
               >
                 <button
@@ -337,7 +465,7 @@ export function GameSidebar({
                   onClick={() => {
                     if (activeChar.rollAuthority === "player-declared") {
                       playSound("interaction.toggle");
-                      void onToggleMode(activeChar.id, "digital");
+                      void onToggleMode("digital");
                     }
                   }}
                   className={cn(
@@ -355,7 +483,7 @@ export function GameSidebar({
                   onClick={() => {
                     if (activeChar.rollAuthority !== "player-declared") {
                       playSound("interaction.toggle");
-                      void onToggleMode(activeChar.id, "hybrid");
+                      void onToggleMode("hybrid");
                     }
                   }}
                   className={cn(
@@ -704,7 +832,7 @@ export function GameSidebar({
                       title="Escribe /descanso corto en el chat"
                     >
                       <MoonIcon className="size-3 text-emerald-600 dark:text-emerald-400" />
-                      Descanso corto
+                      {isGroup ? "Descanso corto (grupo)" : "Descanso corto"}
                     </Button>
                     <Button
                       type="button"
@@ -715,7 +843,7 @@ export function GameSidebar({
                       title="Escribe /descanso largo en el chat"
                     >
                       <MoonIcon className="size-3 text-violet-600 dark:text-violet-400" />
-                      Descanso largo
+                      {isGroup ? "Descanso largo (grupo)" : "Descanso largo"}
                     </Button>
                   </div>
                 )}

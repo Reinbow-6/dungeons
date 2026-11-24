@@ -1,13 +1,18 @@
 "use client";
 
+import type { RulesetProfile } from "@dungeons/rules";
 import {
   ArrowRightIcon,
   BookOpenIcon,
   CompassIcon,
   SparklesIcon,
+  UsersIcon,
 } from "lucide-react";
+import * as React from "react";
 
+import { PartyBuilder } from "@/components/game/party-builder";
 import { usePlaySound } from "@/components/ui/sensory-ui/config/use-play-sound";
+import type { CharacterPresetInfo, PartyMemberSpec } from "@/lib/game/presets";
 
 const CAMPAIGN_START = {
   label: "Comenzar campaña",
@@ -32,13 +37,23 @@ const STARTING_POINTS = [
 export function Suggestions({
   onStartCampaign,
   onSelect,
+  presets = [],
+  onStartLocalParty,
   disabled = false,
 }: {
   onStartCampaign: () => void;
   onSelect: (prompt: string) => void;
+  presets?: readonly CharacterPresetInfo[];
+  onStartLocalParty?: (
+    party: PartyMemberSpec[],
+    mode: "digital" | "hybrid",
+    ruleset: RulesetProfile,
+  ) => Promise<void>;
   disabled?: boolean;
 }) {
   const { play } = usePlaySound({ sound: "interaction.confirm" });
+  const [showPartySetup, setShowPartySetup] = React.useState(false);
+  const [creatingParty, setCreatingParty] = React.useState(false);
 
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-3">
@@ -81,7 +96,41 @@ export function Suggestions({
             {label}
           </button>
         ))}
+        {onStartLocalParty && presets.length > 0 && (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              play();
+              setShowPartySetup((prev) => !prev);
+            }}
+            className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-amber-500/35 bg-amber-500/[0.06] px-3 py-2.5 text-xs font-medium text-amber-700 transition-colors hover:border-amber-500/55 hover:bg-amber-500/15 dark:text-amber-300 disabled:pointer-events-none disabled:opacity-60"
+          >
+            <UsersIcon className="size-3.5" aria-hidden="true" />
+            Mesa local (1–4)
+          </button>
+        )}
       </div>
+
+      {showPartySetup && onStartLocalParty && presets.length > 0 && (
+        <div className="rounded-2xl border border-border/80 bg-card/90 p-3.5 text-left shadow-md">
+          <PartyBuilder
+            presets={presets}
+            busy={creatingParty || disabled}
+            submitLabel="Iniciar partida local"
+            onSubmit={async (party, mode, ruleset) => {
+              setCreatingParty(true);
+              try {
+                await onStartLocalParty(party, mode, ruleset);
+                setShowPartySetup(false);
+              } finally {
+                setCreatingParty(false);
+              }
+            }}
+          />
+        </div>
+      )}
+
       <p className="text-center text-[11px] leading-relaxed text-muted-foreground/80">
         También podés escribir tu propia acción o dictarla con el micrófono.
       </p>

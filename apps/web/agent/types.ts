@@ -383,7 +383,8 @@ export interface CastSpellToolOutput {
 
 export interface TakeRestToolInput {
   sceneId: string;
-  actorId: string;
+  actorId?: string;
+  applyToParty?: boolean;
   restType: "short" | "long";
   hitDiceToSpend?: number;
 }

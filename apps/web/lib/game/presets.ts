@@ -72,9 +72,24 @@ export function isPresetId(value: string): value is CharacterPresetId {
   );
 }
 
+export interface PartyMemberSpec {
+  presetId: CharacterPresetId;
+  playerName?: string;
+}
+
 export function createPresetCharacter(
   presetId: CharacterPresetId,
   mode: "digital" | "hybrid" = "digital",
+  options?: { playerName?: string },
+): Character {
+  const cleanPlayer = options?.playerName?.trim().slice(0, 40);
+  const baseChar = buildPresetCharacterBase(presetId, mode);
+  return cleanPlayer ? { ...baseChar, playerName: cleanPlayer } : baseChar;
+}
+
+function buildPresetCharacterBase(
+  presetId: CharacterPresetId,
+  mode: "digital" | "hybrid",
 ): Character {
   const authority = createDefaultAuthority(mode);
   const rollAuthority = mode === "hybrid" ? "player-declared" : "engine-rolled";
@@ -307,6 +322,47 @@ export function createPresetCharacter(
   };
 }
 
+export function buildInitialPartyCampaignState(params: {
+  campaignId: string;
+  sessionId: string;
+  party: readonly PartyMemberSpec[];
+  mode: "digital" | "hybrid";
+  ruleset: RulesetProfile;
+}): GameState {
+  const seen = new Set<CharacterPresetId>();
+  const normalized: PartyMemberSpec[] = [];
+  for (const member of params.party) {
+    if (!seen.has(member.presetId)) {
+      seen.add(member.presetId);
+      normalized.push(member);
+    }
+    if (normalized.length >= 4) break;
+  }
+  if (normalized.length === 0) {
+    normalized.push({ presetId: "pc_kael" });
+  }
+
+  const characters: Record<string, Character> = {};
+  for (const member of normalized) {
+    const ch = createPresetCharacter(member.presetId, params.mode, {
+      playerName: member.playerName,
+    });
+    characters[ch.id] = ch;
+  }
+
+  return {
+    campaignId: params.campaignId,
+    sessionId: params.sessionId,
+    ruleset: params.ruleset,
+    sceneId: "escena_01_orilla",
+    lastSeq: 0,
+    characters,
+    flags: {},
+    unlockedClues: {},
+    scenes: AGUAS_QUIETAS_SCENES,
+  };
+}
+
 export function buildInitialCampaignState(params: {
   campaignId: string;
   sessionId: string;
@@ -314,18 +370,11 @@ export function buildInitialCampaignState(params: {
   mode: "digital" | "hybrid";
   ruleset: RulesetProfile;
 }): GameState {
-  const character = createPresetCharacter(params.presetId, params.mode);
-  return {
+  return buildInitialPartyCampaignState({
     campaignId: params.campaignId,
     sessionId: params.sessionId,
+    party: [{ presetId: params.presetId }],
+    mode: params.mode,
     ruleset: params.ruleset,
-    sceneId: "escena_01_orilla",
-    lastSeq: 0,
-    characters: {
-      [character.id]: character,
-    },
-    flags: {},
-    unlockedClues: {},
-    scenes: AGUAS_QUIETAS_SCENES,
-  };
+  });
 }

@@ -155,10 +155,26 @@ export async function GET(req: Request) {
   }
 }
 
+const PresetIdSchema = z.enum([
+  "pc_kael",
+  "pc_brenna",
+  "pc_lira",
+  "pc_seraphina",
+  "pc_theron",
+]);
+
 const CreateCampaignBodySchema = z.object({
-  presetId: z
-    .enum(["pc_kael", "pc_brenna", "pc_lira", "pc_seraphina", "pc_theron"])
-    .default("pc_kael"),
+  presetId: PresetIdSchema.default("pc_kael"),
+  party: z
+    .array(
+      z.object({
+        presetId: PresetIdSchema,
+        playerName: z.string().trim().max(40).optional(),
+      }),
+    )
+    .min(1)
+    .max(4)
+    .optional(),
   mode: z.enum(["digital", "hybrid"]).default("digital"),
   ruleset: z.enum(["5e-lite", "5e-full"]).default("5e-full"),
   title: z.string().min(1).max(80).optional(),
@@ -197,12 +213,27 @@ export async function POST(req: Request) {
     );
   }
 
+  if (parsed.data.party) {
+    const uniqueIds = new Set(parsed.data.party.map((m) => m.presetId));
+    if (uniqueIds.size !== parsed.data.party.length) {
+      return withGuestCookie(
+        {
+          error: "No podés repetir el mismo personaje dentro de la mesa local.",
+          code: "INVALID_INPUT",
+        },
+        400,
+        guest.setCookieHeader,
+      );
+    }
+  }
+
   const guestIdHash = hashGuestId(guest.guestId);
   try {
     const store = getDefaultGameStore();
     const created = await store.createCampaign({
       guestId: guest.guestId,
       presetId: parsed.data.presetId,
+      party: parsed.data.party,
       mode: parsed.data.mode,
       ruleset: parsed.data.ruleset,
       title: parsed.data.title,

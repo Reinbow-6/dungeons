@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import {
+  CharacterSchema,
   CombatStateSchema,
   Condition5eSchema,
+  createDefaultAuthority,
   DeathSavesSchema,
   HitDieTypeSchema,
   VisibilitySchema,
@@ -34,6 +36,8 @@ export const EventTypeSchema = z.enum([
   'REST_TAKEN',
   'DEATH_SAVE_RESOLVED',
   'HEALING_APPLIED',
+  'PARTY_MEMBER_ADDED',
+  'PARTY_MEMBER_REMOVED',
   'ROLLBACK',
 ]);
 export type EventType = z.infer<typeof EventTypeSchema>;
@@ -136,6 +140,8 @@ export const GameStateDeltaSchema = z.object({
     )
     .optional(),
   cluesUnlocked: z.array(z.string().min(1)).optional(),
+  charactersAdded: z.array(CharacterSchema).optional(),
+  charactersRemoved: z.array(z.string().min(1)).optional(),
   combat: CombatStateSchema.nullable().optional(),
 });
 export type GameStateDelta = z.infer<typeof GameStateDeltaSchema>;
@@ -228,7 +234,9 @@ export function applyDelta(
     (delta.inventoryDelta && delta.inventoryDelta.length > 0) ||
     (delta.spellSlotChanges && delta.spellSlotChanges.length > 0) ||
     (delta.hitDiceChanges && delta.hitDiceChanges.length > 0) ||
-    (delta.deathSaveChanges && delta.deathSaveChanges.length > 0);
+    (delta.deathSaveChanges && delta.deathSaveChanges.length > 0) ||
+    (delta.charactersAdded && delta.charactersAdded.length > 0) ||
+    (delta.charactersRemoved && delta.charactersRemoved.length > 0);
 
   const explicitExhaustionActors = new Set(
     (delta.exhaustionChanges ?? []).map((change) => change.actorId),
@@ -237,6 +245,28 @@ export function applyDelta(
 
   if (needsCharacterCopy) {
     nextCharacters = { ...state.characters };
+    const existingChars = Object.values(state.characters);
+    const tableMode: 'digital' | 'hybrid' | null =
+      existingChars.length > 0
+        ? existingChars[0]!.rollAuthority === 'player-declared'
+          ? 'hybrid'
+          : 'digital'
+        : null;
+
+    for (const addedChar of delta.charactersAdded ?? []) {
+      const cloned = cloneCharacter(addedChar);
+      if (tableMode !== null) {
+        cloned.authority = createDefaultAuthority(tableMode);
+        cloned.rollAuthority =
+          tableMode === 'hybrid' ? 'player-declared' : 'engine-rolled';
+      }
+      nextCharacters[cloned.id] = cloned;
+    }
+
+    for (const removedId of delta.charactersRemoved ?? []) {
+      delete nextCharacters[removedId];
+    }
+
     const ensureCloned = (actorId: string): Character | undefined => {
       const current = nextCharacters[actorId];
       if (!current) return undefined;

@@ -231,13 +231,40 @@ export function formatGameEventToast(event: GameEvent): ToastInput {
 
     case "REST_TAKEN": {
       const kind = readString(payload, "restType", "kind");
+      const isParty = payload.party === true;
       return {
         title:
           kind === "long"
-            ? "Descanso largo completado"
-            : "Descanso corto completado",
-        description: "PG y recursos actualizados en la ficha.",
+            ? isParty
+              ? "Descanso largo del grupo completado"
+              : "Descanso largo completado"
+            : isParty
+              ? "Descanso corto del grupo completado"
+              : "Descanso corto completado",
+        description: isParty
+          ? "PG y recursos de todo el grupo actualizados."
+          : "PG y recursos actualizados en la ficha.",
         tone: "emerald",
+        meta,
+      };
+    }
+
+    case "PARTY_MEMBER_ADDED": {
+      const name = readString(payload, "name") ?? event.actor;
+      return {
+        title: `${name} se unió a la mesa`,
+        description: readString(payload, "className"),
+        tone: "emerald",
+        meta,
+      };
+    }
+
+    case "PARTY_MEMBER_REMOVED": {
+      const name = readString(payload, "name") ?? event.actor;
+      return {
+        title: `${name} dejó el grupo`,
+        description: readString(payload, "reason"),
+        tone: "amber",
         meta,
       };
     }

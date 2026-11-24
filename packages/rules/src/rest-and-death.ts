@@ -89,46 +89,27 @@ export type ResolveTakeRestResult =
       messageEs: string;
     };
 
-export function resolveTakeRest(
-  state: GameState,
-  rawInput: unknown,
-  ctx: ResolverContext,
-): ResolveTakeRestResult {
-  const parsed = ResolveTakeRestInputSchema.safeParse(rawInput);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      code: 'INVALID_INPUT',
-      messageEs: `Parámetros inválidos en take_rest: ${parsed.error.issues[0]?.message ?? 'formato incorrecto'}.`,
-    };
-  }
+interface CharacterRestOutcome {
+  actorId: string;
+  actorName: string;
+  hpBefore: number;
+  hpAfter: number;
+  hpHealed: number;
+  hitDiceSpent: number;
+  hitDiceRolls: number[];
+  hitDiceAfter: { die: HitDieType; current: number; max: number };
+  slotsRestored: boolean;
+  exhaustionBefore: number;
+  exhaustionAfter: number;
+  delta: GameStateDelta;
+}
 
-  const input = parsed.data;
-  if (input.sceneId !== state.sceneId || !state.scenes[input.sceneId]) {
-    return {
-      ok: false,
-      code: 'INVALID_SCENE',
-      messageEs: `La escena "${input.sceneId}" no coincide con la escena activa ("${state.sceneId}").`,
-    };
-  }
-
-  if (state.combat?.active) {
-    return {
-      ok: false,
-      code: 'IN_COMBAT',
-      messageEs: 'No se puede tomar un descanso mientras haya un combate activo.',
-    };
-  }
-
-  const actor = state.characters[input.actorId];
-  if (!actor) {
-    return {
-      ok: false,
-      code: 'UNKNOWN_ACTOR',
-      messageEs: `No existe el personaje "${input.actorId}".`,
-    };
-  }
-
+function computeCharacterRestOutcome(
+  actor: Character,
+  restType: 'short' | 'long',
+  hitDiceToSpend: number | undefined,
+  rng: ResolverContext['rng'],
+): CharacterRestOutcome {
   const poolBefore = inferHitDie(actor);
   const hpBefore = actor.hp.current;
   const exhaustionBefore = actor.exhaustionLevel;
@@ -141,10 +122,10 @@ export function resolveTakeRest(
   let slotsRestored = false;
   let exhaustionAfter = exhaustionBefore;
 
-  if (input.restType === 'short') {
+  if (restType === 'short') {
     const desired =
-      input.hitDiceToSpend !== undefined
-        ? input.hitDiceToSpend
+      hitDiceToSpend !== undefined
+        ? hitDiceToSpend
         : hpBefore < actor.hp.max
           ? 1
           : 0;
@@ -154,7 +135,7 @@ export function resolveTakeRest(
 
     for (let i = 0; i < toSpend; i += 1) {
       if (hpBefore + healed >= actor.hp.max) break;
-      const roll = rollDice(`1${poolBefore.die}`, ctx.rng);
+      const roll = rollDice(`1${poolBefore.die}`, rng);
       hitDiceRolls.push(...roll.rolls);
       healed += Math.max(1, roll.total + conMod);
       hitDiceSpent += 1;
@@ -200,7 +181,6 @@ export function resolveTakeRest(
       }
     }
   } else {
-    // Long rest (SRD 5.2.1): restore full HP, all spell slots, all hit dice, reduce exhaustion by 1, clear temp HP & concentration
     hpAfter = actor.hp.max;
     if (hpAfter !== hpBefore) {
       stateDelta.hpChanges = [
@@ -262,7 +242,12 @@ export function resolveTakeRest(
         { actorId: actor.id, condition: 'unconscious' },
       ];
     }
-    if (actor.deathSaves && (actor.deathSaves.successes > 0 || actor.deathSaves.failures > 0 || actor.deathSaves.stable)) {
+    if (
+      actor.deathSaves &&
+      (actor.deathSaves.successes > 0 ||
+        actor.deathSaves.failures > 0 ||
+        actor.deathSaves.stable)
+    ) {
       stateDelta.deathSaveChanges = [
         {
           actorId: actor.id,
@@ -277,6 +262,80 @@ export function resolveTakeRest(
       ];
     }
   }
+
+  return {
+    actorId: actor.id,
+    actorName: actor.name,
+    hpBefore,
+    hpAfter,
+    hpHealed: Math.max(0, hpAfter - hpBefore),
+    hitDiceSpent,
+    hitDiceRolls,
+    hitDiceAfter,
+    slotsRestored,
+    exhaustionBefore,
+    exhaustionAfter,
+    delta: stateDelta,
+  };
+}
+
+export function resolveTakeRest(
+  state: GameState,
+  rawInput: unknown,
+  ctx: ResolverContext,
+): ResolveTakeRestResult {
+  const parsed = ResolveTakeRestInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      messageEs: `Parámetros inválidos en take_rest: ${parsed.error.issues[0]?.message ?? 'formato incorrecto'}.`,
+    };
+  }
+
+  const input = parsed.data;
+  if (input.sceneId !== state.sceneId || !state.scenes[input.sceneId]) {
+    return {
+      ok: false,
+      code: 'INVALID_SCENE',
+      messageEs: `La escena "${input.sceneId}" no coincide con la escena activa ("${state.sceneId}").`,
+    };
+  }
+
+  if (state.combat?.active) {
+    return {
+      ok: false,
+      code: 'IN_COMBAT',
+      messageEs: 'No se puede tomar un descanso mientras haya un combate activo.',
+    };
+  }
+
+  const actor = state.characters[input.actorId];
+  if (!actor) {
+    return {
+      ok: false,
+      code: 'UNKNOWN_ACTOR',
+      messageEs: `No existe el personaje "${input.actorId}".`,
+    };
+  }
+
+  const outcome = computeCharacterRestOutcome(
+    actor,
+    input.restType,
+    input.hitDiceToSpend,
+    ctx.rng,
+  );
+  const {
+    hpBefore,
+    hpAfter,
+    hitDiceSpent,
+    hitDiceRolls,
+    hitDiceAfter,
+    slotsRestored,
+    exhaustionBefore,
+    exhaustionAfter,
+    delta: stateDelta,
+  } = outcome;
 
   const nextSeq = state.lastSeq + 1;
   const event: GameEvent = {
@@ -327,6 +386,192 @@ export function resolveTakeRest(
     slotsRestored,
     exhaustionBefore,
     exhaustionAfter,
+    event,
+    nextState,
+  };
+}
+
+// ---------- party_rest ----------
+
+export const ResolvePartyRestInputSchema = z
+  .object({
+    sceneId: z.string().min(1),
+    restType: z.enum(['short', 'long']),
+    hitDiceToSpendPerPc: z.number().int().min(0).max(20).optional(),
+    visibility: VisibilitySchema.optional(),
+  })
+  .strict();
+export type ResolvePartyRestInput = z.infer<typeof ResolvePartyRestInputSchema>;
+
+export interface PartyRestMemberSummary {
+  actorId: string;
+  actorName: string;
+  hpBefore: number;
+  hpAfter: number;
+  hpHealed: number;
+  hitDiceSpent: number;
+  slotsRestored: boolean;
+  exhaustionBefore: number;
+  exhaustionAfter: number;
+}
+
+export type ResolvePartyRestResult =
+  | {
+      ok: true;
+      restType: 'short' | 'long';
+      members: PartyRestMemberSummary[];
+      event: GameEvent;
+      nextState: GameState;
+    }
+  | {
+      ok: false;
+      code: TakeRestErrorCode;
+      messageEs: string;
+    };
+
+export function resolvePartyRest(
+  state: GameState,
+  rawInput: unknown,
+  ctx: ResolverContext,
+): ResolvePartyRestResult {
+  const parsed = ResolvePartyRestInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      messageEs: `Parámetros inválidos en descanso grupal: ${parsed.error.issues[0]?.message ?? 'formato incorrecto'}.`,
+    };
+  }
+
+  const input = parsed.data;
+  if (input.sceneId !== state.sceneId || !state.scenes[input.sceneId]) {
+    return {
+      ok: false,
+      code: 'INVALID_SCENE',
+      messageEs: `La escena "${input.sceneId}" no coincide con la escena activa ("${state.sceneId}").`,
+    };
+  }
+
+  if (state.combat?.active) {
+    return {
+      ok: false,
+      code: 'IN_COMBAT',
+      messageEs: 'No se puede tomar un descanso mientras haya un combate activo.',
+    };
+  }
+
+  const pcs = Object.values(state.characters).sort((a, b) =>
+    a.id.localeCompare(b.id, 'en'),
+  );
+  if (pcs.length === 0) {
+    return {
+      ok: false,
+      code: 'UNKNOWN_ACTOR',
+      messageEs: 'No hay personajes activos en la campaña.',
+    };
+  }
+
+  const stateDelta: GameStateDelta = {};
+  const members: PartyRestMemberSummary[] = [];
+  const allRolls: number[] = [];
+
+  for (const pc of pcs) {
+    const out = computeCharacterRestOutcome(
+      pc,
+      input.restType,
+      input.hitDiceToSpendPerPc,
+      ctx.rng,
+    );
+    members.push({
+      actorId: out.actorId,
+      actorName: out.actorName,
+      hpBefore: out.hpBefore,
+      hpAfter: out.hpAfter,
+      hpHealed: out.hpHealed,
+      hitDiceSpent: out.hitDiceSpent,
+      slotsRestored: out.slotsRestored,
+      exhaustionBefore: out.exhaustionBefore,
+      exhaustionAfter: out.exhaustionAfter,
+    });
+    allRolls.push(...out.hitDiceRolls);
+
+    if (out.delta.hpChanges?.length) {
+      stateDelta.hpChanges = [...(stateDelta.hpChanges ?? []), ...out.delta.hpChanges];
+    }
+    if (out.delta.tempHpChanges?.length) {
+      stateDelta.tempHpChanges = [
+        ...(stateDelta.tempHpChanges ?? []),
+        ...out.delta.tempHpChanges,
+      ];
+    }
+    if (out.delta.hitDiceChanges?.length) {
+      stateDelta.hitDiceChanges = [
+        ...(stateDelta.hitDiceChanges ?? []),
+        ...out.delta.hitDiceChanges,
+      ];
+    }
+    if (out.delta.spellSlotChanges?.length) {
+      stateDelta.spellSlotChanges = [
+        ...(stateDelta.spellSlotChanges ?? []),
+        ...out.delta.spellSlotChanges,
+      ];
+    }
+    if (out.delta.exhaustionChanges?.length) {
+      stateDelta.exhaustionChanges = [
+        ...(stateDelta.exhaustionChanges ?? []),
+        ...out.delta.exhaustionChanges,
+      ];
+    }
+    if (out.delta.conditionsRemoved?.length) {
+      stateDelta.conditionsRemoved = [
+        ...(stateDelta.conditionsRemoved ?? []),
+        ...out.delta.conditionsRemoved,
+      ];
+    }
+    if (out.delta.deathSaveChanges?.length) {
+      stateDelta.deathSaveChanges = [
+        ...(stateDelta.deathSaveChanges ?? []),
+        ...out.delta.deathSaveChanges,
+      ];
+    }
+    if (out.delta.concentrationChanges?.length) {
+      stateDelta.concentrationChanges = [
+        ...(stateDelta.concentrationChanges ?? []),
+        ...out.delta.concentrationChanges,
+      ];
+    }
+  }
+
+  const nextSeq = state.lastSeq + 1;
+  const event: GameEvent = {
+    id: ctx.createId(),
+    campaignId: state.campaignId,
+    sessionId: state.sessionId,
+    seq: nextSeq,
+    type: 'REST_TAKEN',
+    source: 'engine',
+    visibility: input.visibility ?? 'public',
+    actor: 'party',
+    checkId: null,
+    declaredTotal: null,
+    dieResults: allRolls.length > 0 ? allRolls : null,
+    payload: {
+      sceneId: input.sceneId,
+      restType: input.restType,
+      party: true,
+      members,
+    },
+    stateDelta,
+    revertedByEventId: null,
+    createdAt: ctx.now(),
+  };
+
+  const nextState = applyDelta(state, stateDelta, nextSeq);
+
+  return {
+    ok: true,
+    restType: input.restType,
+    members,
     event,
     nextState,
   };

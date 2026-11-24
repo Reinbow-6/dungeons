@@ -1,5 +1,6 @@
 "use client";
 
+import type { Character } from "@dungeons/rules";
 import {
   ChevronDownIcon,
   DicesIcon,
@@ -7,6 +8,7 @@ import {
   ShieldIcon,
   SparklesIcon,
   SwordsIcon,
+  UsersIcon,
   Wand2Icon,
 } from "lucide-react";
 import * as React from "react";
@@ -27,6 +29,7 @@ import { WebSearchPart } from "@/components/parts/web-search-part";
 import { Message, MessageContent } from "@/components/ui/message";
 import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
 import { Trace } from "@/components/ui/trace";
+import { parsePartyMessage } from "@/lib/game/party-messages";
 import type { StreamSpeed } from "@/lib/settings/app-settings";
 import { cn } from "@/lib/utils";
 import {
@@ -283,6 +286,7 @@ export const ChatMessage = React.memo(function ChatMessage({
   onStopAudio,
   characterName,
   characterClassName,
+  charactersById,
   turnOutcome,
   sceneHeader,
   pcNames = [],
@@ -303,6 +307,7 @@ export const ChatMessage = React.memo(function ChatMessage({
   onStopAudio?: () => void;
   characterName?: string;
   characterClassName?: string;
+  charactersById?: Record<string, Character>;
   turnOutcome?: TurnOutcomeSummary | null;
   sceneHeader?: { microLabel: string; title: string } | null;
   pcNames?: readonly string[];
@@ -315,20 +320,92 @@ export const ChatMessage = React.memo(function ChatMessage({
       .filter((part) => part.type === "text")
       .map((part) => part.text)
       .join("");
+    const parsedParty = parsePartyMessage(userText);
+
+    if (parsedParty.kind === "round") {
+      return (
+        <div className="flex justify-end">
+          <div className="w-full max-w-[92%] rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3.5 py-3 shadow-xs dark:border-amber-700/40 dark:bg-amber-950/25 sm:max-w-[82%]">
+            <div className="mb-2 flex items-center justify-between gap-2 border-b border-amber-500/15 pb-1.5">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-amber-700 uppercase dark:text-amber-300">
+                <UsersIcon className="size-3.5" />
+                Escena grupal · {parsedParty.entries.length} acciones
+              </span>
+              {turnOutcome && (
+                <span className="flex items-center gap-1 text-[11px] font-medium">
+                  <span className="text-muted-foreground">
+                    {turnOutcome.skillLabel}
+                  </span>
+                  <span className="text-muted-foreground/50">·</span>
+                  <span className={OUTCOME_TONE_CLASS[turnOutcome.tone]}>
+                    {turnOutcome.outcomeLabel}
+                  </span>
+                </span>
+              )}
+            </div>
+            <ul className="flex flex-col gap-2">
+              {parsedParty.entries.map((entry, idx) => {
+                const ch = charactersById?.[entry.actorId];
+                const speaker = ch?.name ?? entry.actorId;
+                return (
+                  <li key={`${entry.actorId}-${idx}`} className="flex items-start gap-2.5">
+                    <CharacterEmblem
+                      characterName={speaker}
+                      classNameLabel={ch?.className}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-xs font-semibold text-amber-700 dark:text-amber-400">
+                          {speaker}
+                        </span>
+                        {ch?.playerName && (
+                          <span className="rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            {ch.playerName}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/95">
+                        {entry.text}
+                      </p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </div>
+      );
+    }
+
+    const singleChar =
+      parsedParty.kind === "single"
+        ? charactersById?.[parsedParty.actorId]
+        : undefined;
+    const displayName = singleChar?.name ?? characterName ?? "Jugador";
+    const displayClass = singleChar?.className ?? characterClassName;
+    const displayText =
+      parsedParty.kind === "single" ? parsedParty.text : parsedParty.text;
 
     return (
       <div className="flex justify-end">
         <div className="w-full max-w-[88%] rounded-xl border border-amber-500/25 bg-amber-500/[0.06] px-3.5 py-3 shadow-xs dark:border-amber-700/35 dark:bg-amber-950/25 sm:max-w-[78%]">
           <div className="flex items-start gap-3">
             <CharacterEmblem
-              characterName={characterName}
-              classNameLabel={characterClassName}
+              characterName={displayName}
+              classNameLabel={displayClass}
             />
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="truncate text-xs font-semibold tracking-tight text-amber-700 dark:text-amber-400">
-                  {characterName ?? "Jugador"}
-                </span>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate text-xs font-semibold tracking-tight text-amber-700 dark:text-amber-400">
+                    {displayName}
+                  </span>
+                  {singleChar?.playerName && (
+                    <span className="rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      {singleChar.playerName}
+                    </span>
+                  )}
+                </div>
                 {turnOutcome && (
                   <span className="flex items-center gap-1 text-[11px] font-medium">
                     <span className="text-muted-foreground">
@@ -342,7 +419,7 @@ export const ChatMessage = React.memo(function ChatMessage({
                 )}
               </div>
               <p className="mt-1 whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground/95">
-                {userText}
+                {displayText}
               </p>
             </div>
           </div>

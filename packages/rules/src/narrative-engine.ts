@@ -27,16 +27,26 @@ const TURN_PHASE_LABELS: Record<TurnPhase, string> = {
 
 export function deriveTurnContext(
   state: GameState,
-  options?: { pendingPlayerRoll?: boolean; isStreaming?: boolean },
+  options?: {
+    pendingPlayerRoll?: boolean;
+    pendingActorId?: string | null;
+    isStreaming?: boolean;
+    activeActorId?: string | null;
+  },
 ): TurnContext {
-  const firstPc = Object.values(state.characters)[0];
+  const resolveChar = (preferredId?: string | null) =>
+    (preferredId ? state.characters[preferredId] : undefined) ??
+    Object.values(state.characters)[0];
 
   if (options?.pendingPlayerRoll) {
+    const rollChar = resolveChar(
+      options.pendingActorId ?? options.activeActorId,
+    );
     return {
       phase: 'awaiting_roll',
       labelEs: TURN_PHASE_LABELS.awaiting_roll,
-      activeActorId: firstPc?.id ?? null,
-      activeActorName: firstPc?.name ?? null,
+      activeActorId: rollChar?.id ?? null,
+      activeActorName: rollChar?.name ?? null,
     };
   }
 
@@ -54,17 +64,18 @@ export function deriveTurnContext(
     return {
       phase: 'combat_turn',
       labelEs: `${TURN_PHASE_LABELS.combat_turn} (R${state.combat.round})`,
-      activeActorId: active?.id ?? null,
+      activeActorId: active?.actorId ?? active?.id ?? null,
       activeActorName: active?.name ?? null,
     };
   }
 
   const phase: TurnPhase = state.turnPhase ?? 'exploration';
+  const activePc = resolveChar(options?.activeActorId);
   return {
     phase,
     labelEs: TURN_PHASE_LABELS[phase],
-    activeActorId: firstPc?.id ?? null,
-    activeActorName: firstPc?.name ?? null,
+    activeActorId: activePc?.id ?? null,
+    activeActorName: activePc?.name ?? null,
   };
 }
 
@@ -119,19 +130,40 @@ export function computeTensionMeter(
     factorsEs.push(`Combate activo R${state.combat.round}: +${combatBoost}`);
   }
 
-  for (const char of Object.values(state.characters)) {
+  const chars = Object.values(state.characters);
+  let hpBoostTotal = 0;
+  let condBoostTotal = 0;
+  const hpCap = chars.length > 1 ? 34 : Number.POSITIVE_INFINITY;
+  const condCap = chars.length > 1 ? 20 : Number.POSITIVE_INFINITY;
+
+  for (const char of chars) {
     if (char.hp.current === 0) {
-      score += 24;
-      factorsEs.push(`${char.name} a 0 PG: +24`);
+      const add = Math.min(24, Math.max(0, hpCap - hpBoostTotal));
+      if (add > 0) {
+        score += add;
+        hpBoostTotal += add;
+        factorsEs.push(`${char.name} a 0 PG: +${add}`);
+      }
     } else if (char.hp.current / Math.max(1, char.hp.max) <= 0.35) {
-      score += 14;
-      factorsEs.push(`${char.name} herido grave: +14`);
+      const add = Math.min(14, Math.max(0, hpCap - hpBoostTotal));
+      if (add > 0) {
+        score += add;
+        hpBoostTotal += add;
+        factorsEs.push(`${char.name} herido grave: +${add}`);
+      }
     }
     const harshCount = char.conditions.filter((c) => HARSH_CONDITIONS.has(c)).length;
     if (harshCount > 0) {
-      const condBoost = Math.min(16, harshCount * 8);
-      score += condBoost;
-      factorsEs.push(`Condiciones activas (${harshCount}): +${condBoost}`);
+      const rawCondBoost = Math.min(16, harshCount * 8);
+      const addCond = Math.min(
+        rawCondBoost,
+        Math.max(0, condCap - condBoostTotal),
+      );
+      if (addCond > 0) {
+        score += addCond;
+        condBoostTotal += addCond;
+        factorsEs.push(`Condiciones activas (${harshCount}): +${addCond}`);
+      }
     }
   }
 

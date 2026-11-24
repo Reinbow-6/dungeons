@@ -9,6 +9,7 @@ import {
 import {
   HeartPulseIcon,
   PanelRightIcon,
+  PauseIcon,
   ShieldIcon,
   SkullIcon,
   SparklesIcon,
@@ -61,8 +62,16 @@ import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
 import { pushToast } from "@/components/ui/toaster";
 import { Trace, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace";
 import { formatGameEventToast } from "@/lib/game/event-toast";
+import {
+  formatGroupRoundMessage,
+  formatSingleActorMessage,
+} from "@/lib/game/party-messages";
 import { useTtsPlayer } from "@/hooks/use-tts-player";
-import type { CharacterPresetInfo } from "@/lib/game/presets";
+import type {
+  CharacterPresetId,
+  CharacterPresetInfo,
+  PartyMemberSpec,
+} from "@/lib/game/presets";
 import type { SessionSummaryItem, StoredMemoryFact } from "@/lib/game/store";
 import {
   DEFAULT_MODEL,
@@ -215,6 +224,13 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   const promptFormRef = React.useRef<PromptFormHandle | null>(null);
   // HUD lateral colapsado por defecto (estilo Old Greg's Tavern)
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
+  const [selectedActorId, setSelectedActorId] = React.useState<string | null>(
+    null,
+  );
+  const [pausedMode, setPausedMode] = React.useState(false);
+  const [pausedQueue, setPausedQueue] = React.useState<
+    Array<{ id: string; actorId: string; text: string }>
+  >([]);
 
   const playSoundRef = React.useRef(playSound);
   React.useEffect(() => {
@@ -290,16 +306,19 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       model: string;
       campaignId: string | null;
       reasoningEffort: ReasoningEffort;
+      activeActorId?: string | null;
     } = {
       model: GUEST_DEFAULT_MODEL,
       campaignId: null,
       reasoningEffort: "none",
+      activeActorId: null,
     };
     return {
       updateBody(next: {
         model: string;
         campaignId: string | null;
         reasoningEffort: ReasoningEffort;
+        activeActorId?: string | null;
       }) {
         currentBody = next;
       },
@@ -310,13 +329,51 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     };
   });
 
+  const partyChars = React.useMemo(
+    () => (gameState ? Object.values(gameState.characters) : []),
+    [gameState],
+  );
+
+  const combatActivePcId = React.useMemo(() => {
+    if (!gameState?.combat?.active) return null;
+    const current = gameState.combat.combatants[gameState.combat.turnIndex];
+    if (!current || current.kind !== "pc") return null;
+    const pcId = current.actorId ?? current.id;
+    return gameState.characters[pcId] ? pcId : null;
+  }, [gameState]);
+
+  const activeChar = React.useMemo(() => {
+    if (!gameState || partyChars.length === 0) return undefined;
+    if (selectedActorId && gameState.characters[selectedActorId]) {
+      return gameState.characters[selectedActorId];
+    }
+    if (combatActivePcId && gameState.characters[combatActivePcId]) {
+      return gameState.characters[combatActivePcId];
+    }
+    return partyChars[0];
+  }, [combatActivePcId, gameState, partyChars, selectedActorId]);
+
+  const activeActorId = activeChar?.id ?? null;
+
   React.useEffect(() => {
     transportBundle.updateBody({
       model: effectiveModel,
       campaignId,
       reasoningEffort: settings.reasoningEffort,
+      activeActorId,
     });
-  }, [transportBundle, effectiveModel, campaignId, settings.reasoningEffort]);
+  }, [
+    transportBundle,
+    effectiveModel,
+    campaignId,
+    settings.reasoningEffort,
+    activeActorId,
+  ]);
+
+  const partyIdsRef = React.useRef<string[]>([]);
+  React.useEffect(() => {
+    partyIdsRef.current = partyChars.map((c) => c.id);
+  }, [partyChars]);
 
   React.useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
@@ -327,6 +384,20 @@ export function Chat({ models }: { models: GatewayModel[] }) {
           playSoundRef.current(next ? "overlay.open" : "overlay.close");
           return next;
         });
+      } else if (
+        event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        event.key >= "1" &&
+        event.key <= "4"
+      ) {
+        const idx = Number(event.key) - 1;
+        const targetId = partyIdsRef.current[idx];
+        if (targetId && partyIdsRef.current.length > 1) {
+          event.preventDefault();
+          playSoundRef.current("interaction.subtle");
+          setSelectedActorId(targetId);
+        }
       } else if (event.key === "Escape") {
         setSidebarOpen((prev) => {
           if (prev) {
@@ -385,6 +456,8 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     messagesRef.current = messages;
   }, [messages]);
 
+  const lastCombatTurnKeyRef = React.useRef<string | null>(null);
+
   const applyCampaignPayload = React.useCallback(
     (data: CampaignApiPayload, restoreMessages = false) => {
       setCampaignId(data.campaignId);
@@ -395,6 +468,22 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       setSessionSummaries(data.sessionSummaries ?? []);
       setMemoryFacts(data.memoryFacts ?? []);
       setPresets(data.presets ?? []);
+
+      if (data.state?.combat?.active) {
+        const turnKey = `${data.state.combat.round}:${data.state.combat.turnIndex}`;
+        const activeC = data.state.combat.combatants[data.state.combat.turnIndex];
+        if (turnKey !== lastCombatTurnKeyRef.current) {
+          lastCombatTurnKeyRef.current = turnKey;
+          if (activeC?.kind === "pc") {
+            const pcId = activeC.actorId ?? activeC.id;
+            if (data.state.characters[pcId]) {
+              setSelectedActorId(pcId);
+            }
+          }
+        }
+      } else {
+        lastCombatTurnKeyRef.current = null;
+      }
       if (restoreMessages) {
         setMessages(
           data.messages.map((m) => ({
@@ -456,6 +545,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       setGameState(data.state);
       setEvents(data.events);
       notifyNewEvents(data.events, true);
+      setPausedQueue([]);
       setSessionSummaries(data.sessionSummaries ?? []);
       setMemoryFacts(data.memoryFacts ?? []);
       setPresets(data.presets ?? []);
@@ -536,16 +626,21 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   }, [status, campaignId, applyCampaignPayload]);
 
   async function handleNewCampaign(
-    presetId: string,
+    party: PartyMemberSpec[],
     mode: "digital" | "hybrid",
     ruleset: RulesetProfile,
-  ) {
+  ): Promise<string | null> {
     const res = await fetch("/api/game/campaigns", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ presetId, mode, ruleset }),
+      body: JSON.stringify({
+        presetId: party[0]?.presetId ?? "pc_kael",
+        party,
+        mode,
+        ruleset,
+      }),
     });
-    if (!res.ok) return;
+    if (!res.ok) return null;
     const data = (await res.json()) as CampaignApiPayload;
     setCampaignId(data.campaignId);
     setSessionNumber(data.sessionNumber ?? 1);
@@ -557,22 +652,32 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     setPresets(data.presets ?? []);
     setMessages([]);
     setMessageSeqMap({});
+    setSelectedActorId(
+      data.state ? (Object.keys(data.state.characters)[0] ?? null) : null,
+    );
+    setPausedMode(false);
+    setPausedQueue([]);
     setSidebarOpen(false);
     pushToast({
-      title: "Nueva campaña lista",
+      title:
+        party.length > 1
+          ? `Mesa local lista (${party.length} jugadores)`
+          : "Nueva campaña lista",
       description: `Aguas Inquietas · ${ruleset}`,
       tone: "amber",
     });
+    return data.campaignId;
   }
 
-  async function handleStartCampaignIntro() {
-    if (!campaignId || seedingIntro || isBusy) return;
+  async function handleStartCampaignIntro(overrideCampaignId?: string | null) {
+    const targetId = overrideCampaignId ?? campaignId;
+    if (!targetId || seedingIntro || isBusy) return;
     setSeedingIntro(true);
     try {
       const res = await fetch("/api/game/campaigns/intro", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaignId }),
+        body: JSON.stringify({ campaignId: targetId }),
       });
       if (!res.ok) return;
       const data = (await res.json()) as {
@@ -642,15 +747,12 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     }
   }
 
-  async function handleToggleMode(
-    actorId: string,
-    mode: "digital" | "hybrid",
-  ) {
+  async function handleToggleMode(mode: "digital" | "hybrid") {
     if (!campaignId) return;
     const res = await fetch("/api/game/mode", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ campaignId, actorId, mode }),
+      body: JSON.stringify({ campaignId, mode }),
     });
     if (!res.ok) return;
     const data = (await res.json()) as { ok: boolean; state: GameState };
@@ -660,10 +762,74 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         title: mode === "hybrid" ? "Modo Híbrido" : "Modo Digital",
         description:
           mode === "hybrid"
-            ? "Ingresá el resultado de tus dados físicos en mesa."
+            ? "Toda la mesa declara sus dados físicos reales."
             : "El motor resolverá las tiradas automáticamente.",
         tone: "amber",
       });
+    }
+  }
+
+  async function handleAddPartyMember(
+    presetId: CharacterPresetId,
+    playerName?: string,
+  ) {
+    if (!campaignId) return;
+    const res = await fetch("/api/game/party", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ campaignId, presetId, playerName }),
+    });
+    const data = (await res.json()) as {
+      ok: boolean;
+      state?: GameState;
+      event?: GameEvent;
+      messageEs?: string;
+    };
+    if (!res.ok || !data.ok || !data.state) {
+      pushToast({
+        title: "No se pudo sumar personaje",
+        description: data.messageEs ?? "Revisá las condiciones de la mesa.",
+        tone: "rose",
+      });
+      return;
+    }
+    setGameState(data.state);
+    if (data.event) {
+      setEvents((prev) => [...prev, data.event!]);
+      notifyNewEvents([data.event], false);
+      setSelectedActorId(data.event.actor);
+    }
+  }
+
+  async function handleRemovePartyMember(actorId: string) {
+    if (!campaignId) return;
+    const res = await fetch("/api/game/party", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ campaignId, actorId }),
+    });
+    const data = (await res.json()) as {
+      ok: boolean;
+      state?: GameState;
+      event?: GameEvent;
+      messageEs?: string;
+    };
+    if (!res.ok || !data.ok || !data.state) {
+      pushToast({
+        title: "No se pudo retirar personaje",
+        description: data.messageEs ?? "Debe quedar al menos 1 personaje.",
+        tone: "rose",
+      });
+      return;
+    }
+    setGameState(data.state);
+    setPausedQueue((prev) => prev.filter((item) => item.actorId !== actorId));
+    if (selectedActorId === actorId) {
+      setSelectedActorId(Object.keys(data.state.characters)[0] ?? null);
+    }
+    if (data.event) {
+      setEvents((prev) => [...prev, data.event!]);
+      notifyNewEvents([data.event], false);
     }
   }
 
@@ -686,6 +852,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       setGameState(data.state);
       setEvents(data.events);
       notifyNewEvents(data.events, true);
+      setPausedQueue([]);
       if (Array.isArray(data.memoryFacts)) {
         setMemoryFacts(data.memoryFacts);
       }
@@ -710,12 +877,11 @@ export function Chat({ models }: { models: GatewayModel[] }) {
 
   const isBusy = status === "submitted" || status === "streaming";
   const lastMessage = messages.at(-1);
-  const activeChar = gameState ? Object.values(gameState.characters)[0] : undefined;
   const currentScene = gameState ? gameState.scenes[gameState.sceneId] : undefined;
 
   const pcNames = React.useMemo(
-    () => (gameState ? Object.values(gameState.characters).map((c) => c.name) : []),
-    [gameState],
+    () => partyChars.map((c) => c.name),
+    [partyChars],
   );
   const npcNames = React.useMemo(
     () =>
@@ -737,16 +903,26 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         )
       : undefined;
 
-  const pendingDeclareCheck =
+  const allDeclareChecks =
     lastMessage?.role === "assistant"
-      ? lastMessage.parts.find(
+      ? lastMessage.parts.filter(
           (
             part,
           ): part is Extract<typeof part, { type: "tool-declare_check" }> =>
-            part.type === "tool-declare_check" &&
-            (part.state === "input-streaming" ||
-              part.state === "input-available"),
+            part.type === "tool-declare_check",
         )
+      : [];
+  const resolvedDeclareCount = allDeclareChecks.filter(
+    (p) => p.state === "output-available",
+  ).length;
+  const pendingDeclareCheck = allDeclareChecks.find(
+    (p) => p.state === "input-streaming" || p.state === "input-available",
+  );
+  const pendingDeclareActor =
+    pendingDeclareCheck &&
+    "input" in pendingDeclareCheck &&
+    pendingDeclareCheck.input?.actorId
+      ? gameState?.characters[pendingDeclareCheck.input.actorId]
       : undefined;
 
   const firstAssistantIndex = messages.findIndex((m) => m.role === "assistant");
@@ -788,25 +964,83 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   const submitPrompt = React.useCallback(
     (prompt: string) => {
       if (isBusy) return;
+
+      if (
+        pausedMode &&
+        partyChars.length > 1 &&
+        !gameState?.combat?.active &&
+        activeActorId
+      ) {
+        setPausedQueue((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), actorId: activeActorId, text: prompt.trim() },
+        ]);
+        const currentIdx = partyChars.findIndex((c) => c.id === activeActorId);
+        if (currentIdx >= 0) {
+          const nextChar = partyChars[(currentIdx + 1) % partyChars.length];
+          if (nextChar) setSelectedActorId(nextChar.id);
+        }
+        return;
+      }
+
+      const outgoing =
+        partyChars.length > 1 && activeActorId
+          ? formatSingleActorMessage(activeActorId, prompt)
+          : prompt;
+
       void sendMessage(
-        { text: prompt },
+        { text: outgoing },
         {
           body: {
             model: effectiveModel,
             campaignId,
             reasoningEffort: settings.reasoningEffort,
+            activeActorId,
           },
         },
       );
     },
     [
-      isBusy,
-      sendMessage,
-      effectiveModel,
+      activeActorId,
       campaignId,
+      effectiveModel,
+      gameState?.combat?.active,
+      isBusy,
+      partyChars,
+      pausedMode,
+      sendMessage,
       settings.reasoningEffort,
     ],
   );
+
+  const handleFlushPaused = React.useCallback(() => {
+    if (isBusy || pausedQueue.length === 0) return;
+    const consolidated = formatGroupRoundMessage(
+      pausedQueue.map((item) => ({ actorId: item.actorId, text: item.text })),
+    );
+    if (!consolidated) return;
+    setPausedQueue([]);
+    setPausedMode(false);
+    void sendMessage(
+      { text: consolidated },
+      {
+        body: {
+          model: effectiveModel,
+          campaignId,
+          reasoningEffort: settings.reasoningEffort,
+          activeActorId,
+        },
+      },
+    );
+  }, [
+    activeActorId,
+    campaignId,
+    effectiveModel,
+    isBusy,
+    pausedQueue,
+    sendMessage,
+    settings.reasoningEffort,
+  ]);
 
   return (
     <div className="tavern-backdrop relative flex min-h-0 flex-1 overflow-hidden">
@@ -831,44 +1065,74 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                 : "border-border/70 bg-card/85 text-foreground/90",
           )}
         >
-          <span className="max-w-24 truncate font-medium text-amber-700 dark:text-amber-300">
-            {activeChar.name.split(" ")[0]}
-          </span>
-          <span className="inline-flex items-center gap-1 font-mono tabular-nums">
-            {activeChar.hp.current === 0 ? (
-              <SkullIcon className="size-3 text-rose-600 dark:text-rose-400" />
-            ) : (
-              <HeartPulseIcon className="size-3 text-emerald-600 dark:text-emerald-400" />
-            )}
-            {activeChar.hp.current}/{activeChar.hp.max}
-          </span>
-          <span
-            aria-hidden="true"
-            className="h-1.5 w-8 overflow-hidden rounded-full bg-foreground/15"
-          >
-            <span
-              className={cn(
-                "block h-full rounded-full transition-[width]",
-                activeChar.hp.current === 0
-                  ? "bg-rose-500"
-                  : activeChar.hp.current / Math.max(1, activeChar.hp.max) <= 0.25
-                    ? "bg-amber-500"
-                    : "bg-emerald-500",
-              )}
-              style={{
-                width: `${Math.max(0, Math.min(100, (activeChar.hp.current / Math.max(1, activeChar.hp.max)) * 100))}%`,
-              }}
-            />
-          </span>
-          <span className="hidden items-center gap-0.5 font-mono tabular-nums text-muted-foreground sm:inline-flex">
-            <ShieldIcon className="size-3" />
-            {activeChar.ac}
-          </span>
-          {level1Slots && (
-            <span className="hidden items-center gap-0.5 font-mono tabular-nums text-violet-700 dark:text-violet-300 sm:inline-flex">
-              <SparklesIcon className="size-3" />
-              {level1Slots.current}/{level1Slots.max}
+          {partyChars.length > 1 ? (
+            <span className="flex flex-wrap items-center gap-2">
+              {partyChars.map((ch) => {
+                const isSelected = ch.id === activeChar.id;
+                const isCombatTurn = combatActivePcId === ch.id;
+                const first = ch.name.split(" ")[0] ?? ch.name;
+                return (
+                  <span
+                    key={ch.id}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 transition-colors",
+                      isSelected && "bg-amber-500/15 font-semibold",
+                      isCombatTurn && "ring-1 ring-rose-500/60",
+                    )}
+                  >
+                    <span className="max-w-16 truncate text-amber-700 dark:text-amber-300">
+                      {first}
+                    </span>
+                    <span className="font-mono text-[10px] tabular-nums">
+                      {ch.hp.current}/{ch.hp.max}
+                    </span>
+                  </span>
+                );
+              })}
             </span>
+          ) : (
+            <>
+              <span className="max-w-24 truncate font-medium text-amber-700 dark:text-amber-300">
+                {activeChar.name.split(" ")[0]}
+              </span>
+              <span className="inline-flex items-center gap-1 font-mono tabular-nums">
+                {activeChar.hp.current === 0 ? (
+                  <SkullIcon className="size-3 text-rose-600 dark:text-rose-400" />
+                ) : (
+                  <HeartPulseIcon className="size-3 text-emerald-600 dark:text-emerald-400" />
+                )}
+                {activeChar.hp.current}/{activeChar.hp.max}
+              </span>
+              <span
+                aria-hidden="true"
+                className="h-1.5 w-8 overflow-hidden rounded-full bg-foreground/15"
+              >
+                <span
+                  className={cn(
+                    "block h-full rounded-full transition-[width]",
+                    activeChar.hp.current === 0
+                      ? "bg-rose-500"
+                      : activeChar.hp.current / Math.max(1, activeChar.hp.max) <=
+                          0.25
+                        ? "bg-amber-500"
+                        : "bg-emerald-500",
+                  )}
+                  style={{
+                    width: `${Math.max(0, Math.min(100, (activeChar.hp.current / Math.max(1, activeChar.hp.max)) * 100))}%`,
+                  }}
+                />
+              </span>
+              <span className="hidden items-center gap-0.5 font-mono tabular-nums text-muted-foreground sm:inline-flex">
+                <ShieldIcon className="size-3" />
+                {activeChar.ac}
+              </span>
+              {level1Slots && (
+                <span className="hidden items-center gap-0.5 font-mono tabular-nums text-violet-700 dark:text-violet-300 sm:inline-flex">
+                  <SparklesIcon className="size-3" />
+                  {level1Slots.current}/{level1Slots.max}
+                </span>
+              )}
+            </>
           )}
           {gameState.combat?.active && (
             <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/20 px-1.5 py-0 font-mono text-[10px] font-semibold text-rose-800 dark:bg-rose-500/25 dark:text-rose-200">
@@ -914,6 +1178,17 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                     void handleStartCampaignIntro();
                   }}
                   onSelect={submitPrompt}
+                  presets={presets}
+                  onStartLocalParty={async (party, mode, ruleset) => {
+                    const createdId = await handleNewCampaign(
+                      party,
+                      mode,
+                      ruleset,
+                    );
+                    if (createdId) {
+                      await handleStartCampaignIntro(createdId);
+                    }
+                  }}
                   disabled={isBusy || seedingIntro}
                 />
               </EmptyContent>
@@ -1016,6 +1291,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                           }
                           characterName={activeChar?.name}
                           characterClassName={activeChar?.className}
+                          charactersById={gameState?.characters}
                           turnOutcome={turnOutcome}
                           sceneHeader={sceneHeader}
                           pcNames={pcNames}
@@ -1030,6 +1306,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                                       model: effectiveModel,
                                       campaignId,
                                       reasoningEffort: settings.reasoningEffort,
+                                      activeActorId,
                                     },
                                   })
                               : undefined
@@ -1090,6 +1367,52 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                       />
                     </MessageScrollerItem>
                   )}
+                  {pausedQueue.map((entry) => {
+                    const speakerChar = gameState?.characters[entry.actorId];
+                    return (
+                      <MessageScrollerItem
+                        key={entry.id}
+                        messageId={`paused-${entry.id}`}
+                      >
+                        <div className="flex justify-end">
+                          <div className="w-full max-w-[88%] rounded-xl border border-dashed border-amber-500/45 bg-amber-500/[0.04] px-3.5 py-2.5 sm:max-w-[78%]">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex min-w-0 items-center gap-1.5">
+                                <span className="truncate text-xs font-semibold text-amber-700 dark:text-amber-300">
+                                  {speakerChar?.name ?? entry.actorId}
+                                </span>
+                                {speakerChar?.playerName && (
+                                  <span className="rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                    {speakerChar.playerName}
+                                  </span>
+                                )}
+                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[9.5px] font-medium text-amber-700 dark:text-amber-300">
+                                  <PauseIcon className="size-2.5" />
+                                  En pausa
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                aria-label="Quitar mensaje en pausa"
+                                onClick={() => {
+                                  playSound("interaction.tap");
+                                  setPausedQueue((prev) =>
+                                    prev.filter((item) => item.id !== entry.id),
+                                  );
+                                }}
+                                className="rounded p-0.5 text-muted-foreground hover:text-rose-500"
+                              >
+                                <XIcon className="size-3.5" />
+                              </button>
+                            </div>
+                            <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/90">
+                              {entry.text}
+                            </p>
+                          </div>
+                        </div>
+                      </MessageScrollerItem>
+                    );
+                  })}
                   {pendingDeclareCheck &&
                     pendingDeclareCheck.state === "input-available" &&
                     campaignId && (
@@ -1099,6 +1422,16 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                           campaignId={campaignId}
                           sceneId={pendingDeclareCheck.input.sceneId}
                           actorId={pendingDeclareCheck.input.actorId}
+                          actorName={pendingDeclareActor?.name}
+                          playerName={pendingDeclareActor?.playerName}
+                          queuePosition={
+                            allDeclareChecks.length > 1
+                              ? {
+                                  current: resolvedDeclareCount + 1,
+                                  total: allDeclareChecks.length,
+                                }
+                              : undefined
+                          }
                           skill={pendingDeclareCheck.input.skill}
                           dc={pendingDeclareCheck.input.dc}
                           dcRef={pendingDeclareCheck.input.dcRef}
@@ -1184,6 +1517,13 @@ export function Chat({ models }: { models: GatewayModel[] }) {
             isBusy={isBusy}
             campaignId={campaignId}
             gameState={gameState}
+            activeActorId={activeActorId}
+            onSelectActor={(actorId) => setSelectedActorId(actorId)}
+            pausedMode={pausedMode}
+            onTogglePausedMode={() => setPausedMode((prev) => !prev)}
+            pausedCount={pausedQueue.length}
+            onFlushPaused={handleFlushPaused}
+            onClearPaused={() => setPausedQueue([])}
             lastDmText={extractAssistantSpeechText(
               [...messages].reverse().find((m) => m.role === "assistant"),
             )}
@@ -1210,7 +1550,13 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         sessionSummaries={sessionSummaries}
         memoryFacts={memoryFacts}
         presets={presets}
-        onNewCampaign={handleNewCampaign}
+        activeActorId={activeActorId}
+        onSelectActor={(actorId) => setSelectedActorId(actorId)}
+        onAddPartyMember={handleAddPartyMember}
+        onRemovePartyMember={handleRemovePartyMember}
+        onNewCampaign={async (party, mode, ruleset) => {
+          await handleNewCampaign(party, mode, ruleset);
+        }}
         onStartNewSession={handleStartNewSession}
         onToggleMode={handleToggleMode}
         onRollback={handleRollback}

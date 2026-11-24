@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 
+import { PartyTurnBar } from "@/components/game/party-turn-bar";
 import { SparklesSuggestions } from "@/components/game/sparkles-suggestions";
 import { ModelSelect } from "@/components/model-select";
 import {
@@ -59,6 +60,13 @@ export function PromptForm({
   isBusy,
   campaignId,
   gameState,
+  activeActorId,
+  onSelectActor,
+  pausedMode = false,
+  onTogglePausedMode,
+  pausedCount = 0,
+  onFlushPaused,
+  onClearPaused,
   lastDmText,
   formRef,
   onSubmit,
@@ -71,6 +79,13 @@ export function PromptForm({
   isBusy: boolean;
   campaignId?: string | null;
   gameState?: GameState | null;
+  activeActorId?: string | null;
+  onSelectActor?: (actorId: string) => void;
+  pausedMode?: boolean;
+  onTogglePausedMode?: () => void;
+  pausedCount?: number;
+  onFlushPaused?: () => void;
+  onClearPaused?: () => void;
   lastDmText?: string;
   formRef?: React.Ref<PromptFormHandle>;
   onSubmit: (text: string) => void;
@@ -197,7 +212,9 @@ export function PromptForm({
     const spellMatch = input.match(/^\/(?:hechizo|conjuro|cast)\s+([^\s@]*)$/i);
     if (spellMatch && gameState) {
       const query = (spellMatch[1] ?? "").toLowerCase();
-      const activeChar = Object.values(gameState.characters)[0];
+      const activeChar =
+        (activeActorId ? gameState.characters[activeActorId] : undefined) ??
+        Object.values(gameState.characters)[0];
       const known = activeChar?.knownSpells ?? [];
       return known
         .filter((slug) => {
@@ -257,7 +274,7 @@ export function PromptForm({
     }
 
     return [];
-  }, [gameState, input, isBusy, phase]);
+  }, [activeActorId, gameState, input, isBusy, phase]);
 
   const activeOptionIndex =
     autocompleteOptions.length > 0
@@ -282,8 +299,38 @@ export function PromptForm({
     setSelectedIndex(0);
   }
 
+  const partyChars = React.useMemo(
+    () => (gameState ? Object.values(gameState.characters) : []),
+    [gameState],
+  );
+  const currentActor =
+    (activeActorId && gameState ? gameState.characters[activeActorId] : undefined) ??
+    partyChars[0];
+  const shortActorName =
+    currentActor?.name.trim().split(/\s+/)[0] ?? currentActor?.name;
+  const textareaPlaceholder =
+    partyChars.length > 1 && currentActor
+      ? pausedMode
+        ? `Escribí como ${shortActorName}${currentActor.playerName ? ` (${currentActor.playerName})` : ""} — DM en pausa…`
+        : `¿Qué hace ${shortActorName}${currentActor.playerName ? ` (${currentActor.playerName})` : ""}? Usá / o @…`
+      : "Escribí tu acción, usá / para mecánicas directas, @ para mencionar o dictá con el micrófono…";
+
   return (
     <form onSubmit={handleSubmit} className="relative flex flex-col gap-1.5">
+      {partyChars.length > 1 && currentActor && onSelectActor && onTogglePausedMode && onFlushPaused && onClearPaused && (
+        <PartyTurnBar
+          characters={partyChars}
+          activeActorId={currentActor.id}
+          combat={gameState?.combat}
+          isBusy={isBusy}
+          pausedMode={pausedMode}
+          pausedCount={pausedCount}
+          onSelectActor={onSelectActor}
+          onTogglePausedMode={onTogglePausedMode}
+          onFlushPaused={onFlushPaused}
+          onClearPaused={onClearPaused}
+        />
+      )}
       {autocompleteOptions.length > 0 && (
         <div
           role="listbox"
@@ -370,7 +417,7 @@ export function PromptForm({
         <InputGroupTextarea
           ref={textareaRef}
           aria-label="Acción, comando directo o diálogo para el Dungeon Master"
-          placeholder="Escribí tu acción, usá / para mecánicas directas, @ para mencionar o dictá con el micrófono…"
+          placeholder={textareaPlaceholder}
           className="p-3.5 text-sm"
           value={input}
           disabled={phase !== "idle"}
@@ -517,6 +564,10 @@ export function PromptForm({
 
               <SparklesSuggestions
                 campaignId={campaignId}
+                actorId={currentActor?.id}
+                actorName={
+                  partyChars.length > 1 ? currentActor?.name : undefined
+                }
                 lastDmText={lastDmText}
                 disabled={isBusy}
                 onSelectAction={(text) => {

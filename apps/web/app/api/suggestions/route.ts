@@ -12,6 +12,7 @@ export const runtime = "nodejs";
 
 const RequestSchema = z.object({
   campaignId: z.string().min(1),
+  actorId: z.string().min(1).optional(),
   category: z.enum(["general", "social", "fight", "travel"]).default("general"),
   lastDmText: z.string().max(1500).optional(),
 });
@@ -140,7 +141,10 @@ export async function POST(req: Request) {
     );
   }
 
-  const activeChar = Object.values(loaded.state.characters)[0];
+  const activeChar =
+    (parsed.data.actorId
+      ? loaded.state.characters[parsed.data.actorId]
+      : undefined) ?? Object.values(loaded.state.characters)[0];
   if (!activeChar) {
     return Response.json(
       { ok: false, error: "Personaje no encontrado." },

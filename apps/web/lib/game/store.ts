@@ -25,9 +25,10 @@ import {
 } from "@/lib/db/schema";
 import { buildSeededIntroParts } from "@/lib/game/intro";
 import {
-  buildInitialCampaignState,
+  buildInitialPartyCampaignState,
   type CharacterPresetId,
   isPresetId,
+  type PartyMemberSpec,
 } from "@/lib/game/presets";
 
 const UUID_REGEX =
@@ -164,9 +165,32 @@ function sortMemoryFacts(facts: StoredMemoryFact[]): StoredMemoryFact[] {
 export interface CreateCampaignInput {
   guestId: string;
   presetId?: string;
+  party?: Array<{ presetId: string; playerName?: string }>;
   mode?: "digital" | "hybrid";
   ruleset?: RulesetProfile;
   title?: string;
+}
+
+function normalizePartyInput(input: CreateCampaignInput): PartyMemberSpec[] {
+  const seen = new Set<CharacterPresetId>();
+  const out: PartyMemberSpec[] = [];
+  for (const item of input.party ?? []) {
+    if (isPresetId(item.presetId) && !seen.has(item.presetId)) {
+      seen.add(item.presetId);
+      const cleanName = item.playerName?.trim().slice(0, 40);
+      out.push({
+        presetId: item.presetId,
+        ...(cleanName ? { playerName: cleanName } : {}),
+      });
+    }
+    if (out.length >= 4) break;
+  }
+  if (out.length === 0) {
+    const fallbackPreset: CharacterPresetId =
+      input.presetId && isPresetId(input.presetId) ? input.presetId : "pc_kael";
+    out.push({ presetId: fallbackPreset });
+  }
+  return out;
 }
 
 export interface GameStore {
@@ -211,6 +235,11 @@ export interface GameStore {
     campaignId: string,
     guestId: string,
     actorId: string,
+    mode: "digital" | "hybrid",
+  ): Promise<LoadedCampaign | null>;
+  updateTableMode(
+    campaignId: string,
+    guestId: string,
     mode: "digital" | "hybrid",
   ): Promise<LoadedCampaign | null>;
   saveMessages(
@@ -294,21 +323,20 @@ export class SupabaseGameStore implements GameStore {
     const db = getDb();
     const campaignId = randomUUID();
     const sessionId = randomUUID();
-    const presetId: CharacterPresetId =
-      input.presetId && isPresetId(input.presetId) ? input.presetId : "pc_kael";
+    const party = normalizePartyInput(input);
     const mode = input.mode === "hybrid" ? "hybrid" : "digital";
     const ruleset: RulesetProfile =
       input.ruleset === "5e-full" ? "5e-full" : "5e-lite";
     const title = input.title?.trim() || "Aguas Inquietas";
 
-    const initialState = buildInitialCampaignState({
+    const initialState = buildInitialPartyCampaignState({
       campaignId,
       sessionId,
-      presetId,
+      party,
       mode,
       ruleset,
     });
-    const mainCharacter = Object.values(initialState.characters)[0]!;
+    const partyChars = Object.values(initialState.characters);
     const now = new Date();
 
     await db.transaction(async (tx) => {
@@ -329,21 +357,23 @@ export class SupabaseGameStore implements GameStore {
         startedAt: now,
       });
 
-      const [insertedChar] = await tx
+      const insertedChars = await tx
         .insert(characters)
-        .values({
-          campaignId,
-          actorId: mainCharacter.id,
-          ownerGuestId: input.guestId,
-          name: mainCharacter.name,
-          sheet: mainCharacter,
-        })
+        .values(
+          partyChars.map((ch) => ({
+            campaignId,
+            actorId: ch.id,
+            ownerGuestId: input.guestId,
+            name: ch.name,
+            sheet: ch,
+          })),
+        )
         .returning({ id: characters.id });
 
       await tx.insert(campaignMembers).values({
         campaignId,
         guestId: input.guestId,
-        characterId: insertedChar?.id ?? null,
+        characterId: insertedChars[0]?.id ?? null,
         role: "owner",
       });
 
@@ -942,6 +972,66 @@ export class SupabaseGameStore implements GameStore {
     };
   }
 
+  async updateTableMode(
+    campaignId: string,
+    guestId: string,
+    mode: "digital" | "hybrid",
+  ): Promise<LoadedCampaign | null> {
+    const loaded = await this.loadCampaign(campaignId, guestId);
+    if (!loaded) {
+      return null;
+    }
+
+    const rollAuth = mode === "hybrid" ? "player-declared" : "engine-rolled";
+    const auth = createDefaultAuthority(mode);
+    const updatedCharsRecord: Record<string, Character> = {};
+    for (const [id, char] of Object.entries(loaded.initialState.characters)) {
+      updatedCharsRecord[id] = {
+        ...char,
+        authority: auth,
+        rollAuthority: rollAuth,
+      };
+    }
+
+    const updatedInitial: GameState = {
+      ...loaded.initialState,
+      characters: updatedCharsRecord,
+    };
+    const nextState = reduceEvents(updatedInitial, loaded.events);
+
+    const db = getDb();
+    await db.transaction(async (tx) => {
+      for (const updatedChar of Object.values(updatedCharsRecord)) {
+        await tx
+          .update(characters)
+          .set({
+            sheet: updatedChar,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(characters.campaignId, campaignId),
+              eq(characters.actorId, updatedChar.id),
+            ),
+          );
+      }
+
+      await tx
+        .update(gameStateSnapshots)
+        .set({
+          state: nextState,
+          updatedAt: new Date(),
+        })
+        .where(eq(gameStateSnapshots.campaignId, campaignId));
+    });
+
+    return {
+      ...loaded,
+      initialState: updatedInitial,
+      state: nextState,
+    };
+  }
+
   async saveMessages(
     campaignId: string,
     sessionId: string,
@@ -1060,17 +1150,16 @@ export class InMemoryGameStore implements GameStore {
   async createCampaign(input: CreateCampaignInput): Promise<LoadedCampaign> {
     const campaignId = randomUUID();
     const sessionId = randomUUID();
-    const presetId: CharacterPresetId =
-      input.presetId && isPresetId(input.presetId) ? input.presetId : "pc_kael";
+    const party = normalizePartyInput(input);
     const mode = input.mode === "hybrid" ? "hybrid" : "digital";
     const ruleset: RulesetProfile =
       input.ruleset === "5e-full" ? "5e-full" : "5e-lite";
     const title = input.title?.trim() || "Aguas Inquietas";
 
-    const initialState = buildInitialCampaignState({
+    const initialState = buildInitialPartyCampaignState({
       campaignId,
       sessionId,
-      presetId,
+      party,
       mode,
       ruleset,
     });
@@ -1348,6 +1437,35 @@ export class InMemoryGameStore implements GameStore {
         ...found.initialState.characters,
         [actorId]: updatedBase,
       },
+    };
+    found.state = reduceEvents(found.initialState, found.events);
+    found.logHeadSeq = computeLogHeadSeq(found.events);
+    found.updatedAt = new Date().toISOString();
+    return this.loadCampaign(campaignId, guestId);
+  }
+
+  async updateTableMode(
+    campaignId: string,
+    guestId: string,
+    mode: "digital" | "hybrid",
+  ): Promise<LoadedCampaign | null> {
+    const found = this.campaigns.get(campaignId);
+    if (!found || !this.hasAccess(found, guestId)) return null;
+
+    const rollAuth = mode === "hybrid" ? "player-declared" : "engine-rolled";
+    const auth = createDefaultAuthority(mode);
+    const updatedChars: Record<string, Character> = {};
+    for (const [id, char] of Object.entries(found.initialState.characters)) {
+      updatedChars[id] = {
+        ...char,
+        authority: auth,
+        rollAuthority: rollAuth,
+      };
+    }
+
+    found.initialState = {
+      ...found.initialState,
+      characters: updatedChars,
     };
     found.state = reduceEvents(found.initialState, found.events);
     found.logHeadSeq = computeLogHeadSeq(found.events);

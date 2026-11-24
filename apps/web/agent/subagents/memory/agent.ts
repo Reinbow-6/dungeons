@@ -202,13 +202,45 @@ export function extractDeterministicFactsFromEvent(
       }
       const sceneId = typeof p.sceneId === "string" ? p.sceneId : state.sceneId;
       const sceneTitle = state.scenes[sceneId]?.titleEs ?? sceneId;
+      const subject = p.party === true ? "El grupo" : actorName;
       facts.push({
         category: "milestone",
         content: sanitizeUntrustedText(
-          `${actorName} completó un descanso largo en "${sceneTitle}", recuperando fuerzas y recursos.`,
+          `${subject} completó un descanso largo en "${sceneTitle}", recuperando fuerzas y recursos.`,
           280,
         ),
         importance: 5,
+        eventSeq: event.seq,
+        source: "engine",
+      });
+      break;
+    }
+
+    case "PARTY_MEMBER_ADDED": {
+      const name = typeof p.name === "string" ? p.name : actorName;
+      const cls = typeof p.className === "string" ? ` (${p.className})` : "";
+      facts.push({
+        category: "milestone",
+        content: sanitizeUntrustedText(
+          `${name}${cls} se unió al grupo de viajeros.`,
+          280,
+        ),
+        importance: 7,
+        eventSeq: event.seq,
+        source: "engine",
+      });
+      break;
+    }
+
+    case "PARTY_MEMBER_REMOVED": {
+      const name = typeof p.name === "string" ? p.name : actorName;
+      facts.push({
+        category: "milestone",
+        content: sanitizeUntrustedText(
+          `${name} se separó del grupo.`,
+          280,
+        ),
+        importance: 6,
         eventSeq: event.seq,
         source: "engine",
       });

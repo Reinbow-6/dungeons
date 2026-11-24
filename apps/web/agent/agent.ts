@@ -48,6 +48,7 @@ export interface DmMemoryPromptContext {
   memoryFacts?: readonly StoredMemoryFact[];
   olderTurnsDigest?: string;
   latestUserText?: string;
+  activeActorId?: string;
 }
 
 const KEY_SKILLS: Skill[] = [
@@ -145,8 +146,12 @@ export function buildDmSystemPrompt(
         ? `  - Magia (${spellStats.ability.toUpperCase()}): CD ${spellStats.spellSaveDc} | Ataque +${spellStats.spellAttackBonus} | Espacios: ${slotEntries || "ninguno"}${char.knownSpells && char.knownSpells.length > 0 ? ` | Conjuros: ${char.knownSpells.join(", ")}` : ""}`
         : null;
 
+      const safePlayer = char.playerName
+        ? ` | Jugador: ${sanitizeUntrustedText(char.playerName, 40)}`
+        : "";
+
       return [
-        `- **${safeName}** (actorId: \`${char.id}\`, ${char.species}, ${char.className} Nv.${char.level})`,
+        `- **${safeName}** (actorId: \`${char.id}\`, ${char.species}, ${char.className} Nv.${char.level}${safePlayer})`,
         `  - PG: ${char.hp.current}/${char.hp.max} (temp: ${char.hp.temp}) | CA: ${char.ac} | Dados de Golpe: ${hitDiceText} | Condiciones: ${cond} | Agotamiento: ${char.exhaustionLevel} | Concentración: ${safeConc}`,
         ...(deathSavesLine ? [deathSavesLine] : []),
         ...(spellLine ? [spellLine] : []),
@@ -271,7 +276,28 @@ ${rows}
   const progress = getAguasInquietasProgress(state);
   const storyArc = computeMacroStoryArc(state, events);
   const tension = computeTensionMeter(state, events);
-  const turnCtx = deriveTurnContext(state);
+  const turnCtx = deriveTurnContext(state, {
+    activeActorId: memoryContext?.activeActorId,
+  });
+  const partySize = Object.keys(state.characters).length;
+  const partyGuidanceBlock =
+    partySize > 1
+      ? (() => {
+          const scalingGuide =
+            partySize === 2
+              ? "2 PJs: agregá +1 enemigo menor o subí a 2–3 exploradores / 3 necrófagos en encuentros armados."
+              : partySize === 3
+                ? "3 PJs: usá 3–4 enemigos o tácticas de flanqueo y cobertura en encuentros armados."
+                : "4 PJs: usá 4–5 enemigos o doble frente (arqueros + cuerpo a cuerpo) para sostener el desafío.";
+          return `\n### Mesa multijugador local (${partySize} jugadores)
+- **Hablante/actor en foco:** ${turnCtx.activeActorName ?? "Grupo"} (\`${turnCtx.activeActorId ?? "party"}\`).
+- **Acciones individuales y escenas en pausa (\`[Escena grupal]\`):** si el mensaje del jugador contiene \`[Acción de <PJ> (actorId: ...)]\` o \`[Escena grupal — acciones acumuladas en mesa]\`, resolvé **todas** las acciones declaradas en una respuesta cohesiva usando exactamente el \`actorId\` correspondiente de cada personaje.
+- **Tiradas grupales:** cuando intente algo todo el grupo (p. ej. Sigilo o Percepción grupal), en D&D 5e hay éxito grupal si al menos la mitad supera la CD; en modo Digital llamá \`resolve_check\` para cada PJ participante y en modo Híbrido llamá \`declare_check\` por cada PJ participante con su \`actorId\`.
+- **Descansos en grupo:** si el grupo descansa junto, llamá a \`take_rest\` con \`applyToParty: true\`.
+- **Escalado de encuentros:** ${scalingGuide}
+`;
+        })()
+      : "";
   const unlockedEndingsStr =
     progress.unlockedAlternativeEndings.length > 0
       ? progress.unlockedAlternativeEndings
@@ -301,7 +327,7 @@ ${cluesText}
 
 ### Personajes en escena
 ${charactersText}
-${combatText}${npcMindsBlock}${recapsBlock}${memoryBlock}${digestBlock}
+${partyGuidanceBlock}${combatText}${npcMindsBlock}${recapsBlock}${memoryBlock}${digestBlock}
 ### Últimos eventos activos en \`event_log\`
 ${eventsText}
 `;
