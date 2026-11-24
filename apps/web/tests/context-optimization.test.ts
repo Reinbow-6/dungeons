@@ -52,15 +52,25 @@ function makeDummyRuntime(
 }
 
 describe("Phase 1a: Seeded deterministic intro (0 tokens at turn 0)", () => {
-  it("seeds an opening assistant message with narrative + 3 suggested actions on campaign creation", async () => {
+  it("starts new campaigns empty for 3-option launch and seeds deterministic intro on seedOpeningIntro", async () => {
     const store = new InMemoryGameStore();
-    const loaded = await store.createCampaign({
+    const created = await store.createCampaign({
       guestId: GUEST,
       presetId: "pc_kael",
       ruleset: "5e-full",
     });
 
+    // New campaign starts clean so the 3-option screen is visible
+    expect(created.messages).toHaveLength(0);
+
+    const loaded = (await store.seedOpeningIntro(created.campaignId, GUEST))!;
+    expect(loaded).not.toBeNull();
     expect(loaded.messages).toHaveLength(1);
+
+    // Calling seedOpeningIntro again must be idempotent
+    const seededAgain = (await store.seedOpeningIntro(created.campaignId, GUEST))!;
+    expect(seededAgain.messages).toHaveLength(1);
+
     const intro = loaded.messages[0]!;
     expect(intro.role).toBe("assistant");
     expect(intro.eventSeq).toBe(0);
@@ -300,26 +310,27 @@ describe("Phase 1b: Historical tool output pruning", () => {
     const pruned = pruneHistoricalToolOutputs(messages);
     expect(pruned).toHaveLength(6);
 
-    // Historical a1 collapsed to 1 text part inside <resumen_motor> without reasoning or suggest_actions
+    // Historical a1 keeps clean narrative prose without synthetic tags, reasoning, or suggest_actions
     expect(pruned[1]!.parts).toHaveLength(1);
     expect(pruned[1]!.parts[0]!.type).toBe("text");
     const a1Text =
       pruned[1]!.parts[0]!.type === "text" ? pruned[1]!.parts[0]!.text : "";
-    expect(a1Text).toContain("<resumen_motor>");
-    expect(a1Text).toContain("[resolve_check → perception 15 vs CD 12, éxito]");
-    expect(a1Text).toContain("</resumen_motor>");
-    expect(a1Text).toContain("dos siluetas con arcos tensos");
+    expect(a1Text).toBe(
+      "Entre los juncos distinguís dos siluetas con arcos tensos.",
+    );
+    expect(a1Text).not.toContain("<resumen_motor>");
+    expect(a1Text).not.toContain("resolve_check");
     expect(a1Text).not.toContain("suggest_actions");
     expect(a1Text).not.toContain("Voy a pedir tirada");
 
-    // Historical a2 collapsed to 1 text part with both canonical tool lines
+    // Historical a2 keeps clean narrative prose without verbose tool payloads
     expect(pruned[3]!.parts).toHaveLength(1);
     const a2Text =
       pruned[3]!.parts[0]!.type === "text" ? pruned[3]!.parts[0]!.text : "";
-    expect(a2Text).toContain("<resumen_motor>");
-    expect(a2Text).toContain("[investigate → total 16, +1 pista]");
-    expect(a2Text).toContain("[combat_attack → impacto, 7 daño a Bandido]");
-    expect(a2Text).toContain("hace retroceder al bandido");
+    expect(a2Text).toBe(
+      "Tu estocada hace retroceder al bandido hacia el barro.",
+    );
+    expect(a2Text).not.toContain("<resumen_motor>");
     expect(a2Text).not.toContain("Rematar al bandido");
 
     // Final active assistant a3 preserved verbatim (resuming declare_check)
@@ -365,7 +376,7 @@ describe("Phase 1b: Historical tool output pruning", () => {
     expect(pruned[1]!.parts).toHaveLength(1);
     expect(pruned[1]!.parts[0]).toEqual({
       type: "text",
-      text: "<resumen_motor>\n[transition_scene → El Parlamento en la Ciénaga]\n</resumen_motor>\n\nLlegás al claro.",
+      text: "Llegás al claro.",
     });
   });
 

@@ -18,6 +18,7 @@ import * as React from "react";
 
 import { useAuthAccess } from "@/components/auth-dialog";
 import { Button } from "@/components/ui/button";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
 import {
   Tooltip,
@@ -164,13 +165,47 @@ export function SettingsPanel() {
     REASONING_OPTIONS.find((opt) => opt.value === settings.reasoningEffort) ??
     REASONING_OPTIONS[0]!;
 
-  function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen === open) {
-      return;
+  const handleOpenChange = React.useCallback(
+    (nextOpen: boolean) => {
+      if (nextOpen === open) {
+        return;
+      }
+      setOpen(nextOpen);
+      void playSound(nextOpen ? "overlay.open" : "overlay.close");
+    },
+    [open, playSound],
+  );
+
+  React.useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.key.toLowerCase() !== "p"
+      ) {
+        return;
+      }
+
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT")
+      ) {
+        return;
+      }
+
+      handleOpenChange(!open);
     }
-    setOpen(nextOpen);
-    void playSound(nextOpen ? "overlay.open" : "overlay.close");
-  }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [handleOpenChange, open]);
 
   function handleOpenAuth() {
     void playSound("overlay.open");
@@ -191,7 +226,7 @@ export function SettingsPanel() {
               type="button"
               variant="ghost"
               size="icon-sm"
-              aria-label="Abrir ajustes de modelos, voz y desarrollador"
+              aria-label="Abrir ajustes de modelos, voz y desarrollador (P)"
               aria-expanded={open}
               aria-haspopup="dialog"
               onClick={() => handleOpenChange(true)}
@@ -201,7 +236,9 @@ export function SettingsPanel() {
             </Button>
           }
         />
-        <TooltipContent>Ajustes de modelos, voz y desarrollador</TooltipContent>
+        <TooltipContent>
+          Ajustes de la Mesa <Kbd>P</Kbd>
+        </TooltipContent>
       </Tooltip>
 
       <Dialog.Portal>
@@ -672,28 +709,32 @@ export function SettingsPanel() {
                 Atajos de teclado
               </h3>
               <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                <span>Abrir o cerrar ajustes</span>
+                <Kbd>P</Kbd>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
                 <span>Abrir o cerrar la ficha</span>
-                <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
-                  Alt + H
-                </kbd>
+                <KbdGroup>
+                  <Kbd>Alt</Kbd>
+                  <span>+</span>
+                  <Kbd>H</Kbd>
+                </KbdGroup>
               </div>
               <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
                 <span>Iniciar o terminar dictado</span>
-                <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
-                  Alt + M
-                </kbd>
+                <KbdGroup>
+                  <Kbd>Alt</Kbd>
+                  <span>+</span>
+                  <Kbd>M</Kbd>
+                </KbdGroup>
               </div>
               <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
                 <span>Silenciar o activar sonido</span>
-                <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
-                  D
-                </kbd>
+                <Kbd>D</Kbd>
               </div>
               <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
                 <span>Cambiar tema</span>
-                <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
-                  N
-                </kbd>
+                <Kbd>N</Kbd>
               </div>
             </section>
           </div>

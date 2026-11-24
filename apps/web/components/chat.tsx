@@ -18,6 +18,11 @@ import {
 import * as React from "react";
 
 import { useAuthAccess } from "@/components/auth-dialog";
+import {
+  Checkpoint,
+  CheckpointIcon,
+  CheckpointTrigger,
+} from "@/components/ai-elements/checkpoint";
 import { ChatMessage } from "@/components/chat-message";
 import { ContextMeter } from "@/components/game/context-meter";
 import { GameSidebar } from "@/components/game/game-sidebar";
@@ -41,6 +46,7 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Message, MessageContent } from "@/components/ui/message";
 import {
   MessageScroller,
@@ -121,6 +127,30 @@ function LiveTurnStatus({ status }: { status: "submitted" | "streaming" }) {
   );
 }
 
+function extractMaxSeqFromParts(
+  parts: readonly ChatUIMessage["parts"][number][],
+): number | null {
+  let maxSeq: number | null = null;
+  for (const part of parts) {
+    if (
+      typeof part.type === "string" &&
+      part.type.startsWith("tool-") &&
+      "state" in part &&
+      part.state === "output-available" &&
+      "output" in part &&
+      part.output &&
+      typeof part.output === "object" &&
+      "seq" in part.output &&
+      typeof part.output.seq === "number" &&
+      Number.isInteger(part.output.seq) &&
+      part.output.seq >= 0
+    ) {
+      maxSeq = maxSeq === null ? part.output.seq : Math.max(maxSeq, part.output.seq);
+    }
+  }
+  return maxSeq;
+}
+
 interface CampaignApiPayload {
   campaignId: string | null;
   sessionId: string | null;
@@ -132,10 +162,28 @@ interface CampaignApiPayload {
     id: string;
     role: "user" | "assistant" | "system";
     parts: ChatUIMessage["parts"];
+    eventSeq?: number | null;
   }>;
   sessionSummaries?: SessionSummaryItem[];
   memoryFacts?: StoredMemoryFact[];
   presets: CharacterPresetInfo[];
+}
+
+function buildSeqMapFromApiMessages(
+  apiMessages: CampaignApiPayload["messages"],
+): Record<string, number> {
+  const next: Record<string, number> = {};
+  for (const msg of apiMessages) {
+    if (typeof msg.eventSeq === "number" && Number.isInteger(msg.eventSeq)) {
+      next[msg.id] = msg.eventSeq;
+    } else if (msg.role === "assistant") {
+      const partSeq = extractMaxSeqFromParts(msg.parts);
+      if (partSeq !== null) {
+        next[msg.id] = partSeq;
+      }
+    }
+  }
+  return next;
 }
 
 export function Chat({ models }: { models: GatewayModel[] }) {
@@ -157,6 +205,9 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   const [memoryFacts, setMemoryFacts] = React.useState<StoredMemoryFact[]>([]);
   const { playSound } = useSensoryUI();
   const [presets, setPresets] = React.useState<CharacterPresetInfo[]>([]);
+  const [messageSeqMap, setMessageSeqMap] = React.useState<Record<string, number>>({});
+  const [rollingBackSeq, setRollingBackSeq] = React.useState<number | null>(null);
+  const [seedingIntro, setSeedingIntro] = React.useState(false);
   // HUD lateral colapsado por defecto (estilo Old Greg's Tavern)
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
 
@@ -324,6 +375,11 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     [],
   );
 
+  const messagesRef = React.useRef(messages);
+  React.useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   const applyCampaignPayload = React.useCallback(
     (data: CampaignApiPayload, restoreMessages = false) => {
       setCampaignId(data.campaignId);
@@ -342,6 +398,27 @@ export function Chat({ models }: { models: GatewayModel[] }) {
             parts: m.parts,
           })),
         );
+        setMessageSeqMap(buildSeqMapFromApiMessages(data.messages));
+      } else {
+        const current = messagesRef.current;
+        if (current.length > 0 && current.length === data.messages.length) {
+          setMessageSeqMap((prev) => {
+            const next = { ...prev };
+            for (let i = 0; i < current.length; i += 1) {
+              const clientMsg = current[i];
+              const serverMsg = data.messages[i];
+              if (
+                clientMsg &&
+                serverMsg &&
+                clientMsg.role === serverMsg.role &&
+                typeof serverMsg.eventSeq === "number"
+              ) {
+                next[clientMsg.id] = serverMsg.eventSeq;
+              }
+            }
+            return next;
+          });
+        }
       }
     },
     [notifyNewEvents, setMessages],
@@ -384,6 +461,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
           parts: m.parts,
         })),
       );
+      setMessageSeqMap(buildSeqMapFromApiMessages(data.messages));
     }
 
     void bootstrapCampaign();
@@ -391,11 +469,6 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       cancelled = true;
     };
   }, [notifyNewEvents, setMessages]);
-
-  const messagesRef = React.useRef(messages);
-  React.useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
 
   const prevStatusRef = React.useRef(status);
   React.useEffect(() => {
@@ -477,18 +550,51 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     setSessionSummaries(data.sessionSummaries ?? []);
     setMemoryFacts(data.memoryFacts ?? []);
     setPresets(data.presets ?? []);
-    setMessages(
-      (data.messages ?? []).map((m) => ({
-        id: m.id,
-        role: m.role,
-        parts: m.parts,
-      })),
-    );
+    setMessages([]);
+    setMessageSeqMap({});
+    setSidebarOpen(false);
     pushToast({
-      title: "Nueva campaña iniciada",
+      title: "Nueva campaña lista",
       description: `Aguas Quietas · ${ruleset}`,
       tone: "amber",
     });
+  }
+
+  async function handleStartCampaignIntro() {
+    if (!campaignId || seedingIntro || isBusy) return;
+    setSeedingIntro(true);
+    try {
+      const res = await fetch("/api/game/campaigns/intro", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaignId }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        ok: boolean;
+        state?: GameState;
+        events?: GameEvent[];
+        messages?: CampaignApiPayload["messages"];
+      };
+      if (data.ok && Array.isArray(data.messages)) {
+        if (data.state) setGameState(data.state);
+        if (data.events) {
+          setEvents(data.events);
+          notifyNewEvents(data.events, true);
+        }
+        setMessages(
+          data.messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            parts: m.parts,
+          })),
+        );
+        setMessageSeqMap(buildSeqMapFromApiMessages(data.messages));
+        playSound("notification.info");
+      }
+    } finally {
+      setSeedingIntro(false);
+    }
   }
 
   async function handleStartNewSession() {
@@ -579,6 +685,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
             parts: m.parts,
           })),
         );
+        setMessageSeqMap(buildSeqMapFromApiMessages(data.messages));
       }
       pushToast({
         title: "Línea temporal restaurada",
@@ -640,6 +747,30 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     (status === "submitted" || status === "streaming")
       ? status
       : null;
+
+  const visibleCheckpointByMessageId = React.useMemo(() => {
+    const map = new Map<string, number>();
+    const currentLastSeq = gameState?.lastSeq ?? 0;
+    if (currentLastSeq <= 0) {
+      return map;
+    }
+
+    const lastMessageIdForSeq = new Map<number, string>();
+    for (const msg of messages) {
+      if (msg.role !== "assistant") continue;
+      const mapped = messageSeqMap[msg.id];
+      const seq =
+        typeof mapped === "number" ? mapped : extractMaxSeqFromParts(msg.parts);
+      if (seq !== null && seq < currentLastSeq) {
+        lastMessageIdForSeq.set(seq, msg.id);
+      }
+    }
+
+    for (const [seq, msgId] of lastMessageIdForSeq.entries()) {
+      map.set(msgId, seq);
+    }
+    return map;
+  }, [gameState?.lastSeq, messageSeqMap, messages]);
 
   const submitPrompt = React.useCallback(
     (prompt: string) => {
@@ -755,16 +886,28 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                 </EmptyTitle>
                 <EmptyDescription className="text-[14px] leading-relaxed">
                   Crónica interactiva 5e asistida por motor determinista. Escribí,
-                  dictá con el micrófono o abrí el panel lateral (<kbd className="rounded border border-border px-1 font-mono text-[10px]">Alt+H</kbd>) para elegir ficha o modo híbrido.
+                  dictá con el micrófono o abrí el panel lateral (
+                  <KbdGroup>
+                    <Kbd>Alt</Kbd>
+                    <span>+</span>
+                    <Kbd>H</Kbd>
+                  </KbdGroup>
+                  ) para elegir ficha o modo híbrido.
                 </EmptyDescription>
               </EmptyHeader>
               <EmptyContent className="max-w-xl">
-                <Suggestions onSelect={submitPrompt} />
+                <Suggestions
+                  onStartCampaign={() => {
+                    void handleStartCampaignIntro();
+                  }}
+                  onSelect={submitPrompt}
+                  disabled={isBusy || seedingIntro}
+                />
               </EmptyContent>
             </Empty>
           </div>
         ) : (
-          <MessageScrollerProvider>
+          <MessageScrollerProvider autoScroll>
             <MessageScroller className="relative flex-1">
               {/* Degradado superior sutil estilo lectura nocturna */}
               <div
@@ -819,11 +962,13 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                         ? extractAssistantSpeechText(message)
                         : "";
 
+                    const checkpointSeq =
+                      visibleCheckpointByMessageId.get(message.id) ?? null;
+
                     return (
                       <MessageScrollerItem
                         key={message.id}
                         messageId={message.id}
-                        scrollAnchor={message.role === "user"}
                       >
                         <ChatMessage
                           message={message}
@@ -874,6 +1019,28 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                               : undefined
                           }
                         />
+                        {checkpointSeq !== null && (
+                          <Checkpoint className="mt-3">
+                            <CheckpointIcon />
+                            <CheckpointTrigger
+                              disabled={isBusy || rollingBackSeq !== null}
+                              tooltip={`Volver al estado guardado en la secuencia #${checkpointSeq}`}
+                              onClick={async () => {
+                                playSound("navigation.backward");
+                                setRollingBackSeq(checkpointSeq);
+                                try {
+                                  await handleRollback(checkpointSeq);
+                                } finally {
+                                  setRollingBackSeq(null);
+                                }
+                              }}
+                            >
+                              {rollingBackSeq === checkpointSeq
+                                ? "Restaurando…"
+                                : `Restaurar punto #${checkpointSeq}`}
+                            </CheckpointTrigger>
+                          </Checkpoint>
+                        )}
                       </MessageScrollerItem>
                     );
                   })}
@@ -893,44 +1060,48 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                       </Message>
                     </MessageScrollerItem>
                   )}
-                </MessageScrollerContent>
-                {pendingQuestion && (
-                  <QuestionCard
-                    part={pendingQuestion}
-                    onAnswer={(toolCallId, answer) =>
-                      addToolOutput({
-                        tool: "ask_user",
-                        toolCallId,
-                        output: answer,
-                      })
-                    }
-                  />
-                )}
-                {pendingDeclareCheck &&
-                  pendingDeclareCheck.state === "input-available" &&
-                  campaignId && (
-                    <HybridCheckCard
-                      campaignId={campaignId}
-                      sceneId={pendingDeclareCheck.input.sceneId}
-                      actorId={pendingDeclareCheck.input.actorId}
-                      skill={pendingDeclareCheck.input.skill}
-                      dc={pendingDeclareCheck.input.dc}
-                      dcRef={pendingDeclareCheck.input.dcRef}
-                      mode={pendingDeclareCheck.input.mode ?? "normal"}
-                      promptEs={pendingDeclareCheck.input.promptEs}
-                      checkId={pendingDeclareCheck.toolCallId}
-                      onVerified={(output, nextState, event) => {
-                        setGameState(nextState);
-                        setEvents((prev) => [...prev, event]);
-                        notifyNewEvents([event], false);
-                        void addToolOutput({
-                          tool: "declare_check",
-                          toolCallId: pendingDeclareCheck.toolCallId,
-                          output,
-                        });
-                      }}
-                    />
+                  {pendingQuestion && (
+                    <MessageScrollerItem messageId="pending-question">
+                      <QuestionCard
+                        part={pendingQuestion}
+                        onAnswer={(toolCallId, answer) =>
+                          addToolOutput({
+                            tool: "ask_user",
+                            toolCallId,
+                            output: answer,
+                          })
+                        }
+                      />
+                    </MessageScrollerItem>
                   )}
+                  {pendingDeclareCheck &&
+                    pendingDeclareCheck.state === "input-available" &&
+                    campaignId && (
+                      <MessageScrollerItem messageId="pending-declare-check">
+                        <HybridCheckCard
+                          campaignId={campaignId}
+                          sceneId={pendingDeclareCheck.input.sceneId}
+                          actorId={pendingDeclareCheck.input.actorId}
+                          skill={pendingDeclareCheck.input.skill}
+                          dc={pendingDeclareCheck.input.dc}
+                          dcRef={pendingDeclareCheck.input.dcRef}
+                          mode={pendingDeclareCheck.input.mode ?? "normal"}
+                          promptEs={pendingDeclareCheck.input.promptEs}
+                          checkId={pendingDeclareCheck.toolCallId}
+                          onVerified={(output, nextState, event) => {
+                            setGameState(nextState);
+                            setEvents((prev) => [...prev, event]);
+                            notifyNewEvents([event], false);
+                            void addToolOutput({
+                              tool: "declare_check",
+                              toolCallId: pendingDeclareCheck.toolCallId,
+                              output,
+                            });
+                          }}
+                        />
+                      </MessageScrollerItem>
+                    )}
+                </MessageScrollerContent>
               </MessageScrollerViewport>
               <MessageScrollerButton />
             </MessageScroller>

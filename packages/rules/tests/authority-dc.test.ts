@@ -163,4 +163,45 @@ describe('authority enforcement & data-driven DC (P0 fixes 2 & 3)', () => {
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.code).toBe('INVALID_INPUT');
   });
+
+  it('falls back to numeric dc when LLM supplies a descriptive unknown dcRef alongside valid dc', () => {
+    const digital = createAguasQuietasInitialState({ hybrid: false });
+    const hybrid = createAguasQuietasInitialState({ hybrid: true });
+    const ctx = makeContext();
+
+    const check = resolveCheck(
+      digital,
+      {
+        sceneId: 'escena_01_orilla',
+        actorId: 'pc_kael',
+        skill: 'survival',
+        dc: 12,
+        dcRef: 'rastrear columna de humo en la maleza',
+      },
+      ctx,
+    );
+    expect(check.ok).toBe(true);
+    if (check.ok) {
+      expect(check.dc).toBe(12);
+      expect(check.event.payload.dcSource).toBe('declared');
+    }
+
+    const decl = declareCheck(
+      hybrid,
+      {
+        sceneId: 'escena_01_orilla',
+        actorId: 'pc_kael',
+        skill: 'survival',
+        dc: 12,
+        dcRef: 'rastrear columna de humo en la maleza',
+        dieResults: [12],
+      },
+      ctx,
+    );
+    expect(decl.ok).toBe(true);
+    if (decl.ok) {
+      expect(decl.dc).toBe(12);
+      expect(decl.event.payload.dcSource).toBe('declared');
+    }
+  });
 });

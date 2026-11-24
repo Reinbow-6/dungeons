@@ -16,7 +16,13 @@ export function createResolveCheckTool(rt: DmToolRuntime) {
         actorId: z.string().min(1),
         skill: CheckTargetZod,
         dc: z.number().int().min(1).max(40).optional(),
-        dcRef: z.string().min(1).optional(),
+        dcRef: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Opcional. SOLO usar con un ID exacto de pista de la escena actual (p. ej. pista_camp_12). Nunca pongas descripciones ni texto libre; para pruebas generales usá solo dc.",
+          ),
         mode: RollModeZod.optional(),
         requiresSight: z.boolean().optional(),
       })

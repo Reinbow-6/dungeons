@@ -171,6 +171,10 @@ export interface CreateCampaignInput {
 
 export interface GameStore {
   createCampaign(input: CreateCampaignInput): Promise<LoadedCampaign>;
+  seedOpeningIntro(
+    campaignId: string,
+    guestId: string,
+  ): Promise<LoadedCampaign | null>;
   getLatestCampaignForGuest(guestId: string): Promise<LoadedCampaign | null>;
   loadCampaign(
     campaignId: string,
@@ -305,8 +309,6 @@ export class SupabaseGameStore implements GameStore {
       ruleset,
     });
     const mainCharacter = Object.values(initialState.characters)[0]!;
-    const introParts = buildSeededIntroParts(initialState);
-    const introMessageId = randomUUID();
     const now = new Date();
 
     await db.transaction(async (tx) => {
@@ -351,16 +353,6 @@ export class SupabaseGameStore implements GameStore {
         sceneId: initialState.sceneId,
         state: initialState,
       });
-
-      await tx.insert(messages).values({
-        id: introMessageId,
-        campaignId,
-        sessionId,
-        role: "assistant",
-        parts: introParts,
-        eventSeq: 0,
-        createdAt: now,
-      });
     });
 
     return {
@@ -375,16 +367,7 @@ export class SupabaseGameStore implements GameStore {
       state: initialState,
       logHeadSeq: 0,
       events: [],
-      messages: [
-        {
-          id: introMessageId,
-          role: "assistant",
-          parts: introParts,
-          createdAt: now.toISOString(),
-          eventSeq: 0,
-          revertedBySeq: null,
-        },
-      ],
+      messages: [],
       sessionSummaries: [
         {
           id: sessionId,
@@ -701,6 +684,32 @@ export class SupabaseGameStore implements GameStore {
         summary: "",
         startedAt: now,
       });
+    });
+
+    return this.loadCampaign(campaignId, guestId);
+  }
+
+  async seedOpeningIntro(
+    campaignId: string,
+    guestId: string,
+  ): Promise<LoadedCampaign | null> {
+    const loaded = await this.loadCampaign(campaignId, guestId);
+    if (!loaded) {
+      return null;
+    }
+    if (loaded.messages.length > 0) {
+      return loaded;
+    }
+
+    const introParts = buildSeededIntroParts(loaded.state);
+    const db = getDb();
+    await db.insert(messages).values({
+      campaignId: loaded.campaignId,
+      sessionId: loaded.sessionId,
+      role: "assistant",
+      parts: introParts,
+      eventSeq: 0,
+      createdAt: new Date(),
     });
 
     return this.loadCampaign(campaignId, guestId);
@@ -1065,8 +1074,6 @@ export class InMemoryGameStore implements GameStore {
       mode,
       ruleset,
     });
-    const introParts = buildSeededIntroParts(initialState);
-    const introMessageId = randomUUID();
     const nowIso = new Date().toISOString();
 
     const record: InMemoryCampaignRecord = {
@@ -1083,16 +1090,7 @@ export class InMemoryGameStore implements GameStore {
       state: initialState,
       logHeadSeq: 0,
       events: [],
-      messages: [
-        {
-          id: introMessageId,
-          role: "assistant",
-          parts: introParts,
-          createdAt: nowIso,
-          eventSeq: 0,
-          revertedBySeq: null,
-        },
-      ],
+      messages: [],
       sessions: [
         {
           id: sessionId,
@@ -1230,6 +1228,32 @@ export class InMemoryGameStore implements GameStore {
       summary: "",
       startedAt: nowIso,
       endedAt: null,
+    });
+    return this.loadCampaign(campaignId, guestId);
+  }
+
+  async seedOpeningIntro(
+    campaignId: string,
+    guestId: string,
+  ): Promise<LoadedCampaign | null> {
+    const found = this.campaigns.get(campaignId);
+    if (!found || !this.hasAccess(found, guestId)) {
+      return null;
+    }
+    const activeMessages = found.messages.filter((m) => m.revertedBySeq == null);
+    if (activeMessages.length > 0) {
+      return this.loadCampaign(campaignId, guestId);
+    }
+
+    const loaded = (await this.loadCampaign(campaignId, guestId))!;
+    const introParts = buildSeededIntroParts(loaded.state);
+    found.messages.push({
+      id: randomUUID(),
+      role: "assistant",
+      parts: introParts,
+      createdAt: new Date().toISOString(),
+      eventSeq: 0,
+      revertedBySeq: null,
     });
     return this.loadCampaign(campaignId, guestId);
   }

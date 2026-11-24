@@ -320,14 +320,15 @@ export function pruneHistoricalToolOutputs(
       return msg;
     }
 
-    const summaryPrefix =
-      toolSummaries.length > 0
-        ? `<resumen_motor>\n${toolSummaries.join("\n")}\n</resumen_motor>`
-        : "";
+    // Keep only the assistant's narrative prose when present — injecting synthetic
+    // tool tags into prior assistant turns causes LLMs to mimic them in new replies.
+    // Mechanical ground truth is already injected in <game_state> and recent events.
     const narrativeBody = textPieces.join("\n\n").trim();
-    const combinedText = [summaryPrefix, narrativeBody]
-      .filter((chunk) => chunk.length > 0)
-      .join("\n\n");
+    const fallbackSummary =
+      narrativeBody.length === 0 && toolSummaries.length > 0
+        ? toolSummaries.join("; ")
+        : "";
+    const combinedText = narrativeBody || fallbackSummary;
 
     const nextParts: DmChatMessagePart[] =
       combinedText.length > 0 ? [{ type: "text", text: combinedText }] : [];

@@ -244,10 +244,18 @@ export function NarrativeText({
     [pcRegex, npcRegex],
   );
 
+  const sanitizedDisplayedText = React.useMemo(
+    () =>
+      displayedText
+        .replace(/<resumen_motor>[\s\S]*?<\/resumen_motor>\s*/gi, "")
+        .replace(/^\s*\[\[?[a-z_]+\s*→[^\]]*\]\]?\s*/i, ""),
+    [displayedText],
+  );
+
   return (
     <div className="typeset typeset-docs text-foreground/92">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {displayedText}
+        {sanitizedDisplayedText}
       </ReactMarkdown>
     </div>
   );

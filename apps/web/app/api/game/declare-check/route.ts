@@ -102,12 +102,17 @@ export async function POST(req: Request) {
       mode,
       checkId,
     } = parsed.data;
+    const hasMatchingClue = Boolean(
+      dcRef && loaded.state.scenes[sceneId]?.clues.some((c) => c.id === dcRef),
+    );
+    const effectiveDcRef = hasMatchingClue ? dcRef : undefined;
+    const effectiveDc = hasMatchingClue ? dc : (dc ?? 12);
     const checkInput = {
       sceneId,
       actorId,
       skill,
-      dc,
-      dcRef,
+      dc: effectiveDc,
+      dcRef: effectiveDcRef,
       declaredTotal,
       dieResults,
       mode,

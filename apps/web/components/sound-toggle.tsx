@@ -4,6 +4,7 @@ import * as React from "react";
 import { Volume2Icon, VolumeXIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/ui/kbd";
 import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
 import {
   Tooltip,
@@ -78,9 +79,13 @@ export function SoundToggle() {
         }
       />
       <TooltipContent>
-        {reducedMotion
-          ? "Sonidos atenuados por preferencia de movimiento reducido del sistema"
-          : `${label} (tecla D) · Pack Crisp`}
+        {reducedMotion ? (
+          "Sonidos atenuados por preferencia de movimiento reducido del sistema"
+        ) : (
+          <>
+            {label} · Pack Crisp <Kbd>D</Kbd>
+          </>
+        )}
       </TooltipContent>
     </Tooltip>
   );

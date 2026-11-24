@@ -1,28 +1,27 @@
 "use client";
 
-import { CpuIcon } from "lucide-react";
 import * as React from "react";
 
 import type { ContextUsageMetadata } from "@/agent/types";
-import { usePlaySound } from "@/components/ui/sensory-ui/config/use-play-sound";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+  Context,
+  ContextCacheUsage,
+  ContextContent,
+  ContextContentBody,
+  ContextContentFooter,
+  ContextContentHeader,
+  ContextIcon,
+  ContextInputUsage,
+  ContextOutputUsage,
+  ContextTrigger,
+  formatCompactTokens,
+} from "@/components/ai-elements/context";
+import { usePlaySound } from "@/components/ui/sensory-ui/config/use-play-sound";
 import type { ChatUIMessage } from "@/tools";
 
 const ACTIVE_WINDOW_TOKEN_BUDGET = 8_000;
 const DEFAULT_MAX_WINDOW_MESSAGES = 16;
 const BASE_SYSTEM_PROMPT_TOKENS_EST = 1_150;
-
-function formatTokenCount(tokens: number): string {
-  if (tokens >= 1_000) {
-    return `${(tokens / 1_000).toFixed(1)}k`;
-  }
-  return String(tokens);
-}
 
 function estimateCharsFromMessages(messages: readonly ChatUIMessage[]): number {
   let total = 0;
@@ -79,6 +78,7 @@ export function ContextMeter({
       cancelled = true;
     };
   }, [open, messages.length]);
+
   const latestUsage = React.useMemo<ContextUsageMetadata | null>(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const msg = messages[i];
@@ -94,7 +94,6 @@ export function ContextMeter({
       return latestUsage;
     }
 
-    // If a new user turn was just appended (or no metadata yet), estimate live window
     const maxWindowMessages =
       latestUsage?.maxWindowMessages ?? DEFAULT_MAX_WINDOW_MESSAGES;
     const recentSlice = messages.slice(-maxWindowMessages);
@@ -120,52 +119,37 @@ export function ContextMeter({
     } satisfies ContextUsageMetadata;
   }, [latestUsage, messages]);
 
-  const pct = Math.min(
-    100,
-    Math.round((metrics.contextTokens / ACTIVE_WINDOW_TOKEN_BUDGET) * 100),
+  const usage = React.useMemo(
+    () => ({
+      inputTokens: metrics.contextTokens,
+      outputTokens: metrics.outputTokens,
+      totalTokens: metrics.totalTurnTokens,
+      cachedInputTokens: metrics.cachedTokens ?? 0,
+    }),
+    [
+      metrics.cachedTokens,
+      metrics.contextTokens,
+      metrics.outputTokens,
+      metrics.totalTurnTokens,
+    ],
   );
 
-  const barColor =
-    pct >= 85
-      ? "bg-rose-500"
-      : pct >= 65
-        ? "bg-amber-500"
-        : "bg-emerald-500/85";
-
   return (
-    <Tooltip open={open} onOpenChange={setOpen}>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            onClick={() => {
-              play();
-              setOpen((prev) => !prev);
-            }}
-            aria-expanded={open}
-            className="group inline-flex min-h-7 items-center gap-2 rounded-full border border-border/55 bg-card/55 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="Consumo de contexto del LLM"
-          />
-        }
+    <Context
+      usedTokens={metrics.contextTokens}
+      maxTokens={ACTIVE_WINDOW_TOKEN_BUDGET}
+      usage={usage}
+      open={open}
+      onOpenChange={setOpen}
+    >
+      <ContextTrigger
+        aria-label="Consumo de contexto del LLM"
+        onClick={() => play()}
       >
-        <CpuIcon
-          className={cn(
-            "size-3 shrink-0",
-            isBusy ? "animate-pulse text-amber-400" : "text-muted-foreground/80",
-          )}
-        />
-        <span className="font-mono tabular-nums">
+        <ContextIcon isBusy={isBusy} />
+        <span className="font-mono tabular-nums text-foreground/90">
           {metrics.isExact ? "" : "~"}
-          {formatTokenCount(metrics.contextTokens)} tok
-        </span>
-        <span
-          aria-hidden
-          className="h-1 w-12 overflow-hidden rounded-full bg-muted/80"
-        >
-          <span
-            className={cn("block h-full transition-all duration-300", barColor)}
-            style={{ width: `${Math.max(metrics.contextTokens > 0 ? 6 : 0, pct)}%` }}
-          />
+          {formatCompactTokens(metrics.contextTokens)} tok
         </span>
         <span className="hidden font-mono text-[10px] tabular-nums text-muted-foreground/80 sm:inline">
           {metrics.windowMessages}/{metrics.maxWindowMessages} msg
@@ -175,67 +159,58 @@ export function ContextMeter({
             +{metrics.trimmedMessages} comp.
           </span>
         )}
-      </TooltipTrigger>
-      <TooltipContent
-        side="top"
-        align="start"
-        className="flex flex-col gap-1 px-3 py-2 text-[11px]"
-      >
-        <div className="font-semibold">
-          Contexto del LLM ({metrics.isExact ? "medición real" : "estimación"})
-        </div>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-[10.5px] tabular-nums opacity-90">
-          <span>Entrada (contexto):</span>
-          <span className="text-right">
-            {metrics.contextTokens.toLocaleString("es-AR")} tok
-          </span>
-          {metrics.outputTokens > 0 && (
-            <>
-              <span>Salida último turno:</span>
-              <span className="text-right">
-                {metrics.outputTokens.toLocaleString("es-AR")} tok
-              </span>
-            </>
-          )}
+      </ContextTrigger>
+
+      <ContextContent side="top" align="start">
+        <ContextContentHeader
+          subtitle={metrics.isExact ? "medición real" : "estimación"}
+        />
+        <ContextContentBody>
+          <ContextInputUsage />
+          <ContextOutputUsage />
+          <ContextCacheUsage hitRate={metrics.cacheHitRate} />
           {metrics.totalTurnTokens > 0 && (
-            <>
-              <span>Total turno (c/ tools):</span>
-              <span className="text-right">
+            <div className="flex items-center justify-between gap-3 text-[11.5px]">
+              <span className="text-muted-foreground">Total turno (c/ tools)</span>
+              <span className="font-mono tabular-nums text-foreground">
                 {metrics.totalTurnTokens.toLocaleString("es-AR")} tok
               </span>
-            </>
+            </div>
           )}
-          {typeof metrics.cachedTokens === "number" &&
-            metrics.cachedTokens > 0 && (
-              <>
-                <span>En caché (turno):</span>
-                <span className="text-right">
-                  {metrics.cachedTokens.toLocaleString("es-AR")} tok (
-                  {Math.round((metrics.cacheHitRate ?? 0) * 100)}%)
-                </span>
-              </>
-            )}
-          <span>Ventana activa:</span>
-          <span className="text-right">
-            {metrics.windowMessages}/{metrics.maxWindowMessages} msg
-          </span>
+          <div className="flex items-center justify-between gap-3 pt-1 text-[11px] text-muted-foreground">
+            <span>Ventana activa</span>
+            <span className="font-mono tabular-nums">
+              {metrics.windowMessages}/{metrics.maxWindowMessages} msg
+            </span>
+          </div>
           {metrics.trimmedMessages > 0 && (
-            <>
-              <span>Turnos compactados:</span>
-              <span className="text-right">{metrics.trimmedMessages}</span>
-            </>
+            <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+              <span>Turnos compactados</span>
+              <span className="font-mono tabular-nums">
+                {metrics.trimmedMessages}
+              </span>
+            </div>
           )}
-          {dailyUsage && dailyUsage.totalRequests > 0 && (
+        </ContextContentBody>
+        <ContextContentFooter>
+          {dailyUsage && dailyUsage.totalRequests > 0 ? (
             <>
-              <span>Hoy ({dailyUsage.totalRequests} req):</span>
-              <span className="text-right">
-                {formatTokenCount(dailyUsage.totalPromptTokens)} in ·{" "}
+              <span>Hoy · {dailyUsage.totalRequests} req</span>
+              <span className="font-mono tabular-nums text-foreground/85">
+                {formatCompactTokens(dailyUsage.totalPromptTokens)} in ·{" "}
                 {Math.round(dailyUsage.cacheHitRate * 100)}% caché
               </span>
             </>
+          ) : (
+            <>
+              <span>Sesión diaria</span>
+              <span className="font-mono tabular-nums">
+                {dailyUsage ? "Sin consumo hoy" : "Cargando…"}
+              </span>
+            </>
           )}
-        </div>
-      </TooltipContent>
-    </Tooltip>
+        </ContextContentFooter>
+      </ContextContent>
+    </Context>
   );
 }

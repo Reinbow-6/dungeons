@@ -4,6 +4,7 @@ import { MoonIcon, SunIcon } from "lucide-react";
 import { useTheme } from "next-themes";
 
 import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/ui/kbd";
 import { usePlaySound } from "@/components/ui/sensory-ui/config/use-play-sound";
 import {
   Tooltip,
@@ -34,7 +35,9 @@ export function ThemeToggle() {
           </Button>
         }
       />
-      <TooltipContent>Cambiar tema (tecla N)</TooltipContent>
+      <TooltipContent>
+        Cambiar tema <Kbd>N</Kbd>
+      </TooltipContent>
     </Tooltip>
   );
 }

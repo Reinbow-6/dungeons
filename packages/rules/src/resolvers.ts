@@ -70,14 +70,17 @@ function resolveSceneDc(
 ): DcResolution {
   if (dcRef) {
     const clue = state.scenes[sceneId]?.clues.find((c) => c.id === dcRef);
-    if (!clue) {
-      return {
-        ok: false,
-        code: 'INVALID_INPUT',
-        messageEs: `No existe una pista/DC con id "${dcRef}" en la escena "${sceneId}".`,
-      };
+    if (clue) {
+      return { ok: true, dc: clue.dc, source: 'scene-clue' };
     }
-    return { ok: true, dc: clue.dc, source: 'scene-clue' };
+    if (dc !== undefined) {
+      return { ok: true, dc, source: 'declared' };
+    }
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      messageEs: `No existe una pista/DC con id "${dcRef}" en la escena "${sceneId}".`,
+    };
   }
   if (dc === undefined) {
     return {

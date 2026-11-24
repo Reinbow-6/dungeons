@@ -347,7 +347,7 @@ describe("rollback sincronizado con mensajes (P0 fix 5 + performRollback)", () =
 
     expect(
       (await store.loadCampaign(loaded.campaignId, GUEST))?.messages,
-    ).toHaveLength(3);
+    ).toHaveLength(2);
 
     const rb = await performRollback({
       campaignId: loaded.campaignId,
@@ -358,7 +358,7 @@ describe("rollback sincronizado con mensajes (P0 fix 5 + performRollback)", () =
     expect(rb.ok).toBe(true);
     if (!rb.ok) return;
 
-    expect(rb.messages).toHaveLength(2);
+    expect(rb.messages).toHaveLength(1);
     expect(JSON.stringify(rb.messages)).not.toContain("mensaje posterior");
     expect(JSON.stringify(rb.messages)).toContain("mensaje anterior");
 
@@ -370,9 +370,21 @@ describe("rollback sincronizado con mensajes (P0 fix 5 + performRollback)", () =
     });
     expect(rbZero.ok).toBe(true);
     if (!rbZero.ok) return;
-    // La intro sembrada en seq 0 sobrevive al rollback a seq 0 (0 tokens LLM).
-    expect(rbZero.messages).toHaveLength(1);
-    expect(rbZero.messages[0]?.role).toBe("assistant");
+    expect(rbZero.messages).toHaveLength(0);
+
+    // Si el jugador eligió "Comenzar campaña" (intro en seq 0), esa intro sobrevive al rollback a seq 0.
+    const seeded = await store.seedOpeningIntro(loaded.campaignId, GUEST);
+    expect(seeded?.messages).toHaveLength(1);
+    const rbZeroAfterSeed = await performRollback({
+      campaignId: loaded.campaignId,
+      guestId: GUEST,
+      targetSeq: 0,
+      store,
+    });
+    expect(rbZeroAfterSeed.ok).toBe(true);
+    if (!rbZeroAfterSeed.ok) return;
+    expect(rbZeroAfterSeed.messages).toHaveLength(1);
+    expect(rbZeroAfterSeed.messages[0]?.role).toBe("assistant");
   });
 });
 
