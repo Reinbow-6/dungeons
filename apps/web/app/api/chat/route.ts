@@ -471,12 +471,22 @@ export async function POST(req: Request) {
   }
 
   const compacted = compactConversationContext({ messages });
+  const lastUserMessage = [...messages]
+    .reverse()
+    .find((m) => m.role === "user");
+  const latestUserText = lastUserMessage
+    ? lastUserMessage.parts
+        .filter((p): p is { type: "text"; text: string } => p.type === "text")
+        .map((p) => p.text)
+        .join(" ")
+    : "";
   const systemPrompt = buildDmSystemPrompt(currentState, currentEvents, {
     sessionNumber: loaded.sessionNumber,
     worldSummary: loaded.worldSummary,
     sessionSummaries: loaded.sessionSummaries,
     memoryFacts: currentMemoryFacts,
     olderTurnsDigest: compacted.olderTurnsDigest,
+    latestUserText,
   });
   const prunedRecentMessages = pruneHistoricalToolOutputs(
     compacted.recentMessages,
@@ -493,17 +503,7 @@ export async function POST(req: Request) {
     ...(resolved.providerOptions
       ? { providerOptions: resolved.providerOptions }
       : {}),
-    stopWhen: [
-      isStepCount(chatSpendCap.config.maxAgentSteps),
-      ({ steps }) => {
-        const last = steps.at(-1);
-        return Boolean(
-          last &&
-            last.text.trim().length > 0 &&
-            last.toolCalls.some((tc) => tc.toolName === "suggest_actions"),
-        );
-      },
-    ],
+    stopWhen: isStepCount(chatSpendCap.config.maxAgentSteps),
     maxOutputTokens: chatSpendCap.config.maxOutputTokens,
     abortSignal: req.signal,
     onFinish: ({ totalUsage, steps }) => {

@@ -1,8 +1,14 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  computeMacroStoryArc,
+  computeTensionMeter,
+  deriveTurnContext,
+  getAguasInquietasProgress,
   getCheckModifier,
   getSpellcastingStats,
+  selectActiveNpcMinds,
+  selectMentionActivatedMemories,
   type GameEvent,
   type GameState,
   type Skill,
@@ -41,6 +47,7 @@ export interface DmMemoryPromptContext {
   sessionSummaries?: readonly SessionSummaryItem[];
   memoryFacts?: readonly StoredMemoryFact[];
   olderTurnsDigest?: string;
+  latestUserText?: string;
 }
 
 const KEY_SKILLS: Skill[] = [
@@ -212,17 +219,32 @@ ${rows}
           .join("\n")
       : "- Sin eventos todavía (seq 0).";
 
-  const activeFacts = (memoryContext?.memoryFacts ?? [])
-    .filter((f) => f.revertedBySeq == null)
-    .slice(0, 15);
+  const latestUserText = memoryContext?.latestUserText ?? "";
+  const activeFacts = selectMentionActivatedMemories(
+    memoryContext?.memoryFacts ?? [],
+    state,
+    latestUserText,
+    10,
+  );
   const memoryBlock =
     activeFacts.length > 0
-      ? `\n### Memoria persistente de la campaña\n<memory_facts>\n${activeFacts
+      ? `\n### Memoria activada (hitos y menciones relevantes)\n<memory_facts>\n${activeFacts
           .map(
             (f) =>
               `- [imp ${f.importance} · seq ${f.eventSeq} · ${sanitizeUntrustedText(f.category, 20)}] ${sanitizeUntrustedText(f.content, 280)}`,
           )
           .join("\n")}\n</memory_facts>\n`
+      : "";
+
+  const activeNpcMinds = selectActiveNpcMinds(state, events, latestUserText);
+  const npcMindsBlock =
+    activeNpcMinds.length > 0
+      ? `\n### Mentes compartimentadas de NPCs activos/mencionados\n${activeNpcMinds
+          .map(
+            (npc) =>
+              `- **${npc.nameEs}** (${npc.roleEs}):\n  - Sabe: ${npc.knowsEs}\n  - Ignora (NO metagamear): ${npc.doesNotKnowEs}\n  - Quiere: ${npc.wantsEs}\n  - Oculta: ${npc.hidesEs}\n  - Actitud actual: ${npc.attitudeEs}`,
+          )
+          .join("\n")}\n`
       : "";
 
   const closedSessions = (memoryContext?.sessionSummaries ?? []).filter(
@@ -246,12 +268,27 @@ ${rows}
     ? `\n### Turnos antiguos compactados\n<older_turns_digest>\n${sanitizeUntrustedText(memoryContext.olderTurnsDigest, 1200)}\n</older_turns_digest>\n`
     : "";
 
+  const progress = getAguasInquietasProgress(state);
+  const storyArc = computeMacroStoryArc(state, events);
+  const tension = computeTensionMeter(state, events);
+  const turnCtx = deriveTurnContext(state);
+  const unlockedEndingsStr =
+    progress.unlockedAlternativeEndings.length > 0
+      ? progress.unlockedAlternativeEndings
+          .map((e) => `${e.titleEs} (${e.summaryEs})`)
+          .join("; ")
+      : "ninguno todavía (solo final estándar Escape en la Niebla)";
+
   return `${base}
 
 ---
 
 ## Estado vivo de la campaña (fuente autoritativa)
-- **Ruleset:** \`${state.ruleset}\` | **Sesión actual:** #${memoryContext?.sessionNumber ?? 1} | **Última secuencia (\`lastSeq\`):** ${state.lastSeq}
+- **Ruleset:** \`${state.ruleset}\` | **Sesión actual:** #${memoryContext?.sessionNumber ?? 1} | **Última secuencia (\`lastSeq\`):** ${state.lastSeq} | **Fase de turno (\`turnPhase\`):** \`${turnCtx.phase}\`${turnCtx.activeActorName ? ` (${turnCtx.activeActorName})` : ""}
+- **Misión principal (${progress.quest.titleEs}):** ${progress.quest.objectiveEs}
+- **Arco narrativo macro:** ${storyArc.summaryLineEs}${storyArc.stagnationWarningEs ? ` | AVISO DE RITMO: ${storyArc.stagnationWarningEs}` : ""}
+- **Termómetro de tensión:** ${tension.score}/100 (${tension.labelEs}) — ${tension.pacingDirectiveEs}
+- **Progreso de pistas:** ${progress.discoveredCount}/${progress.totalClues} totales | **Finales alternativos desbloqueados:** ${unlockedEndingsStr}
 - **Escena actual (\`sceneId\`):** \`${state.sceneId}\` — **${currentScene?.titleEs ?? state.sceneId}**
 - **Resumen de escena:** ${currentScene?.summaryEs ?? ""}
 ${currentScene?.narrativeHookEs ? `- **Gancho narrativo:** ${currentScene.narrativeHookEs}` : ""}
@@ -264,7 +301,7 @@ ${cluesText}
 
 ### Personajes en escena
 ${charactersText}
-${combatText}${recapsBlock}${memoryBlock}${digestBlock}
+${combatText}${npcMindsBlock}${recapsBlock}${memoryBlock}${digestBlock}
 ### Últimos eventos activos en \`event_log\`
 ${eventsText}
 `;

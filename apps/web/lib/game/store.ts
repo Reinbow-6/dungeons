@@ -299,7 +299,7 @@ export class SupabaseGameStore implements GameStore {
     const mode = input.mode === "hybrid" ? "hybrid" : "digital";
     const ruleset: RulesetProfile =
       input.ruleset === "5e-full" ? "5e-full" : "5e-lite";
-    const title = input.title?.trim() || "Aguas Quietas";
+    const title = input.title?.trim() || "Aguas Inquietas";
 
     const initialState = buildInitialCampaignState({
       campaignId,
@@ -1065,7 +1065,7 @@ export class InMemoryGameStore implements GameStore {
     const mode = input.mode === "hybrid" ? "hybrid" : "digital";
     const ruleset: RulesetProfile =
       input.ruleset === "5e-full" ? "5e-full" : "5e-lite";
-    const title = input.title?.trim() || "Aguas Quietas";
+    const title = input.title?.trim() || "Aguas Inquietas";
 
     const initialState = buildInitialCampaignState({
       campaignId,

@@ -5,7 +5,7 @@ export type TtsModelId =
 export interface TtsModelOption {
   id: TtsModelId;
   name: string;
-  provider: "openrouter";
+  provider: "openrouter" | "fish";
   description: string;
   supportsSpeed: boolean;
   defaultVoice: string;
@@ -23,10 +23,10 @@ export const TTS_MODELS: TtsModelOption[] = [
   {
     id: "fish-audio/s2.1-pro-free:free",
     name: "Fish",
-    provider: "openrouter",
-    description: "Voz expresiva con control de velocidad.",
+    provider: "fish",
+    description: "Voz expresiva directa con control de velocidad.",
     supportsSpeed: true,
-    defaultVoice: "872aed4c691c4cbb830649f8af64bd59",
+    defaultVoice: "bcc53d68b3d1409386d7b4e081a761de",
   },
 ];
 

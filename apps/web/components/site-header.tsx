@@ -22,7 +22,7 @@ export function SiteHeader() {
         </Link>
         <span className="hidden text-muted-foreground/40 sm:inline">·</span>
         <span className="hidden truncate font-serif text-sm italic text-muted-foreground sm:inline">
-          Aguas Quietas
+          Aguas Inquietas
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">

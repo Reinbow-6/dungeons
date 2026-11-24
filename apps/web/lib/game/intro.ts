@@ -40,10 +40,10 @@ export function buildSeededIntroParts(state: GameState): DmChatMessagePart[] {
   const introText = [
     `${hook}`,
     `El agua oscura del río fronterizo arrastra ramas y ceniza, demasiado ancha y helada para cruzarla a nado. A tus pies el barro cruje bajo las botas, ${charName}; entre los juncos altos creés distinguir el roce seco de madera tensada y figuras inmóviles midiendo cada uno de tus pasos.`,
-    `Al este, más allá de los sauces, una delgada columna de humo asciende hacia el cielo plomizo. La iniciativa es tuya: ¿qué hacés?`,
+    `**Objetivo principal:** conseguí paso en la barcaza del campamento al este (por trato, ayuda o sigilo) y cruzá hacia la Otra Orilla antes de que las patrullas del asedio te alcancen. Podés investigar cada escena con \`/investigar\` para descubrir pistas ocultas que abren rutas y finales alternativos. La iniciativa es tuya: ¿qué hacés?`,
   ].join("\n\n");
 
-  const sceneLabel = `AGUAS QUIETAS · ${state.ruleset.toUpperCase()}`;
+  const sceneLabel = `AGUAS INQUIETAS · ${state.ruleset.toUpperCase()}`;
 
   return [
     {

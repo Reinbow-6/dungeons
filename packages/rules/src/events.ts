@@ -460,6 +460,7 @@ export function applyDelta(
   if (nextCombat !== undefined) {
     nextState.combat = nextCombat;
   }
+  nextState.turnPhase = nextState.combat?.active ? 'combat_turn' : 'exploration';
 
   return nextState;
 }

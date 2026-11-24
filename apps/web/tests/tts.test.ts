@@ -180,7 +180,7 @@ describe("synthesizeSpeechWithOpenRouter", () => {
     expect(bodies[0]).toEqual({
       model: "fish-audio/s2.1-pro-free:free",
       input: "La bruma se eleva.",
-      voice: "872aed4c691c4cbb830649f8af64bd59",
+      voice: "bcc53d68b3d1409386d7b4e081a761de",
       response_format: "mp3",
       speed: 1.15,
     });

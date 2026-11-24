@@ -3,6 +3,7 @@
 import {
   CORE_SPELLS_521,
   getAbilityModifier,
+  getAguasInquietasProgress,
   getCheckModifier,
   getSpellcastingStats,
   type GameEvent,
@@ -13,7 +14,10 @@ import {
 import {
   BookOpenIcon,
   BrainIcon,
+  CheckCircle2Icon,
+  CompassIcon,
   HistoryIcon,
+  LockIcon,
   MoonIcon,
   PlusIcon,
   ShieldIcon,
@@ -181,7 +185,7 @@ export function GameSidebar({
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-1.5">
               <h2 className="truncate font-serif text-base font-semibold tracking-tight">
-                Aguas Quietas
+                Aguas Inquietas
               </h2>
               <span className="rounded border border-border/70 bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
                 #{sessionNumber}
@@ -647,19 +651,33 @@ export function GameSidebar({
                             const spec = CORE_SPELLS_521[slug];
                             const label = spec?.nameEs ?? slug;
                             const isCantrip = (spec?.level ?? 0) === 0;
+                            const firstPcHandle =
+                              activeChar.name.trim().split(/\s+/)[0] ??
+                              activeChar.id;
+                            const firstEnemy = state.combat?.active
+                              ? state.combat.combatants.find(
+                                  (c) => c.kind === "enemy" && !c.defeated,
+                                )
+                              : undefined;
+                            const enemyHandle = firstEnemy
+                              ? firstEnemy.name.replace(/\s+/g, "_")
+                              : undefined;
+                            const targetSuffix =
+                              spec?.kind === "heal"
+                                ? ` @${firstPcHandle}`
+                                : enemyHandle
+                                  ? ` @${enemyHandle}`
+                                  : "";
                             return (
                               <button
                                 key={slug}
                                 type="button"
                                 onClick={() =>
                                   onQuickAction?.(
-                                    `Quiero lanzar ${label} (${slug}).`,
+                                    `/hechizo ${slug}${targetSuffix}`,
                                   )
                                 }
-                                title={
-                                  spec?.summaryEs ??
-                                  `Lanzar conjuro ${label}`
-                                }
+                                title={`${spec?.summaryEs ?? `Lanzar ${label}`} · Escribe /hechizo ${slug} en el chat`}
                                 className="rounded-md border border-violet-500/25 bg-background/70 px-1.5 py-0.5 text-[10.5px] text-foreground/90 transition-colors hover:border-violet-400/50 hover:bg-violet-500/10"
                               >
                                 {label}
@@ -674,7 +692,7 @@ export function GameSidebar({
                   </div>
                 )}
 
-                {/* Descansos rápidos fuera de combate */}
+                {/* Descansos rápidos fuera de combate (escriben comando directo en el chat) */}
                 {!state.combat?.active && onQuickAction && (
                   <div className="grid grid-cols-2 gap-1.5 border-b border-border/70 pb-3">
                     <Button
@@ -682,11 +700,8 @@ export function GameSidebar({
                       size="sm"
                       variant="outline"
                       className="min-h-8 text-[11px]"
-                      onClick={() =>
-                        onQuickAction(
-                          "Tomo un descanso corto para recuperar fuerzas gastando Dados de Golpe.",
-                        )
-                      }
+                      onClick={() => onQuickAction("/descanso corto")}
+                      title="Escribe /descanso corto en el chat"
                     >
                       <MoonIcon className="size-3 text-emerald-600 dark:text-emerald-400" />
                       Descanso corto
@@ -696,11 +711,8 @@ export function GameSidebar({
                       size="sm"
                       variant="outline"
                       className="min-h-8 text-[11px]"
-                      onClick={() =>
-                        onQuickAction(
-                          "Buscamos un lugar seguro para tomar un descanso largo completo.",
-                        )
-                      }
+                      onClick={() => onQuickAction("/descanso largo")}
+                      title="Escribe /descanso largo en el chat"
                     >
                       <MoonIcon className="size-3 text-violet-600 dark:text-violet-400" />
                       Descanso largo
@@ -756,53 +768,153 @@ export function GameSidebar({
               </section>
             )}
 
-            {/* Contenido de la pestaña Escena */}
-            {activeTab === "escena" && currentScene && (
-              <section className="flex flex-col gap-2 rounded-xl border border-border/80 bg-card/85 p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-serif text-sm font-semibold">
-                    {currentScene.titleEs}
-                  </span>
-                  <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                    {currentScene.id}
-                  </span>
-                </div>
-                <p className="leading-relaxed text-muted-foreground">
-                  {currentScene.summaryEs}
-                </p>
-                {currentScene.narrativeHookEs && (
-                  <p className="rounded-lg border border-border/60 bg-background/50 p-2 text-[11px] italic text-foreground/85">
-                    {currentScene.narrativeHookEs}
-                  </p>
-                )}
-                {unlockedIds.length > 0 ? (
-                  <div className="mt-1 flex flex-col gap-1.5 border-t border-border/70 pt-2">
-                    <span className="text-[11px] font-medium text-foreground">
-                      Pistas desbloqueadas ({unlockedIds.length})
-                    </span>
-                    {currentScene.clues
-                      .filter((c) => unlockedIds.includes(c.id))
-                      .map((clue) => (
-                        <div
-                          key={clue.id}
-                          className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1.5"
-                        >
-                          <div className="font-mono text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
-                            [CD {clue.dc}] {clue.titleEs}
-                          </div>
-                          <p className="mt-0.5 text-[11px] text-foreground/90">
-                            {clue.descriptionEs}
-                          </p>
+            {/* Contenido de la pestaña Escena / Misión & Pistas */}
+            {activeTab === "escena" && currentScene && (() => {
+              const progress = getAguasInquietasProgress(state);
+              const altEndings = progress.endings.filter((e) => !e.isStandard);
+              return (
+                <div className="flex flex-col gap-2.5">
+                  {/* Misión Principal */}
+                  <section className="flex flex-col gap-2 rounded-xl border border-amber-500/35 bg-amber-500/[0.06] p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1.5 font-serif text-sm font-semibold text-amber-800 dark:text-amber-300">
+                        <CompassIcon className="size-3.5" />
+                        {progress.quest.titleEs}
+                      </span>
+                      <span className="rounded-full bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] font-medium text-amber-800 dark:text-amber-300">
+                        Etapa {progress.currentStage.order}/{progress.quest.stages.length}
+                      </span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-foreground/90">
+                      {progress.quest.objectiveEs}
+                    </p>
+                    <div className="flex flex-col gap-1 border-t border-amber-500/20 pt-2">
+                      {progress.quest.stages
+                        .filter(
+                          (_st, idx) =>
+                            idx <= progress.currentStageIndex || progress.completed,
+                        )
+                        .map((st, idx) => {
+                          const isDone =
+                            idx < progress.currentStageIndex || progress.completed;
+                          const isCurrent =
+                            idx === progress.currentStageIndex && !progress.completed;
+                          return (
+                            <div
+                              key={st.id}
+                              className={cn(
+                                "flex items-start gap-1.5 text-[10.5px]",
+                                isCurrent
+                                  ? "font-medium text-foreground"
+                                  : "text-emerald-700 line-through opacity-80 dark:text-emerald-400",
+                              )}
+                            >
+                              <span className="mt-0.5 font-mono text-[9.5px]">
+                                {isDone ? "✓" : "▸"}
+                              </span>
+                              <span>
+                                {st.titleEs}
+                                {isCurrent ? ` — ${st.goalEs}` : ""}
+                              </span>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </section>
+
+                  {/* Escena actual + Pistas */}
+                  <section className="flex flex-col gap-2 rounded-xl border border-border/80 bg-card/85 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-serif text-sm font-semibold">
+                        {currentScene.titleEs}
+                      </span>
+                      <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                        {progress.sceneDiscoveredCount}/{progress.sceneTotalClues} pistas
+                      </span>
+                    </div>
+                    <p className="leading-relaxed text-muted-foreground">
+                      {currentScene.summaryEs}
+                    </p>
+
+                    {unlockedIds.length > 0 ? (
+                      <div className="mt-1 flex flex-col gap-1.5 border-t border-border/70 pt-2">
+                        <span className="text-[11px] font-medium text-foreground">
+                          Pistas descubiertas ({unlockedIds.length}/{progress.sceneTotalClues})
+                        </span>
+                        {currentScene.clues
+                          .filter((c) => unlockedIds.includes(c.id))
+                          .map((clue) => (
+                            <div
+                              key={clue.id}
+                              className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1.5"
+                            >
+                              <div className="font-mono text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
+                                [CD {clue.dc}] {clue.titleEs}
+                              </div>
+                              <p className="mt-0.5 text-[11px] text-foreground/90">
+                                {clue.descriptionEs}
+                              </p>
+                              <p className="mt-0.5 text-[10px] italic text-emerald-800/85 dark:text-emerald-200/80">
+                                {clue.tacticalEffectEs}
+                              </p>
+                            </div>
+                          ))}
+                      </div>
+                    ) : (
+                      <p className="border-t border-border/70 pt-2 text-[11px] text-muted-foreground">
+                        {progress.sceneTotalClues > 0
+                          ? `Hay ${progress.sceneTotalClues} pista(s) oculta(s) en esta escena.`
+                          : "No hay pistas ocultas en esta escena."}
+                      </p>
+                    )}
+                  </section>
+
+                  {/* Finales alternativos desbloqueables por pistas */}
+                  <section className="flex flex-col gap-1.5 rounded-xl border border-border/80 bg-card/85 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold text-foreground">
+                        Finales alternativos
+                      </span>
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        {progress.discoveredCount}/{progress.totalClues} pistas
+                      </span>
+                    </div>
+                    {altEndings.map((ending) => (
+                      <div
+                        key={ending.id}
+                        className={cn(
+                          "rounded-lg border px-2.5 py-1.5 text-[10.5px]",
+                          ending.unlocked
+                            ? "border-emerald-500/35 bg-emerald-500/10 text-foreground"
+                            : "border-border/60 bg-background/50 text-muted-foreground",
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-2 font-medium">
+                          <span className="inline-flex items-center gap-1.5">
+                            {ending.unlocked ? (
+                              <CheckCircle2Icon className="size-3 text-emerald-600 dark:text-emerald-400" />
+                            ) : (
+                              <LockIcon className="size-3 opacity-70" />
+                            )}
+                            {ending.titleEs}
+                          </span>
+                          {ending.unlocked && (
+                            <span className="font-mono text-[9.5px] text-emerald-700 dark:text-emerald-300">
+                              DESBLOQUEADO
+                            </span>
+                          )}
                         </div>
-                      ))}
-                  </div>
-                ) : (
-                  <p className="border-t border-border/70 pt-2 text-[11px] text-muted-foreground">
-                    Aún no hay pistas desbloqueadas en esta escena.
-                  </p>
-                )}
-              </section>
-            )}
+                        {ending.unlocked && (
+                          <p className="mt-1 text-[10px] leading-snug opacity-90">
+                            {ending.summaryEs}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </section>
+                </div>
+              );
+            })()}
 
             {/* Contenido de la pestaña Memoria */}
             {activeTab === "memoria" && (

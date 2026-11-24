@@ -27,8 +27,9 @@ import { ChatMessage } from "@/components/chat-message";
 import { ContextMeter } from "@/components/game/context-meter";
 import { GameSidebar } from "@/components/game/game-sidebar";
 import { HybridCheckCard } from "@/components/game/hybrid-check-card";
+import { TensionMeter } from "@/components/game/tension-meter";
 import { extractTurnOutcomeSummary } from "@/components/game/tool-parts";
-import { PromptForm } from "@/components/prompt-form";
+import { PromptForm, type PromptFormHandle } from "@/components/prompt-form";
 import { QuestionCard } from "@/components/question-card";
 import { StatusIcon } from "@/components/status-icon";
 import { Suggestions } from "@/components/suggestions";
@@ -208,6 +209,10 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   const [messageSeqMap, setMessageSeqMap] = React.useState<Record<string, number>>({});
   const [rollingBackSeq, setRollingBackSeq] = React.useState<number | null>(null);
   const [seedingIntro, setSeedingIntro] = React.useState(false);
+  const [streamingIntroId, setStreamingIntroId] = React.useState<string | null>(
+    null,
+  );
+  const promptFormRef = React.useRef<PromptFormHandle | null>(null);
   // HUD lateral colapsado por defecto (estilo Old Greg's Tavern)
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
 
@@ -555,7 +560,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     setSidebarOpen(false);
     pushToast({
       title: "Nueva campaña lista",
-      description: `Aguas Quietas · ${ruleset}`,
+      description: `Aguas Inquietas · ${ruleset}`,
       tone: "amber",
     });
   }
@@ -590,6 +595,13 @@ export function Chat({ models }: { models: GatewayModel[] }) {
           })),
         );
         setMessageSeqMap(buildSeqMapFromApiMessages(data.messages));
+        const introId = data.messages[0]?.id ?? null;
+        if (introId) {
+          setStreamingIntroId(introId);
+          window.setTimeout(() => {
+            setStreamingIntroId((prev) => (prev === introId ? null : prev));
+          }, 2800);
+        }
         playSound("notification.info");
       }
     } finally {
@@ -742,6 +754,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
 
   const ttsAvailable = access.tier === "whitelisted" && settings.ttsEnabled;
   const showContextMeter = settings.showDevContextMeter;
+  const showTensionMeter = settings.showDevTensionMeter;
   const activeTurnStatus =
     settings.showDevLatencyTimer &&
     (status === "submitted" || status === "streaming")
@@ -882,7 +895,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                   SRD 5.2.1 · {gameState?.ruleset ?? "5e-full"} · Motor determinista · Voz STT
                 </span>
                 <EmptyTitle className="mt-2 font-serif text-3xl font-semibold tracking-tight">
-                  <h1>Aguas Quietas</h1>
+                  <h1>Aguas Inquietas</h1>
                 </EmptyTitle>
                 <EmptyDescription className="text-[14px] leading-relaxed">
                   Crónica interactiva 5e asistida por motor determinista. Escribí,
@@ -942,12 +955,12 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                       );
                       if (transitionPart?.output.titleEs) {
                         sceneHeader = {
-                          microLabel: "AGUAS QUIETAS · NUEVA ESCENA",
+                          microLabel: "AGUAS INQUIETAS · NUEVA ESCENA",
                           title: transitionPart.output.titleEs,
                         };
                       } else if (idx === firstAssistantIndex && currentScene) {
                         sceneHeader = {
-                          microLabel: `AGUAS QUIETAS · ${gameState?.ruleset.toUpperCase() ?? "5E-FULL"}`,
+                          microLabel: `AGUAS INQUIETAS · ${gameState?.ruleset.toUpperCase() ?? "5E-FULL"}`,
                           title: currentScene.titleEs,
                         };
                       }
@@ -972,7 +985,10 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                       >
                         <ChatMessage
                           message={message}
-                          isStreaming={isBusy && message.id === lastMessage?.id}
+                          isStreaming={
+                            (isBusy && message.id === lastMessage?.id) ||
+                            message.id === streamingIntroId
+                          }
                           streamSpeed={settings.streamSpeed}
                           isLastAssistant={isLastAssistant}
                           hideSuggestions={Boolean(
@@ -1079,6 +1095,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                     campaignId && (
                       <MessageScrollerItem messageId="pending-declare-check">
                         <HybridCheckCard
+                          key={pendingDeclareCheck.toolCallId}
                           campaignId={campaignId}
                           sceneId={pendingDeclareCheck.input.sceneId}
                           actorId={pendingDeclareCheck.input.actorId}
@@ -1132,17 +1149,32 @@ export function Chat({ models }: { models: GatewayModel[] }) {
               </AlertAction>
             </Alert>
           )}
-          {(showContextMeter || activeTurnStatus !== null) && (
+          {(showContextMeter ||
+            (showTensionMeter && gameState) ||
+            activeTurnStatus !== null) && (
             <div className="flex flex-wrap items-center justify-between gap-2 px-0.5">
-              {showContextMeter && (
-                <ContextMeter messages={messages} isBusy={isBusy} />
-              )}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {showContextMeter && (
+                  <ContextMeter messages={messages} isBusy={isBusy} />
+                )}
+                {showTensionMeter && gameState && (
+                  <TensionMeter
+                    state={gameState}
+                    events={events}
+                    pendingPlayerRoll={Boolean(
+                      pendingDeclareCheck || pendingQuestion,
+                    )}
+                    isStreaming={isBusy}
+                  />
+                )}
+              </div>
               {activeTurnStatus && (
                 <LiveTurnStatus status={activeTurnStatus} />
               )}
             </div>
           )}
           <PromptForm
+            formRef={promptFormRef}
             models={models}
             model={effectiveModel}
             lockedModelIds={lockedModelIds}
@@ -1150,7 +1182,15 @@ export function Chat({ models }: { models: GatewayModel[] }) {
               updateSettings({ textModel: nextModel });
             }}
             isBusy={isBusy}
-            onSubmit={submitPrompt}
+            campaignId={campaignId}
+            gameState={gameState}
+            lastDmText={extractAssistantSpeechText(
+              [...messages].reverse().find((m) => m.role === "assistant"),
+            )}
+            onSubmit={(text) => {
+              setStreamingIntroId(null);
+              submitPrompt(text);
+            }}
             onStop={() => {
               playSound("interaction.tap");
               stop();
@@ -1174,12 +1214,12 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         onStartNewSession={handleStartNewSession}
         onToggleMode={handleToggleMode}
         onRollback={handleRollback}
-        onQuickAction={(prompt) => {
-          playSound("interaction.confirm");
+        onQuickAction={(commandDraft) => {
+          playSound("interaction.tap");
           if (typeof window !== "undefined" && window.innerWidth < 1024) {
             setSidebarOpen(false);
           }
-          submitPrompt(prompt);
+          promptFormRef.current?.setDraft(commandDraft);
         }}
       />
     </div>

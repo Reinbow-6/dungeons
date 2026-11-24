@@ -7,6 +7,7 @@ import {
 } from "@/lib/tts-models";
 
 export const OPENROUTER_SPEECH_URL = "https://openrouter.ai/api/v1/audio/speech";
+export const FISH_SPEECH_URL = "https://api.fish.audio/v1/tts";
 export const TTS_DEFAULT_MAX_CHARS = 4500;
 export const TTS_PCM_SAMPLE_RATE = 44100;
 
@@ -209,9 +210,10 @@ function buildOpenRouterSpeechBody(params: {
     response_format: isHeygen ? "pcm" : "mp3",
   };
 
-  const resolvedVoice = isDefaultPlaceholder
-    ? (option?.defaultVoice?.trim() || (isHeygen ? "vincent" : ""))
-    : rawVoice;
+  const resolvedVoice =
+    isDefaultPlaceholder || (isHeygen && /^[0-9a-f]{32}$/i.test(rawVoice))
+      ? (option?.defaultVoice?.trim() || (isHeygen ? "vincent" : ""))
+      : rawVoice;
 
   if (resolvedVoice) {
     body.voice = resolvedVoice;
@@ -326,20 +328,41 @@ export async function synthesizeSpeechWithOpenRouter(
   for (let i = 0; i < candidates.length; i += 1) {
     const modelId = candidates[i]!;
     const isFallbackAttempt = i > 0;
-    const body = buildOpenRouterSpeechBody({
-      modelId,
-      input: sanitizedText,
-      voice: params.voice,
-      speed: params.speed,
-    });
+    const option = findTtsModelOption(modelId);
+    const fishKey = env.FISH_API_KEY?.trim();
+    const useDirectFish =
+      option?.provider === "fish" && Boolean(fishKey);
+
+    const requestUrl = useDirectFish ? FISH_SPEECH_URL : OPENROUTER_SPEECH_URL;
+    const requestAuth = useDirectFish ? fishKey! : apiKey;
+    const body = useDirectFish
+      ? {
+          text: sanitizedText,
+          reference_id:
+            params.voice?.trim() &&
+            params.voice.trim().toLowerCase() !== "default"
+              ? params.voice.trim()
+              : option?.defaultVoice,
+          format: "mp3",
+          ...(typeof params.speed === "number" && Number.isFinite(params.speed)
+            ? { prosody: { speed: Math.min(2.0, Math.max(0.5, params.speed)) } }
+            : {}),
+        }
+      : buildOpenRouterSpeechBody({
+          modelId,
+          input: sanitizedText,
+          voice: params.voice,
+          speed: params.speed,
+        });
 
     let response: Response;
     try {
-      response = await fetchFn(OPENROUTER_SPEECH_URL, {
+      response = await fetchFn(requestUrl, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${requestAuth}`,
           "Content-Type": "application/json",
+          ...(useDirectFish ? { model: "s2.1-pro-free" } : {}),
         },
         body: JSON.stringify(body),
         signal: params.signal,

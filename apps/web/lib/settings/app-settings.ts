@@ -28,6 +28,7 @@ export interface AppSettings {
   ttsAutoPlay: boolean;
   ttsSpeed: number;
   showDevContextMeter: boolean;
+  showDevTensionMeter: boolean;
   showDevLatencyTimer: boolean;
   showDevReasoningView: boolean;
 }
@@ -42,6 +43,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = Object.freeze({
   ttsAutoPlay: false,
   ttsSpeed: 1.0,
   showDevContextMeter: false,
+  showDevTensionMeter: false,
   showDevLatencyTimer: false,
   showDevReasoningView: false,
 });
@@ -134,6 +136,10 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
       typeof obj.showDevContextMeter === "boolean"
         ? obj.showDevContextMeter
         : DEFAULT_APP_SETTINGS.showDevContextMeter,
+    showDevTensionMeter:
+      typeof obj.showDevTensionMeter === "boolean"
+        ? obj.showDevTensionMeter
+        : DEFAULT_APP_SETTINGS.showDevTensionMeter,
     showDevLatencyTimer:
       typeof obj.showDevLatencyTimer === "boolean"
         ? obj.showDevLatencyTimer

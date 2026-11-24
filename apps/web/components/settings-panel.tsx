@@ -145,6 +145,7 @@ export function SettingsPanel() {
   const isGuest = tier === "guest";
   const allDevHidden =
     !settings.showDevContextMeter &&
+    !settings.showDevTensionMeter &&
     !settings.showDevLatencyTimer &&
     !settings.showDevReasoningView;
 
@@ -654,13 +655,14 @@ export function SettingsPanel() {
 
               <SettingSwitchRow
                 label="Ocultar componentes de desarrollador"
-                description="Apaga o enciende los tres indicadores técnicos de una sola vez."
+                description="Apaga o enciende todos los indicadores técnicos de una sola vez."
                 checked={allDevHidden}
                 onCheckedChange={(hideAll) => {
                   handleToggleSound();
                   const show = !hideAll;
                   updateSettings({
                     showDevContextMeter: show,
+                    showDevTensionMeter: show,
                     showDevLatencyTimer: show,
                     showDevReasoningView: show,
                   });
@@ -675,6 +677,15 @@ export function SettingsPanel() {
                   onCheckedChange={(checked) => {
                     handleToggleSound();
                     updateSettings({ showDevContextMeter: checked });
+                  }}
+                />
+                <SettingSwitchRow
+                  label="Termómetro de tensión (HUD)"
+                  description="Indicador de tensión narrativa 0–100, fase de turno y acto macro."
+                  checked={settings.showDevTensionMeter}
+                  onCheckedChange={(checked) => {
+                    handleToggleSound();
+                    updateSettings({ showDevTensionMeter: checked });
                   }}
                 />
                 <SettingSwitchRow

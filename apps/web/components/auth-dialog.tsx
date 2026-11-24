@@ -647,7 +647,7 @@ export function AuthDialog({
                 Acceso a la Mesa
               </h2>
               <p id={descId} className="text-xs text-muted-foreground">
-                Modo invitado limitado · Aguas Quietas
+                Modo invitado limitado · Aguas Inquietas
               </p>
             </div>
           </div>
@@ -935,6 +935,33 @@ export function AuthButton({ className }: { className?: string }) {
         />
         <TooltipContent>{tooltipText}</TooltipContent>
       </Tooltip>
+
+      {access.authenticated && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Cerrar sesión"
+                onClick={async () => {
+                  const supabase = createSupabaseBrowserClient();
+                  if (supabase) {
+                    await supabase.auth.signOut();
+                    await access.refresh();
+                    window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
+                    playSound("notification.success");
+                  }
+                }}
+              >
+                <LogOutIcon className="size-3.5 text-muted-foreground" />
+              </Button>
+            }
+          />
+          <TooltipContent>Cerrar sesión</TooltipContent>
+        </Tooltip>
+      )}
 
       {shouldHostDialog && (
         <AuthDialog

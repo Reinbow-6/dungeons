@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createAguasQuietasInitialState,
   createRng,
+  getAguasInquietasProgress,
   resolveInvestigate,
   transitionScene,
   type GameState,
@@ -162,5 +163,31 @@ describe('Aguas Quietas scene graph & investigate clues', () => {
     if (!resAgain.ok) return;
     expect(resAgain.unlockedClues).toHaveLength(0);
     expect(resAgain.allUnlockedClueIds).toHaveLength(4);
+  });
+
+  it('tracks Main Quest stages and unlocks alternative endings deterministically via clues', () => {
+    const initial = createAguasQuietasInitialState();
+    const startProgress = getAguasInquietasProgress(initial);
+
+    expect(startProgress.quest.titleEs).toBe('Cruzar las Aguas Inquietas');
+    expect(startProgress.currentStageIndex).toBe(0);
+    expect(startProgress.sceneTotalClues).toBe(2);
+    expect(startProgress.unlockedAlternativeEndings).toHaveLength(0);
+
+    const withClues: GameState = {
+      ...initial,
+      sceneId: 'escena_06_comandante',
+      unlockedClues: {
+        escena_01_orilla: ['pista_orilla_14'],
+        escena_04_campamento: ['pista_camp_12', 'pista_camp_18'],
+        escena_06_comandante: ['pista_mireia_14'],
+      },
+    };
+    const midProgress = getAguasInquietasProgress(withClues);
+    expect(midProgress.currentStageIndex).toBe(2);
+    expect(midProgress.discoveredCount).toBe(4);
+    expect(
+      midProgress.unlockedAlternativeEndings.map((e) => e.id).sort(),
+    ).toEqual(['final_golpe_fantasma', 'final_pacto_guardia_rota']);
   });
 });

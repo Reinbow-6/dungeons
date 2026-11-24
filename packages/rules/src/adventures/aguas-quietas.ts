@@ -19,7 +19,26 @@ export const AGUAS_QUIETAS_SCENES: Record<string, SceneDefinition> = {
     narrativeHookEs:
       'Tras huir del asedio en la capital del sur, llegás al atardecer a un banco de tierra firme rodeado de ciénaga. El río es demasiado ancho para cruzarlo a nado y al este se eleva una columna de humo entre los árboles.',
     allowedTransitions: ['escena_02_batalla_orilla', 'escena_03_parlamento'],
-    clues: [],
+    clues: [
+      {
+        id: 'pista_orilla_11',
+        dc: 11,
+        titleEs: 'Señales de humo controladas',
+        descriptionEs:
+          'El humo del este es seco y constante: proviene de un embarcadero organizado, no de un incendio del frente.',
+        tacticalEffectEs:
+          'Confirma que la barcaza del campamento es tu única vía viable para cruzar el río.',
+      },
+      {
+        id: 'pista_orilla_14',
+        dc: 14,
+        titleEs: 'Brazaletes descosidos en los juncos',
+        descriptionEs:
+          'Los vigías arrancaron los emblemas militares de sus mangas: son desertores o milicia rota, no tropas del asedio.',
+        tacticalEffectEs:
+          'Abre margen para negociar apelando a su desconfianza hacia la capital; aporta al final alternativo Pacto de la Guardia Rota.',
+      },
+    ],
   },
   escena_02_batalla_orilla: {
     id: 'escena_02_batalla_orilla',
@@ -35,7 +54,17 @@ export const AGUAS_QUIETAS_SCENES: Record<string, SceneDefinition> = {
     summaryEs:
       'Negociación tensa con los exploradores de la espesura: piden monedas o mano de obra para reparar el portón del muelle.',
     allowedTransitions: ['escena_04_campamento', 'escena_02_batalla_orilla'],
-    clues: [],
+    clues: [
+      {
+        id: 'pista_parlamento_13',
+        dc: 13,
+        titleEs: 'Temor a las patrullas del norte',
+        descriptionEs:
+          'Los exploradores vigilan el río con más nerviosismo que a vos: necesitan reforzar el portón antes del amanecer.',
+        tacticalEffectEs:
+          'Te da ventaja narrativa para ofrecer ayuda técnica en lugar de monedas.',
+      },
+    ],
   },
   escena_04_campamento: {
     id: 'escena_04_campamento',
@@ -130,7 +159,17 @@ export const AGUAS_QUIETAS_SCENES: Record<string, SceneDefinition> = {
       'escena_07_travesia_barcaza',
       'escena_05_asalto_campamento',
     ],
-    clues: [],
+    clues: [
+      {
+        id: 'pista_mireia_14',
+        dc: 14,
+        titleEs: 'Órdenes selladas en la mesa de Mireia',
+        descriptionEs:
+          'Un pliego con sello real roto revela que Mireia desertó para sacar civiles del asedio, no para saquear la frontera.',
+        tacticalEffectEs:
+          'Desbloquea una salida diplomática decisiva con la Comandante y aporta al final alternativo Pacto de la Guardia Rota.',
+      },
+    ],
   },
   escena_07_travesia_barcaza: {
     id: 'escena_07_travesia_barcaza',
@@ -218,5 +257,195 @@ export function createAguasQuietasInitialState(
     flags: {},
     unlockedClues: {},
     scenes: AGUAS_QUIETAS_SCENES,
+  };
+}
+
+export interface MainQuestStage {
+  id: string;
+  order: number;
+  titleEs: string;
+  goalEs: string;
+  sceneIds: string[];
+}
+
+export interface AlternativeEndingSpec {
+  id: string;
+  titleEs: string;
+  summaryEs: string;
+  isStandard?: boolean;
+  /** Every group inside `requiredClueGroups` must have at least one clue unlocked. */
+  requiredClueGroups: string[][];
+  hintEs: string;
+}
+
+export interface MainQuestSpec {
+  id: string;
+  titleEs: string;
+  objectiveEs: string;
+  stages: MainQuestStage[];
+  endings: AlternativeEndingSpec[];
+}
+
+export interface EvaluatedEnding extends AlternativeEndingSpec {
+  unlocked: boolean;
+  matchedGroups: number;
+  totalGroups: number;
+}
+
+export interface AdventureProgress {
+  quest: MainQuestSpec;
+  currentStageIndex: number;
+  currentStage: MainQuestStage;
+  completed: boolean;
+  totalClues: number;
+  discoveredClueIds: string[];
+  discoveredCount: number;
+  sceneTotalClues: number;
+  sceneDiscoveredCount: number;
+  endings: EvaluatedEnding[];
+  unlockedAlternativeEndings: EvaluatedEnding[];
+}
+
+export const AGUAS_INQUIETAS_QUEST: MainQuestSpec = {
+  id: 'quest_aguas_inquietas',
+  titleEs: 'Cruzar las Aguas Inquietas',
+  objectiveEs:
+    'Conseguí paso en la barcaza del Campamento del Embarcadero y cruzá el río fronterizo hacia la Otra Orilla antes de que el frente te alcance.',
+  stages: [
+    {
+      id: 'stage_1_orilla',
+      order: 1,
+      titleEs: 'Salir de la Orilla',
+      goalEs: 'Superá o negociá con los vigías ocultos entre los juncos para llegar al campamento.',
+      sceneIds: ['escena_01_orilla', 'escena_02_batalla_orilla', 'escena_03_parlamento'],
+    },
+    {
+      id: 'stage_2_campamento',
+      order: 2,
+      titleEs: 'El Campamento del Embarcadero',
+      goalEs: 'Investigá la guarnición, repará el portón o prepará una infiltración hacia el muelle.',
+      sceneIds: ['escena_04_campamento', 'escena_04b_reparar_porton'],
+    },
+    {
+      id: 'stage_3_decision',
+      order: 3,
+      titleEs: 'Asegurar la Barcaza',
+      goalEs: 'Enfrentá el interrogatorio de la Comandante Mireia o tomá la barcaza por fuerza o sigilo.',
+      sceneIds: ['escena_05_asalto_campamento', 'escena_06_comandante'],
+    },
+    {
+      id: 'stage_4_cruce',
+      order: 4,
+      titleEs: 'Travesía hacia la Otra Orilla',
+      goalEs: 'Sobreviví al cruce del río infestado de necrófagos y alcanzá tierra firme al norte.',
+      sceneIds: ['escena_07_travesia_barcaza', 'escena_08_otra_orilla'],
+    },
+  ],
+  endings: [
+    {
+      id: 'final_escape_niebla',
+      titleEs: 'Escape en la Niebla',
+      summaryEs:
+        'Lográs cruzar el río dejando atrás el campamento sumido en la desconfianza.',
+      isStandard: true,
+      requiredClueGroups: [],
+      hintEs: 'Final estándar al llegar a la Otra Orilla.',
+    },
+    {
+      id: 'final_pacto_guardia_rota',
+      titleEs: 'Pacto de la Guardia Rota',
+      summaryEs:
+        'Exponés que conocés la deserción humanitaria de Mireia; ella escolta el cruce y se convierte en aliada en el norte.',
+      requiredClueGroups: [
+        ['pista_orilla_14', 'pista_camp_14'],
+        ['pista_mireia_14', 'pista_porton_14'],
+      ],
+      hintEs:
+        'Descubrí pruebas sobre los desertores/aldea (Orilla o Campamento) y sobre las órdenes de Mireia o el portón.',
+    },
+    {
+      id: 'final_verdad_convoy',
+      titleEs: 'Verdad del Convoy Caído',
+      summaryEs:
+        'Atás cabos entre la voladura alquímica, los cascos del norte y la enfermería para evacuar a los sobrevivientes sin derramar sangre.',
+      requiredClueGroups: [
+        ['pista_camp_16'],
+        ['pista_porton_14'],
+        ['pista_camp_18'],
+      ],
+      hintEs:
+        'Reuní 3 pistas clave del campamento y el portón (Trofeos militares, Cargas alquímicas y Bajas ocultas).',
+    },
+    {
+      id: 'final_golpe_fantasma',
+      titleEs: 'Golpe Fantasma',
+      summaryEs:
+        'Aprovechando el conteo exacto de vigías y sabiendo qué defensores están heridos, robás la barcaza sin dar alarma.',
+      requiredClueGroups: [['pista_camp_12'], ['pista_camp_18']],
+      hintEs:
+        'Investigá el Campamento para obtener el Conteo de la guarnición y las Bajas ocultas en la enfermería.',
+    },
+  ],
+};
+
+export function getAguasInquietasProgress(state: GameState): AdventureProgress {
+  const discoveredSet = new Set<string>();
+  for (const ids of Object.values(state.unlockedClues)) {
+    for (const id of ids) {
+      discoveredSet.add(id);
+    }
+  }
+
+  let totalClues = 0;
+  for (const scene of Object.values(state.scenes)) {
+    totalClues += scene.clues.length;
+  }
+
+  const currentScene = state.scenes[state.sceneId];
+  const sceneTotalClues = currentScene?.clues.length ?? 0;
+  const sceneDiscoveredCount = (state.unlockedClues[state.sceneId] ?? []).length;
+
+  const foundStageIndex = AGUAS_INQUIETAS_QUEST.stages.findIndex((stage) =>
+    stage.sceneIds.includes(state.sceneId),
+  );
+  const currentStageIndex = foundStageIndex >= 0 ? foundStageIndex : 0;
+  const currentStage = AGUAS_INQUIETAS_QUEST.stages[currentStageIndex]!;
+
+  const endings: EvaluatedEnding[] = AGUAS_INQUIETAS_QUEST.endings.map(
+    (ending) => {
+      if (ending.requiredClueGroups.length === 0) {
+        return {
+          ...ending,
+          unlocked: true,
+          matchedGroups: 0,
+          totalGroups: 0,
+        };
+      }
+      const matchedGroups = ending.requiredClueGroups.filter((group) =>
+        group.some((clueId) => discoveredSet.has(clueId)),
+      ).length;
+      return {
+        ...ending,
+        unlocked: matchedGroups === ending.requiredClueGroups.length,
+        matchedGroups,
+        totalGroups: ending.requiredClueGroups.length,
+      };
+    },
+  );
+
+  return {
+    quest: AGUAS_INQUIETAS_QUEST,
+    currentStageIndex,
+    currentStage,
+    completed: state.sceneId === 'escena_08_otra_orilla',
+    totalClues,
+    discoveredClueIds: Array.from(discoveredSet),
+    discoveredCount: discoveredSet.size,
+    sceneTotalClues,
+    sceneDiscoveredCount,
+    endings,
+    unlockedAlternativeEndings: endings.filter(
+      (e) => !e.isStandard && e.unlocked,
+    ),
   };
 }

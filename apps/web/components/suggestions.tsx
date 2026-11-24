@@ -11,7 +11,7 @@ import { usePlaySound } from "@/components/ui/sensory-ui/config/use-play-sound";
 
 const CAMPAIGN_START = {
   label: "Comenzar campaña",
-  subtitle: "Entrá en Aguas Quietas y descubrí qué oculta la niebla.",
+  subtitle: "Entrá en Aguas Inquietas y descubrí qué oculta la niebla.",
 } as const;
 
 const STARTING_POINTS = [
@@ -24,7 +24,7 @@ const STARTING_POINTS = [
   {
     label: "Sorprendeme",
     prompt:
-      "Quiero empezar Aguas Quietas con una escena breve e intrigante. Presentame un misterio cerca del río y dejame decidir qué hacer.",
+      "Quiero empezar Aguas Inquietas con una escena breve e intrigante. Presentame un misterio cerca del río y dejame decidir qué hacer.",
     icon: SparklesIcon,
   },
 ] as const;

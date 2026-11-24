@@ -7,3 +7,4 @@ export * from './combat.js';
 export * from './spells.js';
 export * from './rest-and-death.js';
 export * from './adventures/aguas-quietas.js';
+export * from './narrative-engine.js';

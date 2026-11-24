@@ -275,12 +275,21 @@ export interface SceneDefinition {
   transitionRequirements?: Record<string, TransitionRequirement>;
 }
 
+export const TurnPhaseSchema = z.enum([
+  'exploration',
+  'awaiting_roll',
+  'combat_turn',
+  'resolving',
+]);
+export type TurnPhase = z.infer<typeof TurnPhaseSchema>;
+
 export interface GameState {
   campaignId: string;
   sessionId: string;
   ruleset: RulesetProfile;
   sceneId: string;
   lastSeq: number;
+  turnPhase?: TurnPhase;
   characters: Record<string, Character>;
   flags: Record<string, boolean | string | number>;
   unlockedClues: Record<string, string[]>;
