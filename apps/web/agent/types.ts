@@ -59,6 +59,7 @@ export interface DeclareCheckToolInput {
   sceneId: string;
   actorId: string;
   skill: string;
+  purpose?: "check" | "investigate";
   dc?: number;
   dcRef?: string;
   mode?: "normal" | "advantage" | "disadvantage";
@@ -68,6 +69,7 @@ export interface DeclareCheckToolInput {
 export interface DeclareCheckToolOutput {
   ok?: boolean;
   code?: string;
+  purpose?: "check" | "investigate";
   checkId: string;
   skill: string;
   dc: number;
@@ -78,6 +80,13 @@ export interface DeclareCheckToolOutput {
   expectedModifier: number;
   success: boolean;
   margin: number;
+  unlockedClues?: Array<{
+    id: string;
+    dc: number;
+    titleEs: string;
+    descriptionEs: string;
+    tacticalEffectEs: string;
+  }>;
 }
 
 export interface InvestigateToolInput {
@@ -89,6 +98,7 @@ export interface InvestigateToolInput {
 
 export interface InvestigateToolOutput {
   ok: boolean;
+  code?: string;
   messageEs: string;
   total?: number;
   naturalRoll?: number;

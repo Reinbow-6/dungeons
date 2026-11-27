@@ -145,6 +145,7 @@ export function ContextMeter({
       <ContextTrigger
         aria-label="Consumo de contexto del LLM"
         onClick={() => play()}
+        className="h-6 gap-1.5 rounded-none border-0 bg-transparent px-2 text-[11px] hover:bg-muted/60 aria-expanded:bg-muted/60"
       >
         <ContextIcon isBusy={isBusy} />
         <span className="font-mono tabular-nums text-foreground/90">
@@ -155,13 +156,17 @@ export function ContextMeter({
           {metrics.windowMessages}/{metrics.maxWindowMessages} msg
         </span>
         {metrics.trimmedMessages > 0 && (
-          <span className="rounded bg-amber-500/15 px-1 py-0 font-mono text-[9.5px] font-medium tabular-nums text-amber-700 dark:text-amber-300">
+          <span className="rounded-none bg-amber-500/15 px-1 py-0 font-mono text-[9.5px] font-medium tabular-nums text-amber-700 dark:text-amber-300">
             +{metrics.trimmedMessages} comp.
           </span>
         )}
       </ContextTrigger>
 
-      <ContextContent side="top" align="start">
+      <ContextContent
+        side="top"
+        align="start"
+        className="rounded-none border-border shadow-md"
+      >
         <ContextContentHeader
           subtitle={metrics.isExact ? "medición real" : "estimación"}
         />

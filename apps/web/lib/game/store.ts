@@ -10,7 +10,7 @@ import {
   type RollbackResult,
   type RulesetProfile,
 } from "@dungeons/rules";
-import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
 
 import { getDb, isDbConfigured } from "@/lib/db/client";
 import {
@@ -208,6 +208,11 @@ export interface GameStore {
     guestId: string,
     options?: { limit?: number; offset?: number },
   ): Promise<PaginatedCampaignList>;
+  deleteCampaign(campaignId: string, guestId: string): Promise<boolean>;
+  deleteAllCampaignsForGuest(
+    guestId: string,
+    options?: { exceptCampaignId?: string },
+  ): Promise<number>;
   addCampaignMember(
     campaignId: string,
     ownerGuestId: string,
@@ -552,6 +557,44 @@ export class SupabaseGameStore implements GameStore {
       });
 
     return true;
+  }
+
+  async deleteCampaign(campaignId: string, guestId: string): Promise<boolean> {
+    if (!UUID_REGEX.test(campaignId)) {
+      return false;
+    }
+    const db = getDb();
+    const deleted = await db
+      .delete(campaigns)
+      .where(
+        and(eq(campaigns.id, campaignId), eq(campaigns.ownerGuestId, guestId)),
+      )
+      .returning({ id: campaigns.id });
+
+    return deleted.length > 0;
+  }
+
+  async deleteAllCampaignsForGuest(
+    guestId: string,
+    options?: { exceptCampaignId?: string },
+  ): Promise<number> {
+    const db = getDb();
+    const rawExcept = options?.exceptCampaignId?.trim();
+    const validExceptId =
+      rawExcept && UUID_REGEX.test(rawExcept) ? rawExcept : undefined;
+    const whereClause = validExceptId
+      ? and(
+          eq(campaigns.ownerGuestId, guestId),
+          ne(campaigns.id, validExceptId),
+        )
+      : eq(campaigns.ownerGuestId, guestId);
+
+    const deleted = await db
+      .delete(campaigns)
+      .where(whereClause)
+      .returning({ id: campaigns.id });
+
+    return deleted.length;
   }
 
   async loadCampaign(
@@ -1250,6 +1293,31 @@ export class InMemoryGameStore implements GameStore {
       found.members.push({ guestId: memberGuestId, role });
     }
     return true;
+  }
+
+  async deleteCampaign(campaignId: string, guestId: string): Promise<boolean> {
+    const found = this.campaigns.get(campaignId);
+    if (!found || found.ownerGuestId !== guestId) {
+      return false;
+    }
+    return this.campaigns.delete(campaignId);
+  }
+
+  async deleteAllCampaignsForGuest(
+    guestId: string,
+    options?: { exceptCampaignId?: string },
+  ): Promise<number> {
+    const rawExcept = options?.exceptCampaignId?.trim();
+    const validExceptId =
+      rawExcept && UUID_REGEX.test(rawExcept) ? rawExcept : undefined;
+    let deletedCount = 0;
+    for (const [id, record] of Array.from(this.campaigns.entries())) {
+      if (record.ownerGuestId !== guestId) continue;
+      if (validExceptId && id === validExceptId) continue;
+      this.campaigns.delete(id);
+      deletedCount += 1;
+    }
+    return deletedCount;
   }
 
   async loadCampaign(

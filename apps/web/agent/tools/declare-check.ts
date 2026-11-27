@@ -11,12 +11,18 @@ import { CheckTargetZod, RollModeZod } from "./runtime";
  */
 export const declareCheckTool = tool({
   description:
-    "Solicita al jugador que tire su dado físico real e ingrese el resultado por teclado (Modo Híbrido). Nunca envíes números de dado ni totales.",
+    "Solicita al jugador que tire su dado físico real e ingrese el resultado por teclado (Modo Híbrido). Nunca envíes números de dado ni totales. Usá purpose: 'investigate' cuando el jugador inspecciona o escudriña una escena en busca de pistas.",
   inputSchema: z
     .object({
       sceneId: z.string().min(1),
       actorId: z.string().min(1),
       skill: CheckTargetZod,
+      purpose: z
+        .enum(["check", "investigate"])
+        .optional()
+        .describe(
+          "Usá 'investigate' cuando el jugador inspecciona la escena buscando pistas en Modo Híbrido.",
+        ),
       dc: z.number().int().min(1).max(40).optional(),
       dcRef: z
         .string()
@@ -34,12 +40,20 @@ export const declareCheckTool = tool({
         ),
     })
     .strict()
-    .refine((d) => d.dc !== undefined || d.dcRef !== undefined, {
-      message: "Debés indicar una CD numérica (`dc`) o una referencia de escena (`dcRef`).",
-    }),
+    .refine(
+      (d) =>
+        d.purpose === "investigate" ||
+        d.dc !== undefined ||
+        d.dcRef !== undefined,
+      {
+        message:
+          "Debés indicar una CD numérica (`dc`), una referencia de escena (`dcRef`) o `purpose: \"investigate\"`.",
+      },
+    ),
   outputSchema: z.object({
     ok: z.boolean().optional(),
     code: z.string().optional(),
+    purpose: z.enum(["check", "investigate"]).optional(),
     checkId: z.string(),
     skill: z.string(),
     dc: z.number().int(),
@@ -50,5 +64,16 @@ export const declareCheckTool = tool({
     expectedModifier: z.number().int(),
     success: z.boolean(),
     margin: z.number().int(),
+    unlockedClues: z
+      .array(
+        z.object({
+          id: z.string(),
+          dc: z.number().int(),
+          titleEs: z.string(),
+          descriptionEs: z.string(),
+          tacticalEffectEs: z.string(),
+        }),
+      )
+      .optional(),
   }),
 });

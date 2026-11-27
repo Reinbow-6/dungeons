@@ -92,7 +92,7 @@ export function PartyBuilder({
 
   return (
     <div className="flex flex-col gap-2.5">
-      <div className="flex items-center justify-between gap-2 text-[11px]">
+      <div className="flex items-center justify-between gap-2 border-b border-border pb-1.5 text-[11px]">
         <span className="inline-flex items-center gap-1.5 font-medium text-foreground/90">
           <UsersIcon className="size-3.5 text-amber-500" />
           Mesa local ({selectedParty.length}/{MAX_PARTY_MEMBERS} jugadores)
@@ -119,23 +119,23 @@ export function PartyBuilder({
             <div
               key={preset.id}
               className={cn(
-                "flex flex-col gap-1.5 rounded-xl border p-2 transition-colors",
+                "flex flex-col gap-1.5 rounded-none border p-2 transition-colors",
                 isSelected
-                  ? "border-amber-500/45 bg-amber-500/[0.08]"
-                  : "border-border/75 bg-background/60 hover:border-border",
+                  ? "border-amber-500/45 border-l-2 border-l-amber-500 bg-amber-500/[0.08]"
+                  : "border-border bg-background/60 hover:border-foreground/30",
               )}
             >
               <button
                 type="button"
                 onClick={() => togglePreset(preset.id)}
-                className="flex items-start justify-between gap-2 text-left"
+                className="flex items-start justify-between gap-2 rounded-none text-left"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     <span className="truncate text-xs font-semibold text-foreground">
                       {preset.name}
                     </span>
-                    <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[9.5px] font-medium text-muted-foreground">
+                    <span className="shrink-0 rounded-none border border-border bg-muted px-1 py-0.5 text-[9.5px] font-medium text-muted-foreground">
                       {preset.className}
                     </span>
                   </div>
@@ -146,10 +146,10 @@ export function PartyBuilder({
 
                 <span
                   className={cn(
-                    "mt-0.5 inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border px-1 font-mono text-[10px] font-semibold",
+                    "mt-0.5 inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-none border px-1 font-mono text-[10px] font-semibold",
                     isSelected
                       ? "border-amber-500 bg-amber-500 text-amber-950"
-                      : "border-border/70 bg-background text-muted-foreground",
+                      : "border-border bg-background text-muted-foreground",
                   )}
                 >
                   {isSelected ? `J${seatIndex + 1}` : <CheckIcon className="size-2.5 opacity-30" />}
@@ -164,7 +164,7 @@ export function PartyBuilder({
                   onChange={(e) => updatePlayerName(preset.id, e.target.value)}
                   placeholder={`Jugador ${seatIndex + 1} (nombre opcional)`}
                   aria-label={`Nombre del jugador para ${preset.name}`}
-                  className="h-7 w-full rounded-md border border-border/70 bg-background/85 px-2 text-[11px] text-foreground placeholder:text-muted-foreground/60 focus:border-amber-500/60 focus:outline-none"
+                  className="h-7 w-full rounded-none border border-border bg-background/85 px-2 text-[11px] text-foreground placeholder:text-muted-foreground/60 focus:border-amber-500/60 focus:outline-none"
                 />
               )}
             </div>
@@ -172,13 +172,13 @@ export function PartyBuilder({
         })}
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-2 border-t border-border pt-2">
         <label className="flex flex-col gap-1">
           <span className="text-[11px] text-muted-foreground">
             Modo de mesa
           </span>
           <select
-            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            className="h-8 rounded-none border border-border bg-background px-2 text-xs"
             value={mode}
             onChange={(e) => setMode(e.target.value as "digital" | "hybrid")}
           >
@@ -190,7 +190,7 @@ export function PartyBuilder({
         <label className="flex flex-col gap-1">
           <span className="text-[11px] text-muted-foreground">Reglas</span>
           <select
-            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            className="h-8 rounded-none border border-border bg-background px-2 text-xs"
             value={ruleset}
             onChange={(e) => setRuleset(e.target.value as RulesetProfile)}
           >
@@ -203,7 +203,7 @@ export function PartyBuilder({
       <Button
         type="button"
         size="sm"
-        className="w-full"
+        className="w-full rounded-none"
         onClick={() => void handleSubmit()}
         disabled={busy || selectedParty.length === 0}
       >

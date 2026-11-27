@@ -1,19 +1,20 @@
 "use client";
 
-import type { Character } from "@dungeons/rules";
+import type { Character, RulesetProfile } from "@dungeons/rules";
 import {
   ChevronDownIcon,
   DicesIcon,
-  FlameIcon,
-  ShieldIcon,
   SparklesIcon,
-  SwordsIcon,
   UsersIcon,
-  Wand2Icon,
 } from "lucide-react";
 import * as React from "react";
 
 import type { SuggestedActionItem } from "@/agent/types";
+import {
+  DiceRollCard,
+  type ResolvedDiceRollToolPart,
+  isDiceRollToolPart,
+} from "@/components/game/dice-roll-card";
 import { SuggestedActions } from "@/components/game/suggested-actions";
 import {
   DmToolPartView,
@@ -89,50 +90,6 @@ function isDmToolPart(part: StepPart): part is DmToolPart {
     part.type === "tool-take_rest" ||
     part.type === "tool-death_save" ||
     part.type === "tool-heal"
-  );
-}
-
-function CharacterEmblem({
-  classNameLabel,
-  characterName,
-}: {
-  classNameLabel?: string;
-  characterName?: string;
-}) {
-  const cls = (classNameLabel ?? "").toLowerCase();
-  if (cls.includes("mag")) {
-    return (
-      <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-sky-500/30 bg-gradient-to-br from-sky-500/20 to-indigo-950/60 text-sky-400">
-        <Wand2Icon className="size-4" />
-      </span>
-    );
-  }
-  if (cls.includes("clér") || cls.includes("cler")) {
-    return (
-      <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-amber-400/35 bg-gradient-to-br from-amber-500/25 to-orange-950/60 text-amber-300">
-        <SparklesIcon className="size-4" />
-      </span>
-    );
-  }
-  if (cls.includes("guerr")) {
-    return (
-      <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-rose-500/30 bg-gradient-to-br from-rose-500/20 to-stone-950/60 text-rose-300">
-        <ShieldIcon className="size-4" />
-      </span>
-    );
-  }
-  if (cls.includes("píc") || cls.includes("pic")) {
-    return (
-      <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-violet-500/30 bg-gradient-to-br from-violet-500/20 to-slate-950/60 text-violet-300">
-        <SwordsIcon className="size-4" />
-      </span>
-    );
-  }
-  const initial = (characterName ?? "J").slice(0, 1).toUpperCase();
-  return (
-    <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-amber-500/30 bg-gradient-to-br from-amber-600/20 to-emerald-950/50 font-serif text-sm font-semibold text-amber-300">
-      {initial || <FlameIcon className="size-4" />}
-    </span>
   );
 }
 
@@ -243,7 +200,7 @@ function CollapsibleEngineTrace({
           playSound(next ? "overlay.expand" : "overlay.collapse");
           setExpanded(next);
         }}
-        className="inline-flex min-h-7 items-center gap-1.5 rounded-full border border-border/60 bg-card/60 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="inline-flex min-h-7 items-center gap-1.5 rounded-none border border-border/70 border-l-2 border-l-amber-500/70 bg-card/60 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <DicesIcon className="size-3 text-amber-600 dark:text-amber-400/80" />
         <span>
@@ -264,7 +221,7 @@ function CollapsibleEngineTrace({
         />
       </button>
       {expanded && (
-        <div className="mt-2 rounded-xl border border-border/60 bg-card/50 p-2.5">
+        <div className="mt-2 rounded-none border border-border border-l-2 border-l-border bg-card/50 p-2.5">
           {traceBody}
         </div>
       )}
@@ -284,9 +241,13 @@ export const ChatMessage = React.memo(function ChatMessage({
   isLoadingAudio = false,
   onSpeak,
   onStopAudio,
+  checkpointSeq,
+  isRollingBack = false,
+  onRollback,
   characterName,
-  characterClassName,
   charactersById,
+  activeChar,
+  ruleset,
   turnOutcome,
   sceneHeader,
   pcNames = [],
@@ -305,9 +266,14 @@ export const ChatMessage = React.memo(function ChatMessage({
   isLoadingAudio?: boolean;
   onSpeak?: () => void;
   onStopAudio?: () => void;
+  checkpointSeq?: number | null;
+  isRollingBack?: boolean;
+  onRollback?: (seq: number) => void;
   characterName?: string;
   characterClassName?: string;
   charactersById?: Record<string, Character>;
+  activeChar?: Character | null;
+  ruleset?: RulesetProfile;
   turnOutcome?: TurnOutcomeSummary | null;
   sceneHeader?: { microLabel: string; title: string } | null;
   pcNames?: readonly string[];
@@ -325,8 +291,8 @@ export const ChatMessage = React.memo(function ChatMessage({
     if (parsedParty.kind === "round") {
       return (
         <div className="flex justify-end">
-          <div className="w-full max-w-[92%] rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3.5 py-3 shadow-xs dark:border-amber-700/40 dark:bg-amber-950/25 sm:max-w-[82%]">
-            <div className="mb-2 flex items-center justify-between gap-2 border-b border-amber-500/15 pb-1.5">
+          <div className="w-full max-w-[92%] rounded-none border border-border border-l-2 border-l-amber-500/80 bg-amber-500/[0.05] px-3.5 py-3 dark:bg-amber-950/20 sm:max-w-[82%]">
+            <div className="mb-2 flex items-center justify-between gap-2 border-b border-border/60 pb-1.5">
               <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-amber-700 uppercase dark:text-amber-300">
                 <UsersIcon className="size-3.5" />
                 Escena grupal · {parsedParty.entries.length} acciones
@@ -343,23 +309,22 @@ export const ChatMessage = React.memo(function ChatMessage({
                 </span>
               )}
             </div>
-            <ul className="flex flex-col gap-2">
+            <ul className="flex flex-col divide-y divide-border/50">
               {parsedParty.entries.map((entry, idx) => {
                 const ch = charactersById?.[entry.actorId];
                 const speaker = ch?.name ?? entry.actorId;
                 return (
-                  <li key={`${entry.actorId}-${idx}`} className="flex items-start gap-2.5">
-                    <CharacterEmblem
-                      characterName={speaker}
-                      classNameLabel={ch?.className}
-                    />
+                  <li
+                    key={`${entry.actorId}-${idx}`}
+                    className="py-2 first:pt-0 last:pb-0"
+                  >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
                         <span className="truncate text-xs font-semibold text-amber-700 dark:text-amber-400">
                           {speaker}
                         </span>
                         {ch?.playerName && (
-                          <span className="rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          <span className="rounded-none border border-border/60 bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
                             {ch.playerName}
                           </span>
                         )}
@@ -382,46 +347,39 @@ export const ChatMessage = React.memo(function ChatMessage({
         ? charactersById?.[parsedParty.actorId]
         : undefined;
     const displayName = singleChar?.name ?? characterName ?? "Jugador";
-    const displayClass = singleChar?.className ?? characterClassName;
     const displayText =
       parsedParty.kind === "single" ? parsedParty.text : parsedParty.text;
 
     return (
       <div className="flex justify-end">
-        <div className="w-full max-w-[88%] rounded-xl border border-amber-500/25 bg-amber-500/[0.06] px-3.5 py-3 shadow-xs dark:border-amber-700/35 dark:bg-amber-950/25 sm:max-w-[78%]">
-          <div className="flex items-start gap-3">
-            <CharacterEmblem
-              characterName={displayName}
-              classNameLabel={displayClass}
-            />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="truncate text-xs font-semibold tracking-tight text-amber-700 dark:text-amber-400">
-                    {displayName}
-                  </span>
-                  {singleChar?.playerName && (
-                    <span className="rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                      {singleChar.playerName}
-                    </span>
-                  )}
-                </div>
-                {turnOutcome && (
-                  <span className="flex items-center gap-1 text-[11px] font-medium">
-                    <span className="text-muted-foreground">
-                      {turnOutcome.skillLabel}
-                    </span>
-                    <span className="text-muted-foreground/50">·</span>
-                    <span className={OUTCOME_TONE_CLASS[turnOutcome.tone]}>
-                      {turnOutcome.outcomeLabel}
-                    </span>
+        <div className="w-full max-w-[88%] rounded-none border border-border border-l-2 border-l-amber-500/80 bg-amber-500/[0.05] px-3.5 py-3 dark:bg-amber-950/20 sm:max-w-[78%]">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-xs font-semibold tracking-tight text-amber-700 dark:text-amber-400">
+                  {displayName}
+                </span>
+                {singleChar?.playerName && (
+                  <span className="rounded-none border border-border/60 bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                    {singleChar.playerName}
                   </span>
                 )}
               </div>
-              <p className="mt-1 whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground/95">
-                {displayText}
-              </p>
+              {turnOutcome && (
+                <span className="flex items-center gap-1 text-[11px] font-medium">
+                  <span className="text-muted-foreground">
+                    {turnOutcome.skillLabel}
+                  </span>
+                  <span className="text-muted-foreground/50">·</span>
+                  <span className={OUTCOME_TONE_CLASS[turnOutcome.tone]}>
+                    {turnOutcome.outcomeLabel}
+                  </span>
+                </span>
+              )}
             </div>
+            <p className="mt-1 whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground/95">
+              {displayText}
+            </p>
           </div>
         </div>
       </div>
@@ -469,7 +427,13 @@ export const ChatMessage = React.memo(function ChatMessage({
     <Message align="start" className="w-full">
       <MessageContent className="w-full gap-3">
         {resolvedSceneHeader && (
-          <div className="mb-1 border-b border-border/50 pb-2.5">
+          <div className="mb-1 border-b border-border pb-3">
+            <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              <span className="inline-flex size-5 items-center justify-center rounded-none border border-primary/35 bg-primary/10 text-primary">
+                <SparklesIcon className="size-3" />
+              </span>
+              <span>Director de Juego</span>
+            </div>
             <div className="font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
               {resolvedSceneHeader.microLabel}
             </div>
@@ -479,17 +443,35 @@ export const ChatMessage = React.memo(function ChatMessage({
           </div>
         )}
 
-        {blocks.map((block, index) =>
-          Array.isArray(block) ? (
-            <CollapsibleEngineTrace
-              key={index}
-              block={block}
-              isStreaming={isStreaming}
-              reasoningParts={reasoningParts}
-              message={message}
-              showReasoning={showReasoning}
-            />
-          ) : (
+        {blocks.map((block, index) => {
+          if (Array.isArray(block)) {
+            const diceParts = block.filter(
+              (part): part is ResolvedDiceRollToolPart =>
+                isDiceRollToolPart(part) && part.output?.ok !== false,
+            );
+            const traceParts = block.filter(
+              (part) =>
+                !(isDiceRollToolPart(part) && part.output?.ok !== false),
+            );
+            return (
+              <React.Fragment key={index}>
+                {diceParts.map((dp) => (
+                  <DiceRollCard key={dp.toolCallId} part={dp} />
+                ))}
+                {traceParts.length > 0 && (
+                  <CollapsibleEngineTrace
+                    block={traceParts}
+                    isStreaming={isStreaming}
+                    reasoningParts={reasoningParts}
+                    message={message}
+                    showReasoning={showReasoning}
+                  />
+                )}
+              </React.Fragment>
+            );
+          }
+
+          return (
             <NarrativeText
               key={index}
               text={block.text}
@@ -498,8 +480,8 @@ export const ChatMessage = React.memo(function ChatMessage({
               pcNames={pcNames}
               npcNames={npcNames}
             />
-          ),
-        )}
+          );
+        })}
 
         {isLastAssistant &&
           !isStreaming &&
@@ -509,22 +491,28 @@ export const ChatMessage = React.memo(function ChatMessage({
             <SuggestedActions
               actions={suggestedActions}
               disabled={isStreaming}
+              activeChar={activeChar}
+              ruleset={ruleset}
               onSelect={onSelectSuggestion}
             />
           )}
 
         {!isStreaming && <SourcesPart parts={message.parts} />}
-        {!isStreaming && text && (
-          <MessageActions
-            text={text}
-            onRetry={onRetry}
-            ttsAvailable={ttsAvailable}
-            isSpeaking={isSpeaking}
-            isLoadingAudio={isLoadingAudio}
-            onSpeak={onSpeak}
-            onStopAudio={onStopAudio}
-          />
-        )}
+        {!isStreaming &&
+          (Boolean(text) || (checkpointSeq != null && Boolean(onRollback))) && (
+            <MessageActions
+              text={text}
+              onRetry={onRetry}
+              ttsAvailable={ttsAvailable && Boolean(text)}
+              isSpeaking={isSpeaking}
+              isLoadingAudio={isLoadingAudio}
+              onSpeak={onSpeak}
+              onStopAudio={onStopAudio}
+              checkpointSeq={checkpointSeq}
+              isRollingBack={isRollingBack}
+              onRollback={onRollback}
+            />
+          )}
       </MessageContent>
     </Message>
   );

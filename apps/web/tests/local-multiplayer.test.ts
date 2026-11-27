@@ -153,6 +153,7 @@ describe("Local Multiplayer Integration (apps/web)", () => {
     expect(soloIntro[0]).toMatchObject({ type: "text" });
     if (soloIntro[0]?.type === "text") {
       expect(soloIntro[0].text).toContain("¿qué hacés?");
+      expect(soloIntro[0].text).not.toContain("Objetivo principal");
     }
 
     const group = await store.createCampaign({
@@ -169,6 +170,7 @@ describe("Local Multiplayer Integration (apps/web)", () => {
       expect(groupIntro[0].text).toContain("Brenna de Piedrafría (Mati)");
       expect(groupIntro[0].text).toContain("Seraphina Voss (Sofi)");
       expect(groupIntro[0].text).toContain("¿qué hacen?");
+      expect(groupIntro[0].text).not.toContain("Objetivo principal");
     }
 
     const prompt = buildDmSystemPrompt(group.state, [], {

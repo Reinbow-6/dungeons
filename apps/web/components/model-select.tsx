@@ -54,7 +54,7 @@ export function ModelSelect({
                 <span className="flex flex-1 items-center justify-between gap-2">
                   <span className="truncate">{item.label}</span>
                   {locked && (
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-none border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-amber-700 dark:text-amber-300">
                       <LockIcon className="size-2.5" />
                       Whitelist
                     </span>

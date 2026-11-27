@@ -50,20 +50,20 @@ export function CombatTracker({
   return (
     <section
       aria-label="Rastreador de combate"
-      className="flex flex-col gap-2.5 rounded-xl border border-rose-500/30 bg-card/90 p-3 shadow-xs"
+      className="flex flex-col gap-2.5 rounded-none border border-rose-500/35 border-l-2 border-l-rose-500 bg-card/90 p-3"
     >
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center justify-between gap-2 border-b border-border pb-2">
         <div className="flex items-center gap-1.5">
           <Swords className="size-3.5 text-rose-600 dark:text-rose-400" />
           <h3 className="text-sm font-semibold">Combate activo</h3>
         </div>
-        <span className="rounded-md bg-rose-500/15 px-2 py-0.5 font-mono text-[11px] font-semibold text-rose-700 dark:text-rose-300">
+        <span className="rounded-none border border-rose-500/30 bg-rose-500/15 px-2 py-0.5 font-mono text-[11px] font-semibold text-rose-700 dark:text-rose-300">
           Ronda {combat.round}
         </span>
       </div>
 
       {activeCombatant && !activeCombatant.defeated && (
-        <div className="flex items-center gap-1.5 rounded-md bg-muted/70 px-2 py-1 text-[11px]">
+        <div className="flex items-center gap-1.5 rounded-none border border-border bg-muted/70 px-2 py-1 text-[11px]">
           <ChevronRight className="size-3.5 shrink-0 text-primary" />
           <span className="text-muted-foreground">Turno actual:</span>
           <span className="truncate font-semibold text-foreground">
@@ -85,9 +85,9 @@ export function CombatTracker({
             <li
               key={c.id}
               className={[
-                "flex flex-col gap-1.5 rounded-lg border px-2.5 py-2 transition-colors",
+                "flex flex-col gap-1.5 rounded-none border px-2.5 py-2 transition-colors",
                 isCurrentTurn
-                  ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                  ? "border-primary/60 border-l-2 border-l-primary bg-primary/5"
                   : "border-border bg-muted/20",
                 c.defeated ? "opacity-60" : "",
               ].join(" ")}
@@ -95,7 +95,7 @@ export function CombatTracker({
               <div className="flex items-center justify-between gap-1.5">
                 <div className="flex min-w-0 items-center gap-1.5">
                   <span
-                    className="inline-flex size-5 shrink-0 items-center justify-center rounded bg-muted font-mono text-[10px] font-semibold"
+                    className="inline-flex size-5 shrink-0 items-center justify-center rounded-none border border-border bg-muted font-mono text-[10px] font-semibold"
                     title={`Iniciativa ${c.initiative}`}
                   >
                     {c.initiative}
@@ -112,17 +112,17 @@ export function CombatTracker({
 
                 <div className="flex shrink-0 items-center gap-1">
                   <span
-                    className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${kindBadge.className}`}
+                    className={`rounded-none border px-1.5 py-0.5 text-[10px] font-medium ${kindBadge.className}`}
                   >
                     {kindBadge.label}
                   </span>
                   {isCurrentTurn && (
-                    <span className="rounded bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">
+                    <span className="rounded-none bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">
                       Turno
                     </span>
                   )}
                   {c.defeated && (
-                    <span className="inline-flex items-center gap-0.5 rounded bg-destructive/15 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
+                    <span className="inline-flex items-center gap-0.5 rounded-none border border-destructive/30 bg-destructive/15 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
                       <Skull className="size-2.5" />
                       Derrotado
                     </span>
@@ -131,9 +131,9 @@ export function CombatTracker({
               </div>
 
               <div className="flex items-center gap-2">
-                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-none bg-muted">
                   <div
-                    className={`h-full transition-all ${getHpBarColor(c.hp.current, c.hp.max)}`}
+                    className={`h-full rounded-none transition-all ${getHpBarColor(c.hp.current, c.hp.max)}`}
                     style={{ width: `${hpPercent}%` }}
                   />
                 </div>
@@ -141,7 +141,7 @@ export function CombatTracker({
                   {c.hp.current}/{c.hp.max} PG
                 </span>
                 <span
-                  className="inline-flex shrink-0 items-center gap-0.5 rounded border bg-background px-1 py-0.5 font-mono text-[10px] text-muted-foreground"
+                  className="inline-flex shrink-0 items-center gap-0.5 rounded-none border border-border bg-background px-1 py-0.5 font-mono text-[10px] text-muted-foreground"
                   title={`Clase de Armadura ${c.ac}`}
                 >
                   <Shield className="size-2.5" />
@@ -153,24 +153,24 @@ export function CombatTracker({
                 c.immunities.length > 0 ||
                 (c.resistances && c.resistances.length > 0) ||
                 (c.conditions && c.conditions.length > 0)) && (
-                <div className="flex flex-wrap gap-1 text-[10px] text-muted-foreground">
+                <div className="flex flex-wrap gap-1 border-t border-border/60 pt-1 text-[10px] text-muted-foreground">
                   {c.vulnerabilities.length > 0 && (
-                    <span className="rounded bg-amber-500/10 px-1 py-0.5 text-amber-700 dark:text-amber-300">
+                    <span className="rounded-none border border-amber-500/25 bg-amber-500/10 px-1 py-0.5 text-amber-700 dark:text-amber-300">
                       Vuln: {c.vulnerabilities.join(", ")}
                     </span>
                   )}
                   {c.resistances && c.resistances.length > 0 && (
-                    <span className="rounded bg-indigo-500/10 px-1 py-0.5 text-indigo-700 dark:text-indigo-300">
+                    <span className="rounded-none border border-indigo-500/25 bg-indigo-500/10 px-1 py-0.5 text-indigo-700 dark:text-indigo-300">
                       Res: {c.resistances.join(", ")}
                     </span>
                   )}
                   {c.immunities.length > 0 && (
-                    <span className="rounded bg-muted px-1 py-0.5">
+                    <span className="rounded-none border border-border bg-muted px-1 py-0.5">
                       Inmune: {c.immunities.join(", ")}
                     </span>
                   )}
                   {c.conditions && c.conditions.length > 0 && (
-                    <span className="rounded bg-rose-500/10 px-1 py-0.5 text-rose-700 dark:text-rose-300">
+                    <span className="rounded-none border border-rose-500/25 bg-rose-500/10 px-1 py-0.5 text-rose-700 dark:text-rose-300">
                       Cond: {c.conditions.join(", ")}
                     </span>
                   )}

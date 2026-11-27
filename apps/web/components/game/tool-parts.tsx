@@ -120,7 +120,7 @@ function BadgeChip({
   return (
     <span
       className={cn(
-        "ml-1.5 inline-flex items-center rounded border px-1.5 py-0 font-mono text-[10px] font-semibold tabular-nums",
+        "ml-1.5 inline-flex items-center rounded-none border px-1.5 py-0 font-mono text-[10px] font-semibold tabular-nums",
         tones[tone],
       )}
     >
@@ -654,7 +654,7 @@ export function DmToolPartView({
 
   return (
     <TraceCollapsible>
-      <TraceCollapsibleTrigger>
+      <TraceCollapsibleTrigger className="rounded-none">
         <TraceLine status={summary.isError ? "error" : undefined}>
           <TraceIcon>
             {summary.isError ? (
@@ -683,6 +683,10 @@ export function DmToolPartView({
         <CodeBlock
           size="sm"
           variant={summary.isError ? "destructive" : undefined}
+          className={cn(
+            "rounded-none border border-border border-l-2",
+            summary.isError ? "border-l-destructive" : "border-l-border",
+          )}
         >
           <CodeBlockContent wrap className="max-h-64">
             {JSON.stringify(summary.details, null, 2)}

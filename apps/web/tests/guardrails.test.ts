@@ -153,7 +153,7 @@ describe("provider config, error sanitization & Drizzle schema", () => {
       "openrouter:deepseek/deepseek-v4.1-flash-1017",
       "openrouter:openrouter/free",
     ]);
-    expect(MODELS.map((m) => m.name)).toEqual(["Main", "Free"]);
+    expect(MODELS.map((m) => m.name)).toEqual(["Whale", "Free"]);
     expect(MODELS.some((m) => m.provider === "groq")).toBe(false);
 
     const cfg = getModelConfig({});
@@ -177,6 +177,7 @@ describe("provider config, error sanitization & Drizzle schema", () => {
     expect(isModelAllowed("groq:openai/gpt-oss-120b")).toBe(false);
     expect(isModelAllowed("groq:llama-3.1-8b-instant")).toBe(false);
     expect(isModelAllowed("groq:llama-3.3-70b-versatile")).toBe(false);
+    expect(isModelAllowed("openrouter:mistralai/mistral-nemo")).toBe(false);
 
     // Curated OpenRouter models are allowlisted
     expect(

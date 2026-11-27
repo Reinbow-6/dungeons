@@ -19,7 +19,7 @@ export type GatewayModel = ModelOption;
 export const MODELS: ModelOption[] = [
   {
     id: "openrouter:deepseek/deepseek-v4.1-flash-1017",
-    name: "Main",
+    name: "Whale",
     provider: "openrouter",
     modelId: "deepseek/deepseek-v4.1-flash-1017",
     accessTier: "whitelisted",

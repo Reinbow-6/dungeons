@@ -632,11 +632,11 @@ export function AuthDialog({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={descId}
-        className="relative z-10 flex w-full max-w-md flex-col gap-4 rounded-2xl border border-border/80 bg-card/95 p-5 text-card-foreground shadow-2xl backdrop-blur-xl"
+        className="relative z-10 flex w-full max-w-md flex-col gap-4 rounded-none border border-border/80 bg-card/95 p-5 text-card-foreground shadow-2xl backdrop-blur-xl"
       >
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-xl border border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-400">
+            <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-none border border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-400">
               <FlameIcon className="size-4" />
             </span>
             <div>
@@ -665,12 +665,12 @@ export function AuthDialog({
         </div>
 
         {/* Estado actual de acceso */}
-        <div className="flex flex-col gap-2 rounded-xl border border-border/75 bg-background/60 p-3.5 text-xs">
+        <div className="flex flex-col gap-2 rounded-none border border-border/75 bg-background/60 p-3.5 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-muted-foreground">Nivel actual</span>
             <span
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-medium",
+                "inline-flex items-center gap-1.5 rounded-none border px-2.5 py-0.5 font-medium",
                 access.authenticated && access.whitelisted
                   ? "border-emerald-500/35 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
                   : access.authenticated
@@ -703,7 +703,7 @@ export function AuthDialog({
               ? "Tu correo está autorizado. Tenés habilitado DeepSeek V4.1 Flash (Principal) y la voz del Dungeon Master (TTS)."
               : access.authenticated
                 ? "Iniciaste sesión, pero este correo aún no figura en la whitelist del servidor. Seguís jugando gratis con OpenRouter Free Router."
-                : "Podés jugar gratis sin cuenta con OpenRouter Free Router. Iniciá sesión con una cuenta autorizada para desbloquear DeepSeek V4.1 Flash y TTS."}
+                : "Podés jugar gratis sin cuenta con OpenRouter Free Router. Iniciá sesión con una cuenta autorizada para desbloquear Whale y TTS."}
           </p>
         </div>
 
@@ -758,7 +758,7 @@ export function AuthDialog({
             <div
               role="tablist"
               aria-label="Método de acceso"
-              className="grid grid-cols-3 gap-1 rounded-xl border border-border/80 bg-muted/45 p-1 text-xs"
+              className="grid grid-cols-3 gap-1 rounded-none border border-border/80 bg-muted/45 p-1 text-xs"
             >
               {(
                 [
@@ -776,7 +776,7 @@ export function AuthDialog({
                     aria-selected={selected}
                     onClick={() => handleModeChange(tab.id)}
                     className={cn(
-                      "min-h-7 rounded-lg px-2 py-1 font-medium transition-colors",
+                      "min-h-7 rounded-none px-2 py-1 font-medium transition-colors",
                       selected
                         ? "bg-card text-foreground shadow-xs ring-1 ring-border/70"
                         : "text-muted-foreground hover:text-foreground",
@@ -906,7 +906,7 @@ export function AuthButton({ className }: { className?: string }) {
               onClick={handleOpen}
               aria-label={`Acceso: ${label}. Abrir opciones de cuenta`}
               className={cn(
-                "h-7 gap-1.5 px-2.5 text-xs",
+                "h-7 gap-1.5 rounded-none px-2.5 text-xs",
                 access.authenticated &&
                   access.whitelisted &&
                   "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300",
@@ -929,7 +929,7 @@ export function AuthButton({ className }: { className?: string }) {
               ) : (
                 <UserIcon data-icon="inline-start" className="size-3.5" />
               )}
-              <span className="truncate">{label}</span>
+              <span className="hidden max-w-28 truncate sm:inline">{label}</span>
             </Button>
           }
         />
@@ -944,6 +944,7 @@ export function AuthButton({ className }: { className?: string }) {
                 type="button"
                 variant="ghost"
                 size="icon-sm"
+                className="hidden rounded-none sm:inline-flex"
                 aria-label="Cerrar sesión"
                 onClick={async () => {
                   const supabase = createSupabaseBrowserClient();

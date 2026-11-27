@@ -10,8 +10,10 @@ import {
 } from "ai";
 
 import {
-  buildDmSystemPrompt,
+  buildDmPromptLayers,
   createDmTools,
+  injectDynamicContextIntoMessages,
+  selectActiveDmTools,
   type DmChatUIMessage,
   type DmToolRuntime,
 } from "@/agent/agent";
@@ -43,6 +45,7 @@ import {
 import { createCorrelationId, serverErrorResponse } from "@/lib/http/errors";
 import {
   DEFAULT_MODEL,
+  findModelOption,
   GUEST_DEFAULT_MODEL,
   isModelAllowed,
   isModelAllowedForTier,
@@ -226,6 +229,7 @@ export async function POST(req: Request) {
   }
 
   if (!isModelAllowedForTier(requestedModelId, access.tier)) {
+    const requestedOption = findModelOption(requestedModelId);
     logServerEvent({
       level: "warn",
       requestId,
@@ -238,8 +242,7 @@ export async function POST(req: Request) {
     });
     return jsonWithGuestCookie(
       {
-        error:
-          "Iniciá sesión con una cuenta autorizada (whitelist) para usar el modelo Main.",
+        error: `Iniciá sesión con una cuenta autorizada (whitelist) para usar el modelo ${requestedOption?.name ?? "Whale"}.`,
         code: "AUTH_WHITELIST_REQUIRED",
       },
       403,
@@ -495,6 +498,17 @@ export async function POST(req: Request) {
     };
   });
 
+  const recentConversationTexts = expandedMessages
+    .slice(-4)
+    .map((msg) =>
+      msg.parts
+        .filter((p): p is { type: "text"; text: string } => p.type === "text")
+        .map((p) => p.text)
+        .join(" ")
+        .trim(),
+    )
+    .filter((text) => text.length > 0);
+
   const lastUserMessage = [...expandedMessages]
     .reverse()
     .find((m) => m.role === "user");
@@ -504,29 +518,51 @@ export async function POST(req: Request) {
         .map((p) => p.text)
         .join(" ")
     : "";
-  const systemPrompt = buildDmSystemPrompt(currentState, currentEvents, {
+  const promptLayers = buildDmPromptLayers(currentState, currentEvents, {
     sessionNumber: loaded.sessionNumber,
     worldSummary: loaded.worldSummary,
     sessionSummaries: loaded.sessionSummaries,
     memoryFacts: currentMemoryFacts,
     olderTurnsDigest: compacted.olderTurnsDigest,
     latestUserText,
+    recentConversationTexts,
     activeActorId: requestedActiveActorId,
   });
   const prunedRecentMessages = pruneHistoricalToolOutputs(expandedMessages);
-  const modelMessages = wrapUserMessagesForModel(
+  const wrappedModelMessages = wrapUserMessagesForModel(
     await convertToModelMessages(prunedRecentMessages),
   );
+  const hasUserMessage = wrappedModelMessages.some((m) => m.role === "user");
+  const modelMessages = hasUserMessage
+    ? injectDynamicContextIntoMessages(
+        wrappedModelMessages,
+        promptLayers.dynamicTurnContext,
+      )
+    : wrappedModelMessages;
+  const effectiveSystemPrompt = hasUserMessage
+    ? promptLayers.staticSystemPrompt
+    : `${promptLayers.staticSystemPrompt}\n\n---\n\n${promptLayers.dynamicTurnContext}`;
+  const activeTools = selectActiveDmTools(tools, currentState);
 
   const result = streamText({
     model: resolved.model,
-    system: systemPrompt,
+    system: effectiveSystemPrompt,
     messages: modelMessages,
-    tools,
+    tools: activeTools,
     ...(resolved.providerOptions
       ? { providerOptions: resolved.providerOptions }
       : {}),
-    stopWhen: isStepCount(chatSpendCap.config.maxAgentSteps),
+    stopWhen: [
+      isStepCount(chatSpendCap.config.maxAgentSteps),
+      ({ steps }) => {
+        const last = steps.at(-1);
+        return Boolean(
+          last &&
+            last.text.trim().length > 0 &&
+            last.toolCalls.some((tc) => tc.toolName === "suggest_actions"),
+        );
+      },
+    ],
     maxOutputTokens: chatSpendCap.config.maxOutputTokens,
     abortSignal: req.signal,
     onFinish: ({ totalUsage, steps }) => {
@@ -584,6 +620,9 @@ export async function POST(req: Request) {
         completionTokens,
         cachedTokens,
         cacheHitRate,
+        lorebookEntriesCount: promptLayers.lorebook.entries.length,
+        lorebookTokensEst: promptLayers.lorebook.usedTokens,
+        activeToolsCount: Object.keys(activeTools).length,
         toolCalls,
         lastSeq: currentState.lastSeq,
         latencyMs,
@@ -600,9 +639,16 @@ export async function POST(req: Request) {
   const reasoningStarts = new Map<string, { index: number; time: number }>();
   let lastStepInputTokens = 0;
   let stepCachedTokens = 0;
-  const systemPromptTokensEst = Math.ceil(systemPrompt.length / 4);
+  const systemPromptTokensEst = Math.ceil(
+    (effectiveSystemPrompt.length +
+      (hasUserMessage ? promptLayers.dynamicTurnContext.length : 0)) /
+      4,
+  );
   const fallbackContextTokensEst = Math.ceil(
-    (systemPrompt.length + compacted.estimatedRecentChars) / 4,
+    (effectiveSystemPrompt.length +
+      (hasUserMessage ? promptLayers.dynamicTurnContext.length : 0) +
+      compacted.estimatedRecentChars) /
+      4,
   );
 
   const headers = new Headers();

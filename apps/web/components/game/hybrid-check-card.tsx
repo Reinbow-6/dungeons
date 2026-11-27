@@ -24,6 +24,7 @@ export interface HybridCheckCardProps {
   actorName?: string
   playerName?: string
   queuePosition?: { current: number; total: number }
+  purpose?: "check" | "investigate"
   skill: string
   dc?: number
   dcRef?: string
@@ -79,6 +80,7 @@ export function HybridCheckCard({
   actorName,
   playerName,
   queuePosition,
+  purpose,
   skill,
   dc,
   dcRef,
@@ -102,34 +104,20 @@ export function HybridCheckCard({
     React.useState<VerifiedCheck | null>(null)
   const [continuing, setContinuing] = React.useState(false)
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
+  function rollD20(): number {
+    if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+      const buf = new Uint32Array(1)
+      crypto.getRandomValues(buf)
+      return (buf[0]! % 20) + 1
+    }
+    return Math.floor(Math.random() * 20) + 1
+  }
+
+  async function submitDieResults(dieResults: number[]) {
     if (submitting || verifiedCheck) return
 
     setErrorMsg(null)
     setExpectedRange(null)
-
-    const parsedDie1 = die1.trim() === "" ? Number.NaN : Number(die1)
-    const parsedDie2 = die2.trim() === "" ? Number.NaN : Number(die2)
-    const isValidDie = (value: number) =>
-      Number.isInteger(value) && value >= 1 && value <= 20
-
-    if (!isValidDie(parsedDie1)) {
-      playSound("notification.warning")
-      setErrorMsg(
-        "El resultado del d20 debe ser un número entero entre 1 y 20."
-      )
-      return
-    }
-
-    if (needsTwoDice && !isValidDie(parsedDie2)) {
-      playSound("notification.warning")
-      setErrorMsg("Ingresá un resultado válido, entre 1 y 20, para cada d20.")
-      return
-    }
-
-    const dieResults = needsTwoDice ? [parsedDie1, parsedDie2] : [parsedDie1]
-
     setSubmitting(true)
     try {
       const res = await fetch("/api/game/declare-check", {
@@ -140,6 +128,7 @@ export function HybridCheckCard({
           sceneId,
           actorId,
           skill,
+          ...(purpose ? { purpose } : {}),
           ...(dc !== undefined ? { dc } : {}),
           ...(dcRef ? { dcRef } : {}),
           mode,
@@ -184,6 +173,47 @@ export function HybridCheckCard({
     }
   }
 
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (submitting || verifiedCheck) return
+
+    const parsedDie1 = die1.trim() === "" ? Number.NaN : Number(die1)
+    const parsedDie2 = die2.trim() === "" ? Number.NaN : Number(die2)
+    const isValidDie = (value: number) =>
+      Number.isInteger(value) && value >= 1 && value <= 20
+
+    if (!isValidDie(parsedDie1)) {
+      playSound("notification.warning")
+      setErrorMsg(
+        "El resultado del d20 debe ser un número entero entre 1 y 20."
+      )
+      return
+    }
+
+    if (needsTwoDice && !isValidDie(parsedDie2)) {
+      playSound("notification.warning")
+      setErrorMsg("Ingresá un resultado válido, entre 1 y 20, para cada d20.")
+      return
+    }
+
+    const dieResults = needsTwoDice ? [parsedDie1, parsedDie2] : [parsedDie1]
+    await submitDieResults(dieResults)
+  }
+
+  async function handleAutoRoll() {
+    if (submitting || verifiedCheck) return
+    playSound("interaction.tap")
+    const r1 = rollD20()
+    setDie1(String(r1))
+    if (needsTwoDice) {
+      const r2 = rollD20()
+      setDie2(String(r2))
+      await submitDieResults([r1, r2])
+      return
+    }
+    await submitDieResults([r1])
+  }
+
   function continueNarration() {
     if (!verifiedCheck || continuing) return
     setContinuing(true)
@@ -193,12 +223,12 @@ export function HybridCheckCard({
   const content = (
     <section
       aria-label={`Tirada física de ${skill}`}
-      className="overflow-hidden rounded-2xl border border-amber-500/30 bg-card text-card-foreground shadow-[0_18px_55px_-28px_rgba(245,158,11,0.45)]"
+      className="overflow-hidden rounded-none border border-border border-l-2 border-l-amber-500 bg-card text-card-foreground"
     >
-      <div className="border-b border-amber-500/15 bg-gradient-to-br from-amber-500/[0.11] via-card to-card px-4 pt-4 pb-4 sm:px-5">
+      <div className="border-b border-border bg-amber-500/[0.06] px-4 py-4 sm:px-5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
-            <span className="mt-0.5 inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-300">
+            <span className="mt-0.5 inline-flex size-10 shrink-0 items-center justify-center rounded-none border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300">
               {verifiedCheck ? (
                 verifiedCheck.result.success ? (
                   <SparklesIcon className="size-5" aria-hidden="true" />
@@ -223,25 +253,27 @@ export function HybridCheckCard({
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             {queuePosition && queuePosition.total > 1 && (
-              <span className="rounded-full border border-amber-500/35 bg-amber-500/15 px-2.5 py-1 font-mono text-[11px] font-semibold text-amber-700 tabular-nums dark:text-amber-300">
+              <span className="rounded-none border border-amber-500/35 bg-amber-500/15 px-2.5 py-1 font-mono text-[11px] font-semibold text-amber-700 tabular-nums dark:text-amber-300">
                 Tirada {queuePosition.current} de {queuePosition.total}
               </span>
             )}
-            <span className="rounded-full border border-border/70 bg-background/70 px-2.5 py-1 font-mono text-xs font-semibold text-foreground tabular-nums">
+            <span className="rounded-none border border-border bg-background/80 px-2.5 py-1 font-mono text-xs font-semibold text-foreground tabular-nums">
               {verifiedCheck
                 ? `CD ${verifiedCheck.result.dc}`
-                : dc !== undefined
-                  ? `CD ${dc}`
-                  : dcRef
-                    ? `CD · ${dcRef}`
-                    : "CD de escena"}
+                : purpose === "investigate"
+                  ? "Investigación · pistas"
+                  : dc !== undefined
+                    ? `CD ${dc}`
+                    : dcRef
+                      ? `CD · ${dcRef}`
+                      : "CD de escena"}
             </span>
           </div>
         </div>
 
         <ol
           aria-label="Etapas de la tirada"
-          className="mt-4 grid grid-cols-3 gap-2"
+          className="mt-4 grid grid-cols-3 gap-2 border-t border-border/60 pt-3"
         >
           {CHECK_STEPS.map((step, index) => {
             const currentStep = verifiedCheck ? 2 : 1
@@ -255,12 +287,12 @@ export function HybridCheckCard({
                 className="flex min-w-0 items-center gap-1.5"
               >
                 <span
-                  className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold ${
+                  className={`inline-flex size-5 shrink-0 items-center justify-center rounded-none border text-[10px] font-semibold ${
                     isComplete
                       ? "border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300"
                       : isCurrent
                         ? "border-amber-500 bg-amber-500 text-amber-950"
-                        : "border-border/80 bg-background/50 text-muted-foreground"
+                        : "border-border bg-background/50 text-muted-foreground"
                   }`}
                 >
                   {isComplete ? <CheckIcon className="size-3" /> : index + 1}
@@ -286,10 +318,10 @@ export function HybridCheckCard({
           className="flex flex-col gap-4 p-4 motion-reduce:animate-none sm:p-5"
         >
           <div
-            className={`rounded-xl border p-4 ${
+            className={`rounded-none border border-l-2 p-4 ${
               verifiedCheck.result.success
-                ? "border-emerald-500/30 bg-emerald-500/[0.07]"
-                : "border-rose-500/30 bg-rose-500/[0.06]"
+                ? "border-emerald-500/35 border-l-emerald-500 bg-emerald-500/[0.07]"
+                : "border-rose-500/35 border-l-rose-500 bg-rose-500/[0.06]"
             }`}
           >
             <div className="flex items-start justify-between gap-4">
@@ -323,14 +355,27 @@ export function HybridCheckCard({
                 ? `Superaste la CD por ${verifiedCheck.result.margin}.`
                 : `Te faltó ${Math.abs(verifiedCheck.result.margin)} para alcanzar la CD.`}
             </p>
+            {verifiedCheck.result.unlockedClues &&
+              verifiedCheck.result.unlockedClues.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5 border-t border-emerald-500/20 pt-2.5">
+                  {verifiedCheck.result.unlockedClues.map((clue) => (
+                    <span
+                      key={clue.id}
+                      className="rounded-none border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
+                    >
+                      Pista: {clue.titleEs}
+                    </span>
+                  ))}
+                </div>
+              )}
           </div>
 
           <div className="flex flex-col gap-2">
             <p className="text-[10px] font-semibold tracking-[0.16em] text-muted-foreground uppercase">
               Desglose de la tirada
             </p>
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-xl border border-border/70 bg-muted/25 p-3">
+            <div className="grid grid-cols-3 divide-x divide-border border border-border bg-muted/20">
+              <div className="p-3">
                 <p className="text-[10px] text-muted-foreground">
                   Dado{needsTwoDice ? " elegido" : " físico"}
                 </p>
@@ -341,14 +386,14 @@ export function HybridCheckCard({
                   <span className="text-[10px] text-muted-foreground">d20</span>
                 </div>
               </div>
-              <div className="rounded-xl border border-border/70 bg-muted/25 p-3">
+              <div className="p-3">
                 <p className="text-[10px] text-muted-foreground">Modificador</p>
                 <p className="mt-1 font-mono text-xl font-bold tabular-nums">
                   {verifiedCheck.result.expectedModifier > 0 ? "+" : ""}
                   {verifiedCheck.result.expectedModifier}
                 </p>
               </div>
-              <div className="rounded-xl border border-border/70 bg-muted/25 p-3">
+              <div className="p-3">
                 <p className="text-[10px] text-muted-foreground">
                   Clase de dificultad
                 </p>
@@ -379,10 +424,10 @@ export function HybridCheckCard({
                   <span
                     key={`${roll}-${index}`}
                     aria-label={`${roll}, ${kept ? "dado considerado" : "dado descartado"}`}
-                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 font-mono tabular-nums ${
+                    className={`inline-flex items-center gap-1 rounded-none border px-2 py-1 font-mono tabular-nums ${
                       kept
                         ? "border-amber-500/40 bg-amber-500/10 font-semibold text-foreground"
-                        : "border-border/70 bg-muted/30 text-muted-foreground line-through"
+                        : "border-border bg-muted/30 text-muted-foreground line-through"
                     }`}
                   >
                     {kept ? (
@@ -397,9 +442,10 @@ export function HybridCheckCard({
             </div>
           )}
 
-          <div className="flex justify-end border-t border-border/70 pt-3">
+          <div className="flex justify-end border-t border-border pt-3">
             <Button
               type="button"
+              className="rounded-none"
               disabled={continuing}
               onClick={continueNarration}
             >
@@ -429,9 +475,9 @@ export function HybridCheckCard({
           noValidate
           className="flex flex-col gap-4 p-4 sm:p-5"
         >
-          <div className="rounded-xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+          <div className="rounded-none border border-border border-l-2 border-l-amber-500/75 bg-muted/20 p-3.5 sm:p-4">
             <div className="flex items-center gap-2 text-[10px] font-semibold tracking-[0.16em] text-muted-foreground uppercase">
-              <span className="inline-flex size-5 items-center justify-center rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300">
+              <span className="inline-flex size-5 items-center justify-center rounded-none bg-amber-500/10 text-amber-700 dark:text-amber-300">
                 <SparklesIcon className="size-3" aria-hidden="true" />
               </span>
               Qué está en juego
@@ -453,7 +499,7 @@ export function HybridCheckCard({
                   : "Tirá 1d20 en tu mesa e ingresá el resultado."}
               </p>
             </div>
-            <span className="rounded-full border border-border/70 bg-background px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
+            <span className="rounded-none border border-border bg-background px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
               {mode === "normal"
                 ? "Tirada normal"
                 : mode === "advantage"
@@ -472,7 +518,7 @@ export function HybridCheckCard({
               return (
                 <label
                   key={index}
-                  className="group flex min-w-0 flex-col gap-2 rounded-xl border border-border/70 bg-background/60 p-3 transition-colors focus-within:border-amber-500/60 focus-within:bg-amber-500/[0.04]"
+                  className="group flex min-w-0 flex-col gap-2 rounded-none border border-border bg-background/60 p-3 transition-colors focus-within:border-amber-500/70 focus-within:bg-amber-500/[0.04]"
                 >
                   <span className="flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
                     <span>
@@ -494,7 +540,7 @@ export function HybridCheckCard({
                         errorMsg ? "hybrid-check-error" : undefined
                       }
                       autoComplete="off"
-                      className="h-16 border-0 bg-transparent text-center font-mono text-4xl font-bold tabular-nums shadow-none placeholder:text-muted-foreground/25 focus-visible:ring-0"
+                      className="h-16 rounded-none border-0 bg-transparent text-center font-mono text-4xl font-bold tabular-nums shadow-none placeholder:text-muted-foreground/25 focus-visible:ring-0"
                       value={value}
                       onChange={(event) => {
                         setValue(event.target.value)
@@ -514,6 +560,7 @@ export function HybridCheckCard({
               id="hybrid-check-error"
               variant="destructive"
               aria-live="polite"
+              className="rounded-none border-l-2 border-l-destructive"
             >
               <AlertTitle>No se pudo validar la tirada</AlertTitle>
               <AlertDescription>
@@ -525,32 +572,46 @@ export function HybridCheckCard({
             </Alert>
           )}
 
-          <div className="flex flex-col gap-3 border-t border-border/70 pt-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="max-w-sm text-[11px] leading-relaxed text-muted-foreground">
+          <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="max-w-xs text-[11px] leading-relaxed text-muted-foreground">
               El motor suma el modificador de tu ficha y verifica la tirada. No
               ingreses el total.
             </p>
-            <Button
-              type="submit"
-              size="lg"
-              disabled={submitting}
-              className="sm:min-w-48"
-            >
-              {submitting ? (
-                <>
-                  <LoaderCircleIcon
-                    className="animate-spin"
-                    data-icon="inline-start"
-                  />
-                  Validando tirada
-                </>
-              ) : (
-                <>
-                  <DicesIcon data-icon="inline-start" />
-                  Validar resultado
-                </>
-              )}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                disabled={submitting}
+                onClick={() => void handleAutoRoll()}
+                title={`Tirar ${needsTwoDice ? "2d20" : "1d20"} digitalmente por vos`}
+                className="rounded-none border-primary/45 bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary"
+              >
+                <DicesIcon data-icon="inline-start" />
+                Tirar por mí
+              </Button>
+              <Button
+                type="submit"
+                size="lg"
+                disabled={submitting}
+                className="rounded-none sm:min-w-44"
+              >
+                {submitting ? (
+                  <>
+                    <LoaderCircleIcon
+                      className="animate-spin"
+                      data-icon="inline-start"
+                    />
+                    Validando tirada
+                  </>
+                ) : (
+                  <>
+                    <DicesIcon data-icon="inline-start" />
+                    Validar resultado
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </form>
       )}

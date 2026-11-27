@@ -4,6 +4,7 @@ import * as React from "react"
 import {
   CheckIcon,
   CopyIcon,
+  HistoryIcon,
   Loader2Icon,
   RefreshCcwIcon,
   SquareIcon,
@@ -18,6 +19,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { cn } from "@/lib/utils"
 
 export function MessageActions({
   text,
@@ -27,6 +29,9 @@ export function MessageActions({
   isLoadingAudio = false,
   onSpeak,
   onStopAudio,
+  checkpointSeq = null,
+  isRollingBack = false,
+  onRollback,
 }: {
   text: string
   onRetry?: () => void
@@ -35,6 +40,9 @@ export function MessageActions({
   isLoadingAudio?: boolean
   onSpeak?: () => void
   onStopAudio?: () => void
+  checkpointSeq?: number | null
+  isRollingBack?: boolean
+  onRollback?: (seq: number) => void
 }) {
   const [copied, setCopied] = React.useState(false)
   const { playSound } = useSensoryUI()
@@ -101,6 +109,18 @@ export function MessageActions({
           <RefreshCcwIcon />
         </MessageAction>
       )}
+      {typeof checkpointSeq === "number" && onRollback && (
+        <MessageAction
+          label={`Restaurar punto #${checkpointSeq}`}
+          disabled={isRollingBack}
+          onClick={() => {
+            void playSound("navigation.backward")
+            onRollback(checkpointSeq)
+          }}
+        >
+          <HistoryIcon />
+        </MessageAction>
+      )}
     </MessageFooter>
   )
 }
@@ -108,6 +128,7 @@ export function MessageActions({
 function MessageAction({
   label,
   children,
+  className,
   ...props
 }: React.ComponentProps<typeof Button> & { label: string }) {
   return (
@@ -118,13 +139,14 @@ function MessageAction({
             variant="ghost"
             size="icon-sm"
             aria-label={label}
+            className={cn("rounded-none", className)}
             {...props}
           />
         }
       >
         {children}
       </TooltipTrigger>
-      <TooltipContent>
+      <TooltipContent className="rounded-none">
         <p>{label}</p>
       </TooltipContent>
     </Tooltip>

@@ -86,7 +86,7 @@ export function TensionMeter({
             size="sm"
             aria-label={`Termómetro de tensión: ${reading.labelEs} (${reading.score}/100)`}
             onClick={() => play()}
-            className="h-7 gap-2 rounded-full border border-border/60 bg-card/65 px-2.5 text-[11px] font-normal text-muted-foreground transition-colors hover:border-border hover:bg-card hover:text-foreground"
+            className="h-6 gap-1.5 rounded-none border-0 bg-transparent px-2 text-[11px] font-normal text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground aria-expanded:bg-muted/60 aria-expanded:text-foreground"
           />
         }
       >
@@ -97,10 +97,10 @@ export function TensionMeter({
         </span>
         <span
           aria-hidden="true"
-          className="hidden h-1 w-9 overflow-hidden rounded-full bg-muted sm:inline-block"
+          className="hidden h-1 w-9 overflow-hidden rounded-none bg-muted sm:inline-block"
         >
           <span
-            className={cn("block h-full rounded-full transition-all duration-300", tone.bar)}
+            className={cn("block h-full rounded-none transition-all duration-300", tone.bar)}
             style={{ width: `${Math.max(6, reading.score)}%` }}
           />
         </span>
@@ -113,7 +113,7 @@ export function TensionMeter({
           sideOffset={8}
           className="isolate z-50"
         >
-          <Popover.Popup className="w-72 origin-(--transform-origin) divide-y divide-border/70 overflow-hidden rounded-xl border border-border/80 bg-popover p-0 text-popover-foreground shadow-lg outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
+          <Popover.Popup className="w-72 origin-(--transform-origin) divide-y divide-border/70 overflow-hidden rounded-none border border-border bg-popover p-0 text-popover-foreground shadow-lg outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
             <div className="space-y-2 p-3">
               <div className="flex items-center justify-between gap-2 text-xs">
                 <span className={cn("font-semibold", tone.badge)}>
@@ -124,10 +124,10 @@ export function TensionMeter({
                 </span>
               </div>
               <Progress.Root value={reading.score} min={0} max={100}>
-                <Progress.Track className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <Progress.Track className="h-1.5 w-full overflow-hidden rounded-none bg-muted">
                   <Progress.Indicator
                     className={cn(
-                      "block h-full rounded-full transition-all duration-300",
+                      "block h-full rounded-none transition-all duration-300",
                       tone.bar,
                     )}
                   />

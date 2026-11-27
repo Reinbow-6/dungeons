@@ -144,12 +144,17 @@ export function resolveLanguageModel(
     }
     const openrouter = createOpenRouter({ apiKey });
     const isFreeRouter = modelId === "openrouter/free";
-    const reasoning =
-      reasoningEffort === "none"
+    const modelSupportsReasoning = option.supportsReasoning !== false;
+    const effectiveReasoningEffort: ReasoningEffort = modelSupportsReasoning
+      ? reasoningEffort
+      : "none";
+    const reasoning = !modelSupportsReasoning
+      ? undefined
+      : effectiveReasoningEffort === "none"
         ? isFreeRouter
           ? undefined
           : ({ enabled: false, exclude: true, effort: "none" } as const)
-        : ({ enabled: true, effort: reasoningEffort } as const);
+        : ({ enabled: true, effort: effectiveReasoningEffort } as const);
     const settings: OpenRouterChatSettings = {
       ...(reasoning ? { reasoning } : {}),
       usage: { include: true },
@@ -162,7 +167,7 @@ export function resolveLanguageModel(
       provider: "openrouter",
       modelId,
       selectionId: option.id,
-      reasoningEffort,
+      reasoningEffort: effectiveReasoningEffort,
     };
   }
 

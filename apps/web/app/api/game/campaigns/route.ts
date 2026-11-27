@@ -270,3 +270,148 @@ export async function POST(req: Request) {
     });
   }
 }
+
+const DeleteCampaignBodySchema = z.object({
+  campaignId: z.string().trim().optional(),
+  all: z.boolean().optional(),
+  exceptCampaignId: z.string().trim().nullish(),
+});
+
+function invalidDeleteResponse(setCookieHeader: string | null): Response {
+  return withGuestCookie(
+    {
+      ok: false,
+      code: "INVALID_DELETE_REQUEST",
+      error: "Debés indicar campaignId o all=1 para borrar partidas.",
+      messageEs: "Debés indicar campaignId o all=1 para borrar partidas.",
+    },
+    400,
+    setCookieHeader,
+  );
+}
+
+export async function DELETE(req: Request) {
+  let guest;
+  try {
+    guest = resolveGuestSessionFromRequest(req);
+  } catch (err) {
+    return serverErrorResponse({
+      route: "/api/game/campaigns",
+      err,
+      publicMessageEs: "Error interno al verificar la sesión.",
+      status: 500,
+      errorCode: "SESSION_ERROR",
+    });
+  }
+
+  const url = new URL(req.url);
+  const hasQueryCampaignId = url.searchParams.has("campaignId");
+  const queryCampaignId = url.searchParams.get("campaignId")?.trim() ?? "";
+  if (hasQueryCampaignId && !queryCampaignId) {
+    return invalidDeleteResponse(guest.setCookieHeader);
+  }
+
+  const queryAllParam = url.searchParams.get("all");
+  let queryAll = false;
+  if (queryAllParam !== null) {
+    if (queryAllParam === "1" || queryAllParam === "true") {
+      queryAll = true;
+    } else if (queryAllParam === "0" || queryAllParam === "false") {
+      queryAll = false;
+    } else {
+      return invalidDeleteResponse(guest.setCookieHeader);
+    }
+  }
+
+  let rawBody: unknown = {};
+  let bodyText = "";
+  try {
+    bodyText = await req.text();
+  } catch {
+    bodyText = "";
+  }
+  if (bodyText.trim().length > 0) {
+    try {
+      rawBody = JSON.parse(bodyText);
+    } catch {
+      return invalidDeleteResponse(guest.setCookieHeader);
+    }
+  }
+
+  const parsedBody = DeleteCampaignBodySchema.safeParse(rawBody);
+  if (!parsedBody.success) {
+    return invalidDeleteResponse(guest.setCookieHeader);
+  }
+
+  if (
+    parsedBody.data.campaignId !== undefined &&
+    parsedBody.data.campaignId.length === 0
+  ) {
+    return invalidDeleteResponse(guest.setCookieHeader);
+  }
+
+  const campaignId = queryCampaignId || parsedBody.data.campaignId || undefined;
+  const deleteAll = queryAll || parsedBody.data.all === true;
+
+  if ((campaignId && deleteAll) || (!campaignId && !deleteAll)) {
+    return invalidDeleteResponse(guest.setCookieHeader);
+  }
+
+  const guestIdHash = hashGuestId(guest.guestId);
+  try {
+    const store = getDefaultGameStore();
+
+    if (campaignId) {
+      const deleted = await store.deleteCampaign(campaignId, guest.guestId);
+      if (!deleted) {
+        return withGuestCookie(
+          {
+            ok: false,
+            code: "CAMPAIGN_NOT_FOUND",
+            messageEs: "Campaña no encontrada para esta sesión.",
+          },
+          404,
+          guest.setCookieHeader,
+        );
+      }
+
+      return withGuestCookie(
+        {
+          ok: true,
+          deletedCount: 1,
+          deletedCampaignId: campaignId,
+        },
+        200,
+        guest.setCookieHeader,
+      );
+    }
+
+    const queryExcept = url.searchParams.get("exceptCampaignId")?.trim() || undefined;
+    const bodyExcept = parsedBody.data.exceptCampaignId || undefined;
+    const exceptCampaignId = queryExcept ?? bodyExcept;
+
+    const deletedCount = await store.deleteAllCampaignsForGuest(
+      guest.guestId,
+      exceptCampaignId ? { exceptCampaignId } : undefined,
+    );
+
+    return withGuestCookie(
+      {
+        ok: true,
+        deletedCount,
+      },
+      200,
+      guest.setCookieHeader,
+    );
+  } catch (err) {
+    return serverErrorResponse({
+      route: "/api/game/campaigns",
+      err,
+      publicMessageEs: "Error interno al borrar la campaña.",
+      status: 500,
+      errorCode: "STORE_ERROR",
+      setCookieHeader: guest.setCookieHeader,
+      guestIdHash,
+    });
+  }
+}

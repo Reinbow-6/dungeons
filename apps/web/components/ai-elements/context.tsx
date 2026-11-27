@@ -161,7 +161,7 @@ export function ContextTrigger({
           variant="ghost"
           size="sm"
           className={cn(
-            "h-7 gap-2 rounded-full border border-border/60 bg-card/65 px-2.5 text-[11px] font-normal text-muted-foreground transition-colors hover:border-border hover:bg-card hover:text-foreground aria-expanded:border-border aria-expanded:bg-card aria-expanded:text-foreground",
+            "h-6 gap-1.5 rounded-none border-0 bg-transparent px-2 text-[11px] font-normal text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground aria-expanded:bg-muted/60 aria-expanded:text-foreground",
             className,
           )}
           onClick={onClick}
@@ -199,7 +199,7 @@ export function ContextContent({
         <Popover.Popup
           data-slot="context-content"
           className={cn(
-            "w-72 origin-(--transform-origin) divide-y divide-border/70 overflow-hidden rounded-xl border border-border/80 bg-popover p-0 text-popover-foreground shadow-lg outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+            "w-72 origin-(--transform-origin) divide-y divide-border/70 overflow-hidden rounded-none border border-border bg-popover p-0 text-popover-foreground shadow-lg outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
             className,
           )}
           {...props}
@@ -255,10 +255,10 @@ export function ContextContentHeader({
             </span>
           </div>
           <Progress.Root value={pct} min={0} max={100}>
-            <Progress.Track className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <Progress.Track className="h-1.5 w-full overflow-hidden rounded-none bg-muted">
               <Progress.Indicator
                 className={cn(
-                  "block h-full rounded-full transition-all duration-300",
+                  "block h-full rounded-none transition-all duration-300",
                   barTone,
                 )}
               />

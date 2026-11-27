@@ -23,6 +23,9 @@ export interface ServerLogEntry {
   completionTokens?: number;
   cachedTokens?: number;
   cacheHitRate?: number;
+  lorebookEntriesCount?: number;
+  lorebookTokensEst?: number;
+  activeToolsCount?: number;
   toolCalls?: string[];
   lastSeq?: number;
   latencyMs?: number;

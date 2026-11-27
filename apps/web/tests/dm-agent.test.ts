@@ -7,6 +7,7 @@ import type { z } from "zod";
 import {
   buildDmSystemPrompt,
   createDmTools,
+  selectActiveDmTools,
   type DmToolRuntime,
 } from "@/agent/agent";
 import { InMemoryGameStore } from "@/lib/game/store";
@@ -142,7 +143,7 @@ describe("DM agent (Eve architecture) & Aguas Quietas E2E", () => {
       }),
     ).toBe(false);
 
-    // P1.9: declare_check acepta dcRef sin dc numérico explícito, pero exige al menos uno de los dos
+    // P1.9: declare_check acepta dcRef sin dc numérico explícito, o purpose: "investigate", pero exige al menos uno de los tres
     expect(
       parse(tools.declare_check.inputSchema, {
         sceneId: "escena_01_orilla",
@@ -158,7 +159,17 @@ describe("DM agent (Eve architecture) & Aguas Quietas E2E", () => {
         sceneId: "escena_01_orilla",
         actorId: "pc_kael",
         skill: "perception",
-        promptEs: "Tirá sin CD ni dcRef",
+        purpose: "investigate",
+        promptEs: "Escudriñá los juncos y la niebla",
+      }),
+    ).toBe(true);
+
+    expect(
+      parse(tools.declare_check.inputSchema, {
+        sceneId: "escena_01_orilla",
+        actorId: "pc_kael",
+        skill: "perception",
+        promptEs: "Tirá sin CD, dcRef ni purpose investigate",
       }),
     ).toBe(false);
 
@@ -688,5 +699,30 @@ describe("DM agent (Eve architecture) & Aguas Quietas E2E", () => {
     expect(
       seraphinaRun.rt.getState().characters.pc_seraphina?.spellSlots["1"],
     ).toEqual({ current: 2, max: 2 });
+  });
+
+  it("blocks server-rolled investigate in hybrid mode and excludes it via selectActiveDmTools", async () => {
+    const hybridRun = await setupRuntime({
+      mode: "hybrid",
+      presetId: "pc_kael",
+      seed: "hybrid-investigate-guard",
+    });
+    const tools = createDmTools(hybridRun.rt);
+    const activeHybrid = selectActiveDmTools(tools, hybridRun.rt.getState());
+
+    expect(activeHybrid.investigate).toBeUndefined();
+    expect(activeHybrid.resolve_check).toBeUndefined();
+    expect(activeHybrid.resolve_save).toBeUndefined();
+    expect(activeHybrid.declare_check).toBeDefined();
+
+    const blockedRes = (await execTool(tools.investigate, {
+      sceneId: "escena_01_orilla",
+      actorId: "pc_kael",
+      skill: "perception",
+    })) as { ok: boolean; code?: string };
+
+    expect(blockedRes.ok).toBe(false);
+    expect(blockedRes.code).toBe("WRONG_MODE");
+    expect(hybridRun.rt.getState().lastSeq).toBe(0);
   });
 });

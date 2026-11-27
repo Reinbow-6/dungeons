@@ -7,14 +7,16 @@ import {
   CheckIcon,
   Loader2Icon,
   MicIcon,
+  PauseIcon,
+  PlayIcon,
+  SendIcon,
   SquareIcon,
   TerminalIcon,
+  Trash2Icon,
   XIcon,
 } from "lucide-react";
 import * as React from "react";
 
-import { PartyTurnBar } from "@/components/game/party-turn-bar";
-import { SparklesSuggestions } from "@/components/game/sparkles-suggestions";
 import { ModelSelect } from "@/components/model-select";
 import {
   InputGroup,
@@ -58,16 +60,13 @@ export function PromptForm({
   lockedModelIds,
   onModelChange,
   isBusy,
-  campaignId,
   gameState,
   activeActorId,
-  onSelectActor,
   pausedMode = false,
   onTogglePausedMode,
   pausedCount = 0,
   onFlushPaused,
   onClearPaused,
-  lastDmText,
   formRef,
   onSubmit,
   onStop,
@@ -77,16 +76,13 @@ export function PromptForm({
   lockedModelIds?: ReadonlySet<string>;
   onModelChange: (model: string) => void;
   isBusy: boolean;
-  campaignId?: string | null;
   gameState?: GameState | null;
   activeActorId?: string | null;
-  onSelectActor?: (actorId: string) => void;
   pausedMode?: boolean;
   onTogglePausedMode?: () => void;
   pausedCount?: number;
   onFlushPaused?: () => void;
   onClearPaused?: () => void;
-  lastDmText?: string;
   formRef?: React.Ref<PromptFormHandle>;
   onSubmit: (text: string) => void;
   onStop: () => void;
@@ -306,6 +302,10 @@ export function PromptForm({
   const currentActor =
     (activeActorId && gameState ? gameState.characters[activeActorId] : undefined) ??
     partyChars[0];
+  const combatActive = Boolean(gameState?.combat?.active);
+  const canPauseParty = partyChars.length > 1 && Boolean(onTogglePausedMode);
+  const showPausedStrip =
+    partyChars.length > 1 && (pausedMode || pausedCount > 0);
   const shortActorName =
     currentActor?.name.trim().split(/\s+/)[0] ?? currentActor?.name;
   const textareaPlaceholder =
@@ -316,28 +316,14 @@ export function PromptForm({
       : "Escribí tu acción, usá / para mecánicas directas, @ para mencionar o dictá con el micrófono…";
 
   return (
-    <form onSubmit={handleSubmit} className="relative flex flex-col gap-1.5">
-      {partyChars.length > 1 && currentActor && onSelectActor && onTogglePausedMode && onFlushPaused && onClearPaused && (
-        <PartyTurnBar
-          characters={partyChars}
-          activeActorId={currentActor.id}
-          combat={gameState?.combat}
-          isBusy={isBusy}
-          pausedMode={pausedMode}
-          pausedCount={pausedCount}
-          onSelectActor={onSelectActor}
-          onTogglePausedMode={onTogglePausedMode}
-          onFlushPaused={onFlushPaused}
-          onClearPaused={onClearPaused}
-        />
-      )}
+    <form onSubmit={handleSubmit} className="relative flex flex-col">
       {autocompleteOptions.length > 0 && (
         <div
           role="listbox"
           aria-label="Autocompletado de comandos y menciones"
-          className="absolute bottom-full left-0 right-0 z-40 mb-1.5 overflow-hidden rounded-2xl border border-border/85 bg-popover/95 p-1.5 shadow-xl backdrop-blur-md"
+          className="absolute bottom-full left-0 right-0 z-40 mb-1.5 overflow-hidden rounded-none border border-border bg-popover/95 p-1.5 shadow-xl backdrop-blur-md"
         >
-          <div className="mb-1 flex items-center justify-between px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          <div className="mb-1 flex items-center justify-between border-b border-border/60 px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
             <span className="inline-flex items-center gap-1">
               {autocompleteOptions[0]?.kind === "mention" ? (
                 <>
@@ -370,10 +356,10 @@ export function PromptForm({
                   }}
                   onMouseEnter={() => setSelectedIndex(idx)}
                   className={cn(
-                    "flex items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-left text-xs transition-colors",
+                    "flex items-center justify-between gap-2 rounded-none border-l-2 px-2.5 py-1.5 text-left text-xs transition-colors",
                     selected
-                      ? "bg-accent text-accent-foreground"
-                      : "text-foreground/90 hover:bg-accent/50",
+                      ? "border-l-primary bg-accent text-accent-foreground"
+                      : "border-l-transparent text-foreground/90 hover:bg-accent/50",
                   )}
                 >
                   <div className="min-w-0 flex-1">
@@ -385,7 +371,7 @@ export function PromptForm({
                     </div>
                   </div>
                   {opt.badge && (
-                    <span className="shrink-0 rounded-md border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[9.5px] text-muted-foreground">
+                    <span className="shrink-0 rounded-none border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[9.5px] text-muted-foreground">
                       {opt.badge}
                     </span>
                   )}
@@ -399,26 +385,72 @@ export function PromptForm({
       {errorMsg && (
         <div
           role="alert"
-          className="flex items-center justify-between gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-700 dark:text-rose-300"
+          className="mb-1.5 flex items-center justify-between gap-2 rounded-none border border-rose-500/35 border-l-2 border-l-rose-500 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-700 dark:text-rose-300"
         >
           <span className="truncate">{errorMsg}</span>
           <button
             type="button"
             onClick={clearError}
             aria-label="Cerrar aviso de voz"
-            className="shrink-0 rounded p-0.5 hover:bg-rose-500/15"
+            className="shrink-0 rounded-none p-0.5 hover:bg-rose-500/15"
           >
             <XIcon className="size-3.5" />
           </button>
         </div>
       )}
 
-      <InputGroup className="rounded-2xl border border-border/80 bg-card/90 shadow-sm focus-within:border-foreground/25 focus-within:ring-2 focus-within:ring-ring/25">
+      <InputGroup className="rounded-none border border-border bg-card shadow-none focus-within:border-foreground/30 focus-within:ring-1 focus-within:ring-ring/25">
+        {showPausedStrip && (
+          <div className="flex w-full flex-wrap items-center justify-between gap-2 border-b border-border/60 border-l-2 border-l-amber-500 bg-amber-500/[0.06] px-3 py-1.5 text-[11px]">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="inline-flex items-center gap-1 font-mono text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+                <PauseIcon className="size-3 shrink-0" />
+                {pausedMode ? "DM en pausa" : "Cola en pausa"}
+              </span>
+              <span className="truncate text-muted-foreground">
+                {pausedCount === 0
+                  ? "Turnos libres entre jugadores sin enviar al DM."
+                  : `${pausedCount} ${pausedCount === 1 ? "mensaje acumulado" : "mensajes acumulados"}`}
+              </span>
+            </div>
+            <div className="ml-auto flex items-center gap-1.5">
+              {pausedCount > 0 && onClearPaused && (
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() => {
+                    playSound("interaction.tap");
+                    onClearPaused();
+                  }}
+                  className="inline-flex h-6 items-center gap-1 rounded-none border border-border bg-background px-2 text-[10.5px] font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-45"
+                >
+                  <Trash2Icon className="size-3" />
+                  Limpiar
+                </button>
+              )}
+              {onFlushPaused && (
+                <button
+                  type="button"
+                  disabled={isBusy || pausedCount === 0}
+                  onClick={() => {
+                    playSound("interaction.confirm");
+                    onFlushPaused();
+                  }}
+                  className="inline-flex h-6 items-center gap-1 rounded-none bg-amber-500 px-2.5 text-[10.5px] font-semibold text-amber-950 transition-colors hover:bg-amber-400 disabled:opacity-45"
+                >
+                  <SendIcon className="size-3" />
+                  Enviar al DM ({pausedCount})
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         <InputGroupTextarea
           ref={textareaRef}
           aria-label="Acción, comando directo o diálogo para el Dungeon Master"
           placeholder={textareaPlaceholder}
-          className="p-3.5 text-sm"
+          className="rounded-none p-3.5 text-sm"
           value={input}
           disabled={phase !== "idle"}
           onChange={(event) => {
@@ -479,17 +511,62 @@ export function PromptForm({
             }
           }}
         />
-        <InputGroupAddon align="block-end" className="gap-1.5">
-          <ModelSelect
-            models={models}
-            value={model}
-            onValueChange={onModelChange}
-            lockedModelIds={lockedModelIds}
-          />
+        <InputGroupAddon
+          align="block-end"
+          className="w-full justify-between gap-2 px-2.5 py-1.5"
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            <ModelSelect
+              models={models}
+              value={model}
+              onValueChange={onModelChange}
+              lockedModelIds={lockedModelIds}
+            />
+            {canPauseParty && (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="h-4 w-px shrink-0 bg-border/70"
+                />
+                <button
+                  type="button"
+                  disabled={isBusy || (combatActive && !pausedMode)}
+                  onClick={() => {
+                    playSound("interaction.toggle");
+                    onTogglePausedMode?.();
+                  }}
+                  aria-pressed={pausedMode}
+                  title={
+                    combatActive && !pausedMode
+                      ? "Modo pausado disponible fuera de combate (o enviá lo pendiente)"
+                      : "DM en pausa: varios jugadores mandan acciones/diálogos libremente antes de enviar todo al DM"
+                  }
+                  className={cn(
+                    "inline-flex h-7 shrink-0 items-center gap-1 rounded-none border px-2 text-[11px] font-medium transition-colors disabled:opacity-45",
+                    pausedMode
+                      ? "border-amber-500/60 bg-amber-500/15 text-amber-800 dark:text-amber-200"
+                      : "border-transparent bg-transparent text-muted-foreground hover:border-border/70 hover:bg-muted/60 hover:text-foreground",
+                  )}
+                >
+                  {pausedMode ? (
+                    <>
+                      <PlayIcon className="size-3" />
+                      <span>DM en pausa</span>
+                    </>
+                  ) : (
+                    <>
+                      <PauseIcon className="size-3" />
+                      <span>Pausar DM</span>
+                    </>
+                  )}
+                </button>
+              </>
+            )}
+          </div>
 
           {phase === "recording" ? (
-            <div className="ml-auto flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-2.5 py-1">
-              <span className="size-2 shrink-0 animate-pulse rounded-full bg-rose-500" />
+            <div className="ml-auto flex items-center gap-2 rounded-none border border-rose-500/35 bg-rose-500/10 px-2.5 py-1">
+              <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-rose-500" />
               <div
                 aria-hidden="true"
                 className="flex h-3.5 items-center gap-0.5"
@@ -502,7 +579,7 @@ export function PromptForm({
                   return (
                     <span
                       key={idx}
-                      className="w-0.5 rounded-full bg-rose-500/85 transition-[height] duration-75"
+                      className="w-0.5 rounded-none bg-rose-500/85 transition-[height] duration-75"
                       style={{ height: `${pct}%` }}
                     />
                   );
@@ -517,6 +594,7 @@ export function PromptForm({
                 variant="ghost"
                 aria-label="Cancelar grabación"
                 title="Cancelar grabación"
+                className="rounded-none"
                 onClick={() => {
                   playSound("overlay.close");
                   cancelRecording();
@@ -530,7 +608,7 @@ export function PromptForm({
                 variant="default"
                 aria-label="Transcribir audio"
                 title="Detener y transcribir (Alt+M)"
-                className="bg-rose-600 text-white hover:bg-rose-500"
+                className="rounded-none bg-rose-600 text-white hover:bg-rose-500"
                 onClick={() => {
                   playSound("interaction.tap");
                   stopAndTranscribe();
@@ -541,7 +619,7 @@ export function PromptForm({
               </InputGroupButton>
             </div>
           ) : phase === "transcribing" ? (
-            <div className="ml-auto flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-800 dark:text-amber-300">
+            <div className="ml-auto flex items-center gap-1.5 rounded-none border border-amber-500/35 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-800 dark:text-amber-300">
               <Loader2Icon className="size-3.5 animate-spin" />
               <span>Transcribiendo con Whisper…</span>
             </div>
@@ -554,6 +632,7 @@ export function PromptForm({
                 aria-label="Grabar mensaje por voz (Alt+M)"
                 title="Hablar por micrófono · Groq Whisper (Alt+M)"
                 disabled={isBusy}
+                className="rounded-none"
                 onClick={() => {
                   playSound("overlay.open");
                   void startRecording();
@@ -562,27 +641,13 @@ export function PromptForm({
                 <MicIcon className="size-4" />
               </InputGroupButton>
 
-              <SparklesSuggestions
-                campaignId={campaignId}
-                actorId={currentActor?.id}
-                actorName={
-                  partyChars.length > 1 ? currentActor?.name : undefined
-                }
-                lastDmText={lastDmText}
-                disabled={isBusy}
-                onSelectAction={(text) => {
-                  if (!isBusy) {
-                    onSubmit(text);
-                  }
-                }}
-              />
-
               {isBusy ? (
                 <InputGroupButton
                   type="button"
                   size="icon-sm"
                   variant="outline"
                   aria-label="Detener generación"
+                  className="rounded-none"
                   onClick={onStop}
                 >
                   <SquareIcon />
@@ -594,6 +659,7 @@ export function PromptForm({
                   variant="default"
                   aria-label="Enviar mensaje o comando"
                   disabled={!input.trim()}
+                  className="rounded-none"
                 >
                   <ArrowUpIcon />
                 </InputGroupButton>

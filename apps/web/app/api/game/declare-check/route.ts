@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { declareCheck } from "@dungeons/rules";
+import { declareCheck, resolveInvestigate } from "@dungeons/rules";
 import { z } from "zod";
 
 import { resolveGuestSessionFromRequest } from "@/lib/auth/guest-session";
@@ -16,6 +16,7 @@ const DeclareCheckHttpSchema = z.object({
   sceneId: z.string().min(1),
   actorId: z.string().min(1),
   skill: z.string().min(1),
+  purpose: z.enum(["check", "investigate"]).optional(),
   dc: z.number().int().min(1).max(40).optional(),
   dcRef: z.string().min(1).optional(),
   declaredTotal: z.number().int().optional(),
@@ -95,6 +96,7 @@ export async function POST(req: Request) {
       sceneId,
       actorId,
       skill,
+      purpose,
       dc,
       dcRef,
       declaredTotal,
@@ -102,6 +104,144 @@ export async function POST(req: Request) {
       mode,
       checkId,
     } = parsed.data;
+    const sceneClues = loaded.state.scenes[sceneId]?.clues ?? [];
+    const alreadyUnlocked = new Set(loaded.state.unlockedClues[sceneId] ?? []);
+    const hasPendingClues = sceneClues.some((c) => !alreadyUnlocked.has(c.id));
+    const isInvestigateSkill =
+      skill === "investigation" || skill === "perception";
+    const shouldInvestigate =
+      isInvestigateSkill &&
+      (purpose === "investigate" || (hasPendingClues && dc === undefined && !dcRef));
+
+    const resolverCtx = {
+      rng: {
+        next: () => 0.5,
+        nextInt: (min: number) => min,
+      },
+      createId: () => randomUUID(),
+      now: () => new Date().toISOString(),
+    };
+
+    if (shouldInvestigate) {
+      const invRes = resolveInvestigate(
+        loaded.state,
+        {
+          sceneId,
+          actorId,
+          skill,
+          ...(mode ? { mode } : {}),
+          declared: {
+            dieResults,
+            ...(declaredTotal !== undefined ? { declaredTotal } : {}),
+          },
+          ...(checkId ? { checkId } : {}),
+        },
+        resolverCtx,
+      );
+
+      if (!invRes.ok) {
+        return Response.json(
+          {
+            ok: false,
+            code: invRes.code,
+            messageEs: invRes.messageEs,
+            expectedRange: invRes.expectedRange,
+          },
+          { status: 422 },
+        );
+      }
+
+      let authoritativeState = invRes.nextState;
+      try {
+        const outcome = await commitEventWithRetry({
+          store,
+          campaignId: loaded.campaignId,
+          sessionId: loaded.sessionId,
+          guestId: guest.guestId,
+          event: invRes.event,
+          nextState: invRes.nextState,
+          expectedSeq: loaded.logHeadSeq,
+        });
+        if (outcome.reloaded) {
+          authoritativeState = outcome.state;
+        }
+      } catch (err) {
+        if (isStaleSeqError(err)) {
+          return Response.json(
+            {
+              ok: false,
+              code: "STALE_SEQ",
+              messageEs:
+                "La campaña cambió en paralelo. Recargá el estado e intentá nuevamente.",
+            },
+            { status: 409 },
+          );
+        }
+        throw err;
+      }
+
+      const derivedFacts = extractDeterministicFactsFromEvent(
+        invRes.event,
+        authoritativeState,
+      );
+      if (derivedFacts.length > 0) {
+        try {
+          await store.saveMemoryFacts(
+            loaded.campaignId,
+            loaded.sessionId,
+            derivedFacts,
+          );
+        } catch {
+          // Non-fatal memory write
+        }
+      }
+
+      const lowestPendingDc = sceneClues
+        .filter((c) => !alreadyUnlocked.has(c.id))
+        .reduce(
+          (min, c) => (c.dc < min ? c.dc : min),
+          sceneClues[0]?.dc ?? 12,
+        );
+      const success =
+        invRes.unlockedClues.length > 0 || invRes.total >= lowestPendingDc;
+      const margin = invRes.total - lowestPendingDc;
+
+      const headers = new Headers();
+      if (guest.setCookieHeader) {
+        headers.set("Set-Cookie", guest.setCookieHeader);
+      }
+
+      return Response.json(
+        {
+          ok: true,
+          result: {
+            ok: true,
+            code: "OK",
+            purpose: "investigate" as const,
+            checkId: invRes.checkId,
+            skill,
+            dc: lowestPendingDc,
+            declaredTotal: invRes.total,
+            dieResults,
+            naturalRoll: invRes.naturalRoll,
+            expectedModifier: invRes.modifier,
+            success,
+            margin,
+            unlockedClues: invRes.unlockedClues.map((c) => ({
+              id: c.id,
+              dc: c.dc,
+              titleEs: c.titleEs,
+              descriptionEs: c.descriptionEs,
+              tacticalEffectEs: c.tacticalEffectEs,
+            })),
+          },
+          state: authoritativeState,
+          event: invRes.event,
+        },
+        { status: 200, headers },
+      );
+    }
+
     const hasMatchingClue = Boolean(
       dcRef && loaded.state.scenes[sceneId]?.clues.some((c) => c.id === dcRef),
     );
@@ -119,14 +259,7 @@ export async function POST(req: Request) {
       checkId,
     };
 
-    const result = declareCheck(loaded.state, checkInput, {
-      rng: {
-        next: () => 0.5,
-        nextInt: (min) => min,
-      },
-      createId: () => randomUUID(),
-      now: () => new Date().toISOString(),
-    });
+    const result = declareCheck(loaded.state, checkInput, resolverCtx);
 
     if (!result.ok) {
       return Response.json(

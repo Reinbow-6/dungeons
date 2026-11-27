@@ -832,6 +832,13 @@ export function resolveInvestigate(
     source = 'player-declared';
     declaredTotal = declResult.declaredTotal;
   } else {
+    if (actor.rollAuthority === 'player-declared') {
+      return {
+        ok: false,
+        code: 'WRONG_MODE',
+        messageEs: `El personaje "${actor.id}" está en Modo Híbrido (dados físicos): pedí la tirada al jugador con declare_check (purpose: "investigate") en lugar de tirar con investigate.`,
+      };
+    }
     const modBreakdown = getCheckModifier(actor, skill, state.ruleset);
     const effectiveMode = combineRollMode(
       input.mode ?? 'normal',

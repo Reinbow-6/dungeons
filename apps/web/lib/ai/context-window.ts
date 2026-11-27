@@ -1,9 +1,9 @@
 import type { DmChatUIMessage } from "@/agent/types";
 import { sanitizeUntrustedText } from "@/lib/ai/prompt-safety";
 
-export const DEFAULT_MAX_RECENT_MESSAGES = 16;
-export const DEFAULT_MAX_ESTIMATED_CHARS = 24_000;
-const MAX_DIGEST_CHARS = 1_200;
+export const DEFAULT_MAX_RECENT_MESSAGES = 10;
+export const DEFAULT_MAX_ESTIMATED_CHARS = 12_000;
+const MAX_DIGEST_CHARS = 900;
 
 function extractMessageTextSnippet(msg: DmChatUIMessage): string {
   const textPieces: string[] = [];
@@ -59,13 +59,17 @@ export function compactConversationContext(params: {
   maxEstimatedChars?: number;
 }): CompactContextResult {
   const envMax = Number.parseInt(process.env.MAX_CONTEXT_MESSAGES ?? "", 10);
+  const envChars = Number.parseInt(process.env.MAX_CONTEXT_CHARS ?? "", 10);
   const maxRecentMessages =
     params.maxRecentMessages ??
     (Number.isFinite(envMax) && envMax > 0
       ? envMax
       : DEFAULT_MAX_RECENT_MESSAGES);
   const maxEstimatedChars =
-    params.maxEstimatedChars ?? DEFAULT_MAX_ESTIMATED_CHARS;
+    params.maxEstimatedChars ??
+    (Number.isFinite(envChars) && envChars > 0
+      ? envChars
+      : DEFAULT_MAX_ESTIMATED_CHARS);
 
   const { messages } = params;
   if (messages.length === 0) {

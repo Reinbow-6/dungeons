@@ -3,12 +3,20 @@ import { convertToModelMessages, validateUIMessages } from "ai";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  buildDmPromptLayers,
   createDmTools,
+  injectDynamicContextIntoMessages,
+  selectActiveDmTools,
   type DmChatMessagePart,
   type DmChatUIMessage,
   type DmToolRuntime,
 } from "@/agent/agent";
 import { GET as getUsage } from "@/app/api/usage/route";
+import {
+  compactConversationContext,
+  DEFAULT_MAX_ESTIMATED_CHARS,
+  DEFAULT_MAX_RECENT_MESSAGES,
+} from "@/lib/ai/context-window";
 import {
   pruneHistoricalToolOutputs,
   summarizeToolPartForHistory,
@@ -538,5 +546,295 @@ describe("Phase 2a & 2b: Cache telemetry extraction & per-session daily usage", 
       modelId: "deepseek/deepseek-v3.2",
       accessTier: "whitelisted",
     });
+  });
+});
+
+describe("Phase 4: Stable prompt prefix caching & on-demand Lorebook", () => {
+  it("produces byte-identical staticSystemPrompt across turns even when state, combat, events, and memory change", async () => {
+    const store = new InMemoryGameStore();
+    const loaded = await store.createCampaign({
+      guestId: GUEST,
+      presetId: "pc_kael",
+      ruleset: "5e-full",
+    });
+
+    const turn1 = buildDmPromptLayers(loaded.state, loaded.events, {
+      sessionNumber: 1,
+      latestUserText: "Miro la orilla.",
+      recentConversationTexts: ["Miro la orilla."],
+    });
+
+    // Mutate dynamic turn state heavily for turn 2
+    const mutatedState = structuredClone(loaded.state);
+    mutatedState.lastSeq = 12;
+    mutatedState.sceneId = "escena_04_campamento";
+    mutatedState.characters.pc_kael!.hp.current = 3;
+    mutatedState.characters.pc_kael!.level = 2;
+    mutatedState.characters.pc_kael!.conditions = ["poisoned"];
+    mutatedState.unlockedClues = {
+      escena_04_campamento: ["pista_camp_14"],
+    };
+    mutatedState.combat = {
+      active: true,
+      round: 3,
+      turnIndex: 0,
+      combatants: [
+        {
+          id: "pc_kael",
+          actorId: "pc_kael",
+          kind: "pc",
+          name: "Kael de Oakhaven",
+          initiative: 15,
+          hp: { current: 3, max: 11 },
+          ac: 14,
+          attacks: [],
+          vulnerabilities: [],
+          resistances: [],
+          immunities: [],
+          conditions: ["poisoned"],
+          defeated: false,
+        },
+      ],
+    };
+
+    const turn2 = buildDmPromptLayers(
+      mutatedState,
+      [
+        {
+          id: "ev_1",
+          seq: 12,
+          type: "COMBAT_STARTED",
+          source: "dm-agent",
+          actor: "pc_kael",
+          timestamp: "2026-11-26T22:00:00.000Z",
+          revertedByEventId: null,
+          payload: { sceneId: "escena_04_campamento", enemyIds: ["explorador"] },
+        } as unknown as (typeof loaded.events)[number],
+      ],
+      {
+        sessionNumber: 2,
+        worldSummary: "Frontera en guerra.",
+        olderTurnsDigest: "Resumen previo de 8 turnos.",
+        latestUserText: "Ataco en el campamento.",
+        recentConversationTexts: [
+          "Llegamos al embarcadero",
+          "Ataco en el campamento.",
+        ],
+        memoryFacts: [
+          {
+            id: "mf_1",
+            campaignId: loaded.campaignId,
+            sessionId: loaded.sessionId,
+            category: "npc",
+            content: "Pacto con los vigías del campamento.",
+            importance: 9,
+            eventSeq: 5,
+            revertedBySeq: null,
+            source: "dm-memory",
+            createdAt: "2026-11-26T22:00:00.000Z",
+          },
+        ],
+      },
+    );
+
+    expect(turn1.staticSystemPrompt).toBe(turn2.staticSystemPrompt);
+    expect(turn1.staticSystemPrompt).toContain("## Contexto estructural de la campaña");
+    expect(turn1.staticSystemPrompt).not.toContain("lastSeq");
+    expect(turn1.staticSystemPrompt).not.toContain("11/11");
+    expect(turn2.dynamicTurnContext).toContain("3/11");
+    expect(turn2.dynamicTurnContext).toContain("<lorebook>");
+  });
+
+  it("injects <game_state> only into the latest user message without altering earlier messages or adding system messages", () => {
+    const firstUser = {
+      id: "m1",
+      role: "user" as const,
+      content: "<player_action>\nHola\n</player_action>",
+    };
+    const firstAssistant = {
+      id: "m2",
+      role: "assistant" as const,
+      content: "La niebla cubre el río.",
+    };
+    const secondUserArray = {
+      id: "m3",
+      role: "user" as const,
+      content: [{ type: "text", text: "<player_action>\nAvanzo\n</player_action>" }],
+    };
+
+    const injected = injectDynamicContextIntoMessages(
+      [firstUser, firstAssistant, secondUserArray],
+      "## Estado vivo\n- Escena: orilla",
+    );
+
+    expect(injected).toHaveLength(3);
+    expect(injected.every((m) => (m.role as string) !== "system")).toBe(true);
+    // Earlier messages stay untouched byte-for-byte (preserving reference & cache prefix)
+    expect(injected[0]).toBe(firstUser);
+    expect(injected[1]).toBe(firstAssistant);
+
+    const updatedParts = injected[2]!.content as Array<{
+      type: string;
+      text: string;
+    }>;
+    expect(updatedParts[0]!.text).toContain("<game_state>");
+    expect(updatedParts[0]!.text).toContain("## Estado vivo");
+    expect(updatedParts[0]!.text).toContain("</game_state>");
+    expect(updatedParts[0]!.text).toContain("<player_action>\nAvanzo\n</player_action>");
+
+    // Also supports string content on latest user message
+    const injectedString = injectDynamicContextIntoMessages(
+      [firstUser],
+      "## Estado vivo",
+    );
+    expect(typeof injectedString[0]!.content).toBe("string");
+    expect(injectedString[0]!.content as string).toContain("<game_state>");
+    expect(injectedString[0]!.content as string).toContain("<player_action>\nHola");
+  });
+
+  it("activates Lorebook entries by recent mentions and respects requiresAnyClue anti-spoiler guard", async () => {
+    const store = new InMemoryGameStore();
+    const loaded = await store.createCampaign({ guestId: GUEST });
+    loaded.state.sceneId = "escena_06_comandante";
+
+    const lockedLayers = buildDmPromptLayers(loaded.state, loaded.events, {
+      recentConversationTexts: [
+        "Pregunto a Mireia por sus órdenes y el pliego sellado.",
+      ],
+    });
+    expect(
+      lockedLayers.lorebook.entries.map((e) => e.entry.id),
+    ).not.toContain("lore_desercion_mireia");
+    expect(lockedLayers.dynamicTurnContext).not.toContain(
+      "desobedeció la retirada",
+    );
+
+    loaded.state.unlockedClues = {
+      escena_06_comandante: ["pista_mireia_14"],
+    };
+    const unlockedLayers = buildDmPromptLayers(loaded.state, loaded.events, {
+      recentConversationTexts: [
+        "Le muestro las órdenes a Mireia en el muelle.",
+      ],
+    });
+    expect(unlockedLayers.lorebook.entries.map((e) => e.entry.id)).toContain(
+      "lore_desercion_mireia",
+    );
+    expect(unlockedLayers.lorebook.usedTokens).toBeLessThanOrEqual(450);
+    expect(unlockedLayers.dynamicTurnContext).toContain("<lorebook>");
+    expect(unlockedLayers.dynamicTurnContext).toContain(
+      "Órdenes Rotas de la Comandante Mireia",
+    );
+  });
+});
+
+describe("Phase 3 & Phase 5: Dynamic tool filtering & <game_state> trims", () => {
+  it("filters DM tools dynamically by combat, spellcasting, death saves, rollAuthority, clues, and transitions", async () => {
+    const store = new InMemoryGameStore();
+    const loaded = await store.createCampaign({
+      guestId: GUEST,
+      presetId: "pc_kael",
+      mode: "digital",
+      ruleset: "5e-lite",
+    });
+    const allTools = createDmTools(makeDummyRuntime(loaded));
+
+    // Exploration, digital, non-caster, clues present, transitions present
+    const exploreKeys = Object.keys(
+      selectActiveDmTools(allTools, loaded.state),
+    );
+    expect(exploreKeys).not.toContain("combat_attack");
+    expect(exploreKeys).not.toContain("combat_next_turn");
+    expect(exploreKeys).not.toContain("combat_end");
+    expect(exploreKeys).not.toContain("cast_spell");
+    expect(exploreKeys).not.toContain("death_save");
+    expect(exploreKeys).not.toContain("declare_check");
+    expect(exploreKeys).toContain("resolve_check");
+    expect(exploreKeys).toContain("investigate");
+    expect(exploreKeys).toContain("transition_scene");
+    expect(exploreKeys).toContain("combat_start");
+
+    // Active combat in 5e-full with dying spellcaster in hybrid mode, no clues/transitions
+    const combatState = structuredClone(loaded.state);
+    combatState.ruleset = "5e-full";
+    combatState.sceneId = "escena_08_otra_orilla";
+    combatState.combat = {
+      active: true,
+      round: 1,
+      turnIndex: 0,
+      combatants: [],
+    };
+    combatState.characters.pc_kael!.hp.current = 0;
+    combatState.characters.pc_kael!.rollAuthority = "player-declared";
+    combatState.characters.pc_kael!.spellSlots = { "1": { current: 1, max: 1 } };
+    combatState.characters.pc_kael!.spellcastingAbility = "wis";
+
+    const combatKeys = Object.keys(
+      selectActiveDmTools(allTools, combatState),
+    );
+    expect(combatKeys).toContain("combat_attack");
+    expect(combatKeys).toContain("combat_next_turn");
+    expect(combatKeys).toContain("combat_end");
+    expect(combatKeys).toContain("cast_spell");
+    expect(combatKeys).toContain("death_save");
+    expect(combatKeys).toContain("declare_check");
+    expect(combatKeys).not.toContain("combat_start");
+    expect(combatKeys).not.toContain("take_rest");
+    expect(combatKeys).not.toContain("transition_scene");
+    expect(combatKeys).not.toContain("investigate");
+    expect(combatKeys).not.toContain("resolve_check");
+    expect(combatKeys).not.toContain("resolve_save");
+  });
+
+  it("trims narrativeHook after seq 0, limits proficient skills, and tightens active window defaults", async () => {
+    expect(DEFAULT_MAX_RECENT_MESSAGES).toBe(10);
+    expect(DEFAULT_MAX_ESTIMATED_CHARS).toBe(12_000);
+
+    const store = new InMemoryGameStore();
+    const loaded = await store.createCampaign({
+      guestId: GUEST,
+      presetId: "pc_kael",
+    });
+
+    const seq0 = buildDmPromptLayers(loaded.state, loaded.events);
+    expect(seq0.dynamicTurnContext).toContain("Gancho narrativo");
+    expect(seq0.dynamicTurnContext).toContain("Competencias clave:");
+    expect(seq0.dynamicTurnContext).not.toContain("deception:");
+
+    const afterTurn1 = structuredClone(loaded.state);
+    afterTurn1.lastSeq = 1;
+    const seq1 = buildDmPromptLayers(afterTurn1, loaded.events);
+    expect(seq1.dynamicTurnContext).not.toContain("Gancho narrativo");
+
+    const prevEnv = process.env.MAX_CONTEXT_CHARS;
+    process.env.MAX_CONTEXT_CHARS = "120";
+    try {
+      const longMessages: DmChatUIMessage[] = [
+        {
+          id: "u1",
+          role: "user",
+          parts: [{ type: "text", text: "Mensaje viejo ".repeat(10) }],
+        },
+        {
+          id: "a1",
+          role: "assistant",
+          parts: [{ type: "text", text: "Respuesta vieja ".repeat(10) }],
+        },
+        {
+          id: "u2",
+          role: "user",
+          parts: [{ type: "text", text: "Último turno." }],
+        },
+      ];
+      const compacted = compactConversationContext({ messages: longMessages });
+      expect(compacted.recentMessages).toHaveLength(1);
+      expect(compacted.trimmedCount).toBe(2);
+    } finally {
+      if (prevEnv === undefined) {
+        delete process.env.MAX_CONTEXT_CHARS;
+      } else {
+        process.env.MAX_CONTEXT_CHARS = prevEnv;
+      }
+    }
   });
 });

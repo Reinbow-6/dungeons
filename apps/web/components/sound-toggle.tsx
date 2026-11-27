@@ -66,6 +66,7 @@ export function SoundToggle() {
             type="button"
             variant="ghost"
             size="icon-sm"
+            className="rounded-none"
             aria-label={`${label} (D)`}
             aria-pressed={!muted}
             onClick={handleToggle}

@@ -8,7 +8,7 @@ import { RollModeZod, type DmToolRuntime } from "./runtime";
 export function createInvestigateTool(rt: DmToolRuntime) {
   return tool({
     description:
-      "Inspecciona la escena actual para desbloquear pistas escalonadas según la CD alcanzada (Investigación o Percepción).",
+      "SOLO Modo Digital (engine-rolled): inspecciona la escena actual tirando 1d20 automático para desbloquear pistas escalonadas. Si el PJ tiene rollAuthority='player-declared' (Modo Híbrido), NO uses esta tool: llamá a declare_check con purpose='investigate'.",
     inputSchema: z
       .object({
         sceneId: z.string().min(1),
@@ -26,7 +26,7 @@ export function createInvestigateTool(rt: DmToolRuntime) {
       });
 
       if (!res.ok) {
-        return { ok: false, messageEs: res.messageEs };
+        return { ok: false, code: res.code, messageEs: res.messageEs };
       }
 
       await rt.commitEvent(res.event, res.nextState);

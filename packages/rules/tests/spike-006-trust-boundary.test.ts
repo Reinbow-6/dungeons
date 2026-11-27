@@ -364,4 +364,26 @@ describe('Spike 006 (trust-boundary): declare_check validation & state protectio
       'pista_camp_18',
     ]);
   });
+
+  it('rejects resolveInvestigate without declared roll when actor is in hybrid mode', () => {
+    const hybrid = createAguasQuietasInitialState({ hybrid: true });
+    const snapshot = structuredClone(hybrid);
+    const ctx = makeContext();
+
+    const res = resolveInvestigate(
+      hybrid,
+      {
+        sceneId: 'escena_01_orilla',
+        actorId: 'pc_kael',
+        skill: 'perception',
+      },
+      ctx,
+    );
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.code).toBe('WRONG_MODE');
+    }
+    expect(hybrid).toEqual(snapshot);
+  });
 });

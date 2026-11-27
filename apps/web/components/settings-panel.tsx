@@ -8,7 +8,6 @@ import {
   CheckIcon,
   LockIcon,
   RotateCcwIcon,
-  SlidersHorizontalIcon,
   SparklesIcon,
   Volume2Icon,
   WrenchIcon,
@@ -20,11 +19,6 @@ import { useAuthAccess } from "@/components/auth-dialog";
 import { Button } from "@/components/ui/button";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { MODELS, type ReasoningEffort } from "@/lib/models";
 import {
   type StreamSpeed,
@@ -94,7 +88,7 @@ function SettingSwitchRow({
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/55 px-3 py-2 transition-opacity",
+        "flex items-center justify-between gap-3 rounded-none border border-border/60 bg-background/55 px-3 py-2 transition-opacity",
         disabled && "opacity-55",
       )}
     >
@@ -119,7 +113,7 @@ function SettingSwitchRow({
         aria-label={label}
         onCheckedChange={onCheckedChange}
         className={cn(
-          "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border p-0.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed",
+          "relative inline-flex h-5 w-9 shrink-0 items-center rounded-none border p-0.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed",
           checked
             ? "border-amber-500/50 bg-amber-600 dark:bg-amber-500"
             : "border-border bg-muted",
@@ -127,7 +121,7 @@ function SettingSwitchRow({
       >
         <Switch.Thumb
           className={cn(
-            "pointer-events-none block size-3.5 rounded-full bg-background shadow-xs transition-transform",
+            "pointer-events-none block size-3.5 rounded-none bg-background shadow-xs transition-transform",
             checked ? "translate-x-4" : "translate-x-0",
           )}
         />
@@ -161,6 +155,11 @@ export function SettingsPanel() {
     }
     return selected?.id ?? MODELS[0]?.id ?? settings.textModel;
   }, [isGuest, settings.textModel]);
+
+  const selectedTextModelOption =
+    MODELS.find((m) => m.id === effectiveTextModelId) ?? MODELS[0];
+  const selectedModelSupportsReasoning =
+    selectedTextModelOption?.supportsReasoning !== false;
 
   const activeReasoningOption =
     REASONING_OPTIONS.find((opt) => opt.value === settings.reasoningEffort) ??
@@ -208,6 +207,15 @@ export function SettingsPanel() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [handleOpenChange, open]);
 
+  React.useEffect(() => {
+    function onOpenSettings() {
+      handleOpenChange(true);
+    }
+    window.addEventListener("dungeons:open-settings", onOpenSettings);
+    return () =>
+      window.removeEventListener("dungeons:open-settings", onOpenSettings);
+  }, [handleOpenChange]);
+
   function handleOpenAuth() {
     void playSound("overlay.open");
     setOpen(false);
@@ -220,34 +228,12 @@ export function SettingsPanel() {
 
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Abrir ajustes de modelos, voz y desarrollador (P)"
-              aria-expanded={open}
-              aria-haspopup="dialog"
-              onClick={() => handleOpenChange(true)}
-              className="fixed bottom-[calc(env(safe-area-inset-bottom)+8rem)] left-3 z-30 border border-border/70 bg-card/90 shadow-sm backdrop-blur-md sm:bottom-5 sm:left-5"
-            >
-              <SlidersHorizontalIcon className="size-4" />
-            </Button>
-          }
-        />
-        <TooltipContent>
-          Ajustes de la Mesa <Kbd>P</Kbd>
-        </TooltipContent>
-      </Tooltip>
-
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] transition-opacity duration-200 data-ending-style:opacity-0 data-starting-style:opacity-0" />
         <Dialog.Popup
           role="dialog"
           aria-modal="true"
-              className="fixed inset-y-0 left-0 z-50 flex w-[412px] max-w-[94vw] flex-col border-r border-border/80 bg-sidebar/95 text-xs shadow-2xl backdrop-blur-xl transition-transform duration-200 ease-out outline-none data-ending-style:-translate-x-full data-starting-style:-translate-x-full"
+          className="fixed inset-y-0 left-0 z-50 flex w-[412px] max-w-[94vw] flex-col rounded-none border-r border-border bg-sidebar/95 text-xs shadow-2xl backdrop-blur-xl transition-transform duration-200 ease-out outline-none data-ending-style:-translate-x-full data-starting-style:-translate-x-full"
         >
           {/* Cabecera */}
           <div className="flex items-start justify-between gap-3 border-b border-border/70 px-4 py-3.5">
@@ -258,7 +244,7 @@ export function SettingsPanel() {
                 </Dialog.Title>
                 <span
                   className={cn(
-                    "rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium",
+                    "rounded-none border px-2 py-0.5 font-mono text-[10px] font-medium",
                     isGuest
                       ? "border-border/80 bg-muted/70 text-muted-foreground"
                       : "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
@@ -299,7 +285,7 @@ export function SettingsPanel() {
             {/* 1. Modelo de Texto (DM) */}
             <section
               aria-labelledby="settings-text-model-title"
-              className="flex flex-col gap-2.5 rounded-xl border border-border/80 bg-card/85 p-3"
+              className="flex flex-col gap-2.5 rounded-none border border-border/80 bg-card/85 p-3"
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5">
@@ -340,7 +326,7 @@ export function SettingsPanel() {
                         updateSettings({ textModel: model.id });
                       }}
                       className={cn(
-                        "flex min-h-10 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        "flex min-h-10 items-center justify-between gap-2 rounded-none border px-3 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
                         locked
                           ? "cursor-not-allowed border-border/60 bg-muted/35 opacity-65"
                           : selected
@@ -358,7 +344,7 @@ export function SettingsPanel() {
                             aria-label="Solo Whitelist"
                           />
                         ) : selected ? (
-                          <span className="inline-flex size-4 items-center justify-center rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                          <span className="inline-flex size-4 items-center justify-center rounded-none bg-amber-500/20 text-amber-700 dark:text-amber-300">
                             <CheckIcon className="size-2.5" />
                           </span>
                         ) : null}
@@ -375,7 +361,7 @@ export function SettingsPanel() {
                 <div
                   role="radiogroup"
                   aria-label="Velocidad del streaming de texto"
-                  className="grid grid-cols-4 gap-1 rounded-xl border border-border/80 bg-muted/50 p-1"
+                  className="grid grid-cols-4 gap-1 rounded-none border border-border/80 bg-muted/50 p-1"
                 >
                   {STREAM_SPEED_OPTIONS.map((opt) => {
                     const active = settings.streamSpeed === opt.value;
@@ -392,7 +378,7 @@ export function SettingsPanel() {
                           }
                         }}
                         className={cn(
-                          "min-h-7 rounded-lg px-1.5 py-1 text-[11px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          "min-h-7 rounded-none px-1.5 py-1 text-[11px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
                           active
                             ? "bg-card text-foreground shadow-xs ring-1 ring-amber-500/35"
                             : "text-muted-foreground hover:text-foreground",
@@ -406,11 +392,11 @@ export function SettingsPanel() {
               </div>
 
               {isGuest && (
-                <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-2.5 py-2 text-[11px]">
+                <div className="flex items-center justify-between gap-2 rounded-none border border-amber-500/25 bg-amber-500/[0.06] px-2.5 py-2 text-[11px]">
                   <span className="text-muted-foreground">
                     {authenticated
                       ? "Tu cuenta aún no está en la whitelist."
-                      : "Desbloqueá Main iniciando sesión."}
+                      : "Desbloqueá Whale iniciando sesión."}
                   </span>
                   <button
                     type="button"
@@ -426,7 +412,7 @@ export function SettingsPanel() {
             {/* 2. Razonamiento (Thinking) */}
             <section
               aria-labelledby="settings-reasoning-title"
-              className="flex flex-col gap-2.5 rounded-xl border border-border/80 bg-card/85 p-3"
+              className="flex flex-col gap-2.5 rounded-none border border-border/80 bg-card/85 p-3"
             >
               <div className="flex items-center gap-1.5">
                 <BrainIcon className="size-3.5 text-violet-600 dark:text-violet-400" />
@@ -441,7 +427,7 @@ export function SettingsPanel() {
               <div
                 role="radiogroup"
                 aria-labelledby="settings-reasoning-title"
-                className="grid grid-cols-4 gap-1 rounded-xl border border-border/80 bg-muted/50 p-1"
+                className="grid grid-cols-4 gap-1 rounded-none border border-border/80 bg-muted/50 p-1"
               >
                 {REASONING_OPTIONS.map((option) => {
                   const active = settings.reasoningEffort === option.value;
@@ -458,7 +444,7 @@ export function SettingsPanel() {
                         }
                       }}
                       className={cn(
-                        "min-h-8 rounded-lg px-2 py-1 text-[11px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        "min-h-8 rounded-none px-2 py-1 text-[11px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
                         active
                           ? "bg-card text-foreground shadow-xs ring-1 ring-amber-500/35"
                           : "text-muted-foreground hover:text-foreground",
@@ -478,12 +464,19 @@ export function SettingsPanel() {
                 consistencia del DM, pero incrementa la latencia y el consumo de
                 créditos.
               </p>
+              {!selectedModelSupportsReasoning && (
+                <p className="rounded-none border border-border/70 bg-background/55 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+                  {selectedTextModelOption?.name ?? "Este modelo"} no usa
+                  razonamiento extendido; este ajuste se aplica al volver a
+                  Whale.
+                </p>
+              )}
             </section>
 
             {/* 3. Voz del Dungeon Master (TTS) */}
             <section
               aria-labelledby="settings-tts-title"
-              className="flex flex-col gap-2.5 rounded-xl border border-border/80 bg-card/85 p-3"
+              className="flex flex-col gap-2.5 rounded-none border border-border/80 bg-card/85 p-3"
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5">
@@ -496,7 +489,7 @@ export function SettingsPanel() {
                   </h3>
                 </div>
                 {isGuest && (
-                  <span className="inline-flex items-center gap-1 rounded border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                  <span className="inline-flex items-center gap-1 rounded-none border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-amber-700 dark:text-amber-300">
                     <LockIcon className="size-2.5" />
                     Solo Whitelist
                   </span>
@@ -504,7 +497,7 @@ export function SettingsPanel() {
               </div>
 
               {isGuest ? (
-                <div className="flex flex-col gap-2.5 rounded-lg border border-border/70 bg-background/55 p-3">
+                <div className="flex flex-col gap-2.5 rounded-none border border-border/70 bg-background/55 p-3">
                   <p className="text-[11px] leading-relaxed text-muted-foreground">
                     {authenticated
                       ? "Tu cuenta está autenticada, pero la voz con HeyGen y Fish requiere estar en la whitelist."
@@ -566,7 +559,7 @@ export function SettingsPanel() {
                                 });
                               }}
                               className={cn(
-                                "flex min-h-10 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                "flex min-h-10 items-center justify-between gap-2 rounded-none border px-3 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
                                 active
                                   ? "border-emerald-500/45 bg-emerald-500/10 text-foreground"
                                   : "border-border/70 bg-background/60 text-foreground/90 hover:border-border hover:bg-muted/50",
@@ -576,7 +569,7 @@ export function SettingsPanel() {
                                 {ttsModel.name}
                               </span>
                               {active && (
-                                <span className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
+                                <span className="inline-flex size-4 shrink-0 items-center justify-center rounded-none bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
                                   <CheckIcon className="size-2.5" />
                                 </span>
                               )}
@@ -586,14 +579,14 @@ export function SettingsPanel() {
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background/55 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2 rounded-none border border-border/60 bg-background/55 px-3 py-2">
                       <span className="text-xs font-medium text-foreground">
                         Velocidad de voz
                       </span>
                       <div
                         role="radiogroup"
                         aria-label="Velocidad de reproducción TTS"
-                        className="inline-flex rounded-lg border border-border/70 bg-muted/60 p-0.5"
+                        className="inline-flex rounded-none border border-border/70 bg-muted/60 p-0.5"
                       >
                         {TTS_SPEED_OPTIONS.map((opt) => {
                           const active =
@@ -610,7 +603,7 @@ export function SettingsPanel() {
                                 updateSettings({ ttsSpeed: opt.value });
                               }}
                               className={cn(
-                                "min-h-6 rounded-md px-2 py-0.5 font-mono text-[11px] font-medium tabular-nums transition-colors",
+                                "min-h-6 rounded-none px-2 py-0.5 font-mono text-[11px] font-medium tabular-nums transition-colors",
                                 active
                                   ? "bg-card text-foreground shadow-xs"
                                   : "text-muted-foreground hover:text-foreground",
@@ -641,7 +634,7 @@ export function SettingsPanel() {
             {/* 4. Opciones de Desarrollador */}
             <section
               aria-labelledby="settings-dev-title"
-              className="flex flex-col gap-2.5 rounded-xl border border-border/80 bg-card/85 p-3"
+              className="flex flex-col gap-2.5 rounded-none border border-border/80 bg-card/85 p-3"
             >
               <div className="flex items-center gap-1.5">
                 <WrenchIcon className="size-3.5 text-sky-600 dark:text-sky-400" />
@@ -711,7 +704,7 @@ export function SettingsPanel() {
 
             <section
               aria-labelledby="settings-shortcuts-title"
-              className="flex flex-col gap-2 rounded-xl border border-border/70 bg-card/60 p-3"
+              className="flex flex-col gap-2 rounded-none border border-border/70 bg-card/60 p-3"
             >
               <h3
                 id="settings-shortcuts-title"
@@ -729,6 +722,14 @@ export function SettingsPanel() {
                   <Kbd>Alt</Kbd>
                   <span>+</span>
                   <Kbd>H</Kbd>
+                </KbdGroup>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                <span>Abrir o cerrar campañas</span>
+                <KbdGroup>
+                  <Kbd>Alt</Kbd>
+                  <span>+</span>
+                  <Kbd>C</Kbd>
                 </KbdGroup>
               </div>
               <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">

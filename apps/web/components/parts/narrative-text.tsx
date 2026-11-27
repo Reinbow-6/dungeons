@@ -190,6 +190,93 @@ function transformChildren(
   });
 }
 
+function normalizeGuillemets(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
+    return `«${trimmed.slice(1, -1)}»`;
+  }
+  return text.replace(/"([^"\n]{2,360})"/g, "«$1»");
+}
+
+function extractPlainText(node: React.ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(extractPlainText).join("");
+  }
+  if (React.isValidElement<{ children?: React.ReactNode }>(node)) {
+    return extractPlainText(node.props.children);
+  }
+  return "";
+}
+
+function parseDialogueBlockquote(children: React.ReactNode): {
+  speaker: string | null;
+  bodyText: string;
+} | null {
+  const raw = extractPlainText(children).trim();
+  if (!raw) return null;
+
+  const lines = raw
+    .split(/\r?\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) return null;
+
+  // Case 1: Speaker header line followed by dialogue line(s)
+  if (lines.length >= 2) {
+    const first = lines[0]!;
+    const rest = lines.slice(1).join("\n");
+    const looksLikeSpeaker =
+      first.length <= 64 &&
+      !first.startsWith("«") &&
+      !first.startsWith('"') &&
+      (rest.includes("«") || rest.includes('"'));
+    if (looksLikeSpeaker) {
+      return {
+        speaker: first.replace(/[:：]+$/, "").trim(),
+        bodyText: normalizeGuillemets(rest),
+      };
+    }
+  }
+
+  // Case 2: React-markdown placed <strong>Speaker</strong> and «...» in a single <p>
+  const flatChildren = React.Children.toArray(children).filter(
+    (c) => !(typeof c === "string" && c.trim() === ""),
+  );
+  if (flatChildren.length === 1 && React.isValidElement<{ children?: React.ReactNode }>(flatChildren[0])) {
+    const pKids = React.Children.toArray(flatChildren[0].props.children);
+    const firstKid = pKids[0];
+    if (
+      React.isValidElement<{ children?: React.ReactNode }>(firstKid) &&
+      firstKid.type === "strong"
+    ) {
+      const speaker = extractPlainText(firstKid.props.children)
+        .replace(/[:：]+$/, "")
+        .trim();
+      const restText = pKids
+        .slice(1)
+        .map(extractPlainText)
+        .join("")
+        .replace(/^\s*[:：]?\s*/, "")
+        .trim();
+      if (speaker && speaker.length <= 64 && restText) {
+        return {
+          speaker,
+          bodyText: normalizeGuillemets(restText),
+        };
+      }
+    }
+  }
+
+  return {
+    speaker: null,
+    bodyText: normalizeGuillemets(raw),
+  };
+}
+
 export function NarrativeText({
   text,
   isStreaming = false,
@@ -235,11 +322,33 @@ export function NarrativeText({
       li: ({ children }) => (
         <li>{transformChildren(children, pcRegex, npcRegex, "li")}</li>
       ),
-      blockquote: ({ children }) => (
-        <blockquote className="border-l-2 border-amber-500/40 pl-3.5 italic text-foreground/85">
-          {transformChildren(children, pcRegex, npcRegex, "bq")}
-        </blockquote>
-      ),
+      blockquote: ({ children }) => {
+        const parsed = parseDialogueBlockquote(children);
+        if (!parsed) {
+          return (
+            <blockquote className="my-3.5 border-l-2 border-primary/80 pl-4 py-0.5 font-serif text-[16.5px] leading-[1.65] text-foreground/95">
+              {transformChildren(children, pcRegex, npcRegex, "bq")}
+            </blockquote>
+          );
+        }
+        return (
+          <blockquote className="my-3.5 border-l-2 border-primary/80 pl-4 py-0.5 not-italic">
+            {parsed.speaker && (
+              <div className="mb-1 font-sans text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
+                {parsed.speaker}
+              </div>
+            )}
+            <div className="whitespace-pre-line font-serif text-[16.5px] leading-[1.65] text-foreground/95">
+              {highlightEntitiesInString(
+                parsed.bodyText,
+                pcRegex,
+                npcRegex,
+                "bq-body",
+              )}
+            </div>
+          </blockquote>
+        );
+      },
     }),
     [pcRegex, npcRegex],
   );

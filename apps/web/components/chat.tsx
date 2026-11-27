@@ -1,39 +1,48 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import type { GameEvent, GameState, RulesetProfile } from "@dungeons/rules";
+import {
+  AGUAS_INQUIETAS_QUEST,
+  getAguasInquietasProgress,
+  type GameEvent,
+  type GameState,
+  type RulesetProfile,
+} from "@dungeons/rules";
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
 } from "ai";
 import {
+  FlameIcon,
   HeartPulseIcon,
+  PanelLeftIcon,
   PanelRightIcon,
   PauseIcon,
   ShieldIcon,
   SkullIcon,
-  SparklesIcon,
+  SlidersHorizontalIcon,
   SwordsIcon,
+  UsersIcon,
   XIcon,
 } from "lucide-react";
+import Link from "next/link";
 import * as React from "react";
 
-import { useAuthAccess } from "@/components/auth-dialog";
-import {
-  Checkpoint,
-  CheckpointIcon,
-  CheckpointTrigger,
-} from "@/components/ai-elements/checkpoint";
+import { AuthButton, useAuthAccess } from "@/components/auth-dialog";
 import { ChatMessage } from "@/components/chat-message";
+import { CampaignSidebar } from "@/components/game/campaign-sidebar";
 import { ContextMeter } from "@/components/game/context-meter";
+import { EpilogueCard } from "@/components/game/epilogue-card";
 import { GameSidebar } from "@/components/game/game-sidebar";
 import { HybridCheckCard } from "@/components/game/hybrid-check-card";
 import { TensionMeter } from "@/components/game/tension-meter";
 import { extractTurnOutcomeSummary } from "@/components/game/tool-parts";
 import { PromptForm, type PromptFormHandle } from "@/components/prompt-form";
 import { QuestionCard } from "@/components/question-card";
+import { SoundToggle } from "@/components/sound-toggle";
 import { StatusIcon } from "@/components/status-icon";
 import { Suggestions } from "@/components/suggestions";
+import { ThemeToggle } from "@/components/theme-toggle";
 import {
   Alert,
   AlertAction,
@@ -72,7 +81,11 @@ import type {
   CharacterPresetInfo,
   PartyMemberSpec,
 } from "@/lib/game/presets";
-import type { SessionSummaryItem, StoredMemoryFact } from "@/lib/game/store";
+import type {
+  CampaignSummary,
+  SessionSummaryItem,
+  StoredMemoryFact,
+} from "@/lib/game/store";
 import {
   DEFAULT_MODEL,
   GUEST_DEFAULT_MODEL,
@@ -196,6 +209,119 @@ function buildSeqMapFromApiMessages(
   return next;
 }
 
+const SIDEBAR_PREFS_STORAGE_KEY = "dungeons:sidebar-prefs:v1";
+const SIDEBAR_PREFS_CHANGED_EVENT = "dungeons:sidebar-prefs-changed";
+
+interface SidebarPrefs {
+  campaignOpen: boolean;
+  hudOpen: boolean;
+}
+
+const DEFAULT_SIDEBAR_PREFS: SidebarPrefs = Object.freeze({
+  campaignOpen: false,
+  hudOpen: false,
+});
+
+let cachedSidebarRaw: string | null | undefined = undefined;
+let cachedSidebarPrefs: SidebarPrefs = DEFAULT_SIDEBAR_PREFS;
+let sidebarMemoryOverride = false;
+
+function getSidebarServerSnapshot(): SidebarPrefs {
+  return DEFAULT_SIDEBAR_PREFS;
+}
+
+function normalizeSidebarPrefs(raw: unknown): SidebarPrefs {
+  if (!raw || typeof raw !== "object") {
+    return DEFAULT_SIDEBAR_PREFS;
+  }
+  const obj = raw as Record<string, unknown>;
+  return {
+    campaignOpen:
+      typeof obj.campaignOpen === "boolean" ? obj.campaignOpen : false,
+    hudOpen: typeof obj.hudOpen === "boolean" ? obj.hudOpen : false,
+  };
+}
+
+function getSidebarSnapshot(): SidebarPrefs {
+  if (typeof window === "undefined") {
+    return DEFAULT_SIDEBAR_PREFS;
+  }
+  if (sidebarMemoryOverride) {
+    return cachedSidebarPrefs;
+  }
+
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(SIDEBAR_PREFS_STORAGE_KEY);
+  } catch {
+    return cachedSidebarPrefs;
+  }
+
+  if (raw === cachedSidebarRaw) {
+    return cachedSidebarPrefs;
+  }
+
+  cachedSidebarRaw = raw;
+  if (!raw) {
+    cachedSidebarPrefs = DEFAULT_SIDEBAR_PREFS;
+    return cachedSidebarPrefs;
+  }
+
+  try {
+    cachedSidebarPrefs = normalizeSidebarPrefs(JSON.parse(raw));
+  } catch {
+    cachedSidebarPrefs = DEFAULT_SIDEBAR_PREFS;
+  }
+  return cachedSidebarPrefs;
+}
+
+function subscribeSidebarPrefs(callback: () => void): () => void {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === null || event.key === SIDEBAR_PREFS_STORAGE_KEY) {
+      sidebarMemoryOverride = false;
+      callback();
+    }
+  };
+
+  window.addEventListener("storage", onStorage);
+  window.addEventListener(SIDEBAR_PREFS_CHANGED_EVENT, callback);
+  return () => {
+    window.removeEventListener("storage", onStorage);
+    window.removeEventListener(SIDEBAR_PREFS_CHANGED_EVENT, callback);
+  };
+}
+
+function writeSidebarPrefs(
+  updater: (prev: SidebarPrefs) => SidebarPrefs,
+): void {
+  const prev = getSidebarSnapshot();
+  const next = normalizeSidebarPrefs(updater(prev));
+  const serialized = JSON.stringify(next);
+
+  if (!sidebarMemoryOverride && serialized === cachedSidebarRaw) {
+    return;
+  }
+
+  cachedSidebarPrefs = next;
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(SIDEBAR_PREFS_STORAGE_KEY, serialized);
+    cachedSidebarRaw = serialized;
+    sidebarMemoryOverride = false;
+  } catch {
+    sidebarMemoryOverride = true;
+  }
+
+  window.dispatchEvent(new Event(SIDEBAR_PREFS_CHANGED_EVENT));
+}
+
 export function Chat({ models }: { models: GatewayModel[] }) {
   const access = useAuthAccess();
   const { settings, updateSettings } = useAppSettings();
@@ -206,6 +332,8 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   });
 
   const [campaignId, setCampaignId] = React.useState<string | null>(null);
+  const campaignIdRef = React.useRef<string | null>(null);
+  const ensuringCampaignRef = React.useRef<Promise<string | null> | null>(null);
   const [sessionNumber, setSessionNumber] = React.useState<number>(1);
   const [gameState, setGameState] = React.useState<GameState | null>(null);
   const [events, setEvents] = React.useState<GameEvent[]>([]);
@@ -222,8 +350,36 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     null,
   );
   const promptFormRef = React.useRef<PromptFormHandle | null>(null);
-  // HUD lateral colapsado por defecto (estilo Old Greg's Tavern)
-  const [sidebarOpen, setSidebarOpen] = React.useState(false);
+  // HUD lateral derecho y panel de campañas izquierdo colapsados por defecto (persistidos)
+  const sidebarPrefs = React.useSyncExternalStore(
+    subscribeSidebarPrefs,
+    getSidebarSnapshot,
+    getSidebarServerSnapshot,
+  );
+  const sidebarOpen = sidebarPrefs.hudOpen;
+  const campaignSidebarOpen = sidebarPrefs.campaignOpen;
+  const setSidebarOpen = React.useCallback(
+    (value: boolean | ((prev: boolean) => boolean)) => {
+      writeSidebarPrefs((prev) => ({
+        ...prev,
+        hudOpen: typeof value === "function" ? value(prev.hudOpen) : value,
+      }));
+    },
+    [],
+  );
+  const setCampaignSidebarOpen = React.useCallback(
+    (value: boolean | ((prev: boolean) => boolean)) => {
+      writeSidebarPrefs((prev) => ({
+        ...prev,
+        campaignOpen:
+          typeof value === "function" ? value(prev.campaignOpen) : value,
+      }));
+    },
+    [],
+  );
+  const [campaignsList, setCampaignsList] = React.useState<CampaignSummary[]>([]);
+  const [loadingCampaigns, setLoadingCampaigns] = React.useState(false);
+  const [partyHudOpen, setPartyHudOpen] = React.useState(true);
   const [selectedActorId, setSelectedActorId] = React.useState<string | null>(
     null,
   );
@@ -375,15 +531,35 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     partyIdsRef.current = partyChars.map((c) => c.id);
   }, [partyChars]);
 
+  const fetchCampaignsList = React.useCallback(async () => {
+    setLoadingCampaigns(true);
+    try {
+      const res = await fetch("/api/game/campaigns?list=1&limit=20");
+      if (!res.ok) return;
+      const data = (await res.json()) as { items?: CampaignSummary[] };
+      if (Array.isArray(data.items)) {
+        setCampaignsList(data.items);
+      }
+    } finally {
+      setLoadingCampaigns(false);
+    }
+  }, []);
+
   React.useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
       if (event.altKey && event.key.toLowerCase() === "h") {
         event.preventDefault();
-        setSidebarOpen((prev) => {
-          const next = !prev;
-          playSoundRef.current(next ? "overlay.open" : "overlay.close");
-          return next;
-        });
+        const next = !getSidebarSnapshot().hudOpen;
+        setSidebarOpen(next);
+        playSoundRef.current(next ? "overlay.open" : "overlay.close");
+      } else if (event.altKey && event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        const next = !getSidebarSnapshot().campaignOpen;
+        setCampaignSidebarOpen(next);
+        playSoundRef.current(next ? "overlay.open" : "overlay.close");
+        if (next) {
+          void fetchCampaignsList();
+        }
       } else if (
         event.altKey &&
         !event.ctrlKey &&
@@ -398,20 +574,19 @@ export function Chat({ models }: { models: GatewayModel[] }) {
           playSoundRef.current("interaction.subtle");
           setSelectedActorId(targetId);
         }
-      } else if (event.key === "Escape") {
-        setSidebarOpen((prev) => {
-          if (prev) {
-            playSoundRef.current("overlay.close");
-          }
-          return false;
-        });
+      } else if (event.key === "Escape" && !event.defaultPrevented) {
+        const current = getSidebarSnapshot();
+        if (current.hudOpen || current.campaignOpen) {
+          playSoundRef.current("overlay.close");
+          writeSidebarPrefs(() => ({ campaignOpen: false, hudOpen: false }));
+        }
       }
     }
     window.addEventListener("keydown", handleShortcut);
     return () => {
       window.removeEventListener("keydown", handleShortcut);
     };
-  }, []);
+  }, [fetchCampaignsList, setCampaignSidebarOpen, setSidebarOpen]);
 
   const {
     messages,
@@ -460,6 +635,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
 
   const applyCampaignPayload = React.useCallback(
     (data: CampaignApiPayload, restoreMessages = false) => {
+      campaignIdRef.current = data.campaignId;
       setCampaignId(data.campaignId);
       setSessionNumber(data.sessionNumber ?? 1);
       setGameState(data.state);
@@ -467,7 +643,9 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       notifyNewEvents(data.events, restoreMessages);
       setSessionSummaries(data.sessionSummaries ?? []);
       setMemoryFacts(data.memoryFacts ?? []);
-      setPresets(data.presets ?? []);
+      if (Array.isArray(data.presets)) {
+        setPresets(data.presets);
+      }
 
       if (data.state?.combat?.active) {
         const turnKey = `${data.state.combat.round}:${data.state.combat.turnIndex}`;
@@ -518,28 +696,40 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     [notifyNewEvents, setMessages],
   );
 
+  const resetToEmptyCampaign = React.useCallback(() => {
+    campaignIdRef.current = null;
+    lastCombatTurnKeyRef.current = null;
+    lastToastedSeqRef.current = 0;
+    setCampaignId(null);
+    setSessionNumber(1);
+    setGameState(null);
+    setEvents([]);
+    setSessionSummaries([]);
+    setMemoryFacts([]);
+    setMessages([]);
+    setMessageSeqMap({});
+    setSelectedActorId(null);
+    setPausedMode(false);
+    setPausedQueue([]);
+    setRollingBackSeq(null);
+    setStreamingIntroId(null);
+    transportBundle.updateBody({
+      model: effectiveModel,
+      campaignId: null,
+      reasoningEffort: settings.reasoningEffort,
+      activeActorId: null,
+    });
+  }, [effectiveModel, setMessages, settings.reasoningEffort, transportBundle]);
+
   React.useEffect(() => {
     let cancelled = false;
     async function bootstrapCampaign() {
       const res = await fetch("/api/game/campaigns");
       if (!res.ok || cancelled) return;
-      let data = (await res.json()) as CampaignApiPayload;
-
-      if (!data.campaignId) {
-        const createRes = await fetch("/api/game/campaigns", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            presetId: "pc_kael",
-            mode: "digital",
-            ruleset: "5e-full",
-          }),
-        });
-        if (!createRes.ok || cancelled) return;
-        data = (await createRes.json()) as CampaignApiPayload;
-      }
-
+      const data = (await res.json()) as CampaignApiPayload;
       if (cancelled) return;
+
+      campaignIdRef.current = data.campaignId;
       setCampaignId(data.campaignId);
       setSessionNumber(data.sessionNumber ?? 1);
       setGameState(data.state);
@@ -549,6 +739,9 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       setSessionSummaries(data.sessionSummaries ?? []);
       setMemoryFacts(data.memoryFacts ?? []);
       setPresets(data.presets ?? []);
+      setSelectedActorId(
+        data.state ? (Object.keys(data.state.characters)[0] ?? null) : null,
+      );
       setMessages(
         data.messages.map((m) => ({
           id: m.id,
@@ -557,6 +750,14 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         })),
       );
       setMessageSeqMap(buildSeqMapFromApiMessages(data.messages));
+
+      const listRes = await fetch("/api/game/campaigns?list=1&limit=20");
+      if (listRes.ok && !cancelled) {
+        const listData = (await listRes.json()) as { items?: CampaignSummary[] };
+        if (Array.isArray(listData.items)) {
+          setCampaignsList(listData.items);
+        }
+      }
     }
 
     void bootstrapCampaign();
@@ -625,6 +826,70 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     };
   }, [status, campaignId, applyCampaignPayload]);
 
+  const ensureCampaignId = React.useCallback(async (): Promise<string | null> => {
+    if (campaignIdRef.current) {
+      return campaignIdRef.current;
+    }
+    if (ensuringCampaignRef.current) {
+      return ensuringCampaignRef.current;
+    }
+
+    const pending = (async () => {
+      try {
+        const res = await fetch("/api/game/campaigns", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            presetId: "pc_kael",
+            mode: "digital",
+            ruleset: "5e-full",
+          }),
+        });
+        if (!res.ok) return null;
+        const data = (await res.json()) as CampaignApiPayload;
+        if (!data.campaignId) return null;
+        const defaultActorId = data.state
+          ? (Object.keys(data.state.characters)[0] ?? null)
+          : null;
+        campaignIdRef.current = data.campaignId;
+        setCampaignId(data.campaignId);
+        setSessionNumber(data.sessionNumber ?? 1);
+        setGameState(data.state);
+        setEvents(data.events);
+        notifyNewEvents(data.events, true);
+        setSessionSummaries(data.sessionSummaries ?? []);
+        setMemoryFacts(data.memoryFacts ?? []);
+        if (Array.isArray(data.presets)) {
+          setPresets(data.presets);
+        }
+        setSelectedActorId(defaultActorId);
+        setPausedMode(false);
+        setPausedQueue([]);
+        transportBundle.updateBody({
+          model: effectiveModel,
+          campaignId: data.campaignId,
+          reasoningEffort: settings.reasoningEffort,
+          activeActorId: defaultActorId,
+        });
+        void fetchCampaignsList();
+        return data.campaignId;
+      } catch {
+        return null;
+      } finally {
+        ensuringCampaignRef.current = null;
+      }
+    })();
+
+    ensuringCampaignRef.current = pending;
+    return pending;
+  }, [
+    effectiveModel,
+    fetchCampaignsList,
+    notifyNewEvents,
+    settings.reasoningEffort,
+    transportBundle,
+  ]);
+
   async function handleNewCampaign(
     party: PartyMemberSpec[],
     mode: "digital" | "hybrid",
@@ -642,6 +907,10 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     });
     if (!res.ok) return null;
     const data = (await res.json()) as CampaignApiPayload;
+    const firstActorId = data.state
+      ? (Object.keys(data.state.characters)[0] ?? null)
+      : null;
+    campaignIdRef.current = data.campaignId;
     setCampaignId(data.campaignId);
     setSessionNumber(data.sessionNumber ?? 1);
     setGameState(data.state);
@@ -649,15 +918,22 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     notifyNewEvents(data.events, true);
     setSessionSummaries(data.sessionSummaries ?? []);
     setMemoryFacts(data.memoryFacts ?? []);
-    setPresets(data.presets ?? []);
+    if (Array.isArray(data.presets)) {
+      setPresets(data.presets);
+    }
     setMessages([]);
     setMessageSeqMap({});
-    setSelectedActorId(
-      data.state ? (Object.keys(data.state.characters)[0] ?? null) : null,
-    );
+    setSelectedActorId(firstActorId);
     setPausedMode(false);
     setPausedQueue([]);
     setSidebarOpen(false);
+    transportBundle.updateBody({
+      model: effectiveModel,
+      campaignId: data.campaignId,
+      reasoningEffort: settings.reasoningEffort,
+      activeActorId: firstActorId,
+    });
+    void fetchCampaignsList();
     pushToast({
       title:
         party.length > 1
@@ -669,11 +945,149 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     return data.campaignId;
   }
 
+  async function handleSelectCampaign(targetId: string) {
+    if (!targetId || targetId === campaignId || isBusy) return;
+    const res = await fetch(
+      `/api/game/campaigns?campaignId=${encodeURIComponent(targetId)}`,
+    );
+    if (!res.ok) return;
+    const data = (await res.json()) as CampaignApiPayload;
+    applyCampaignPayload(data, true);
+    setSelectedActorId(
+      data.state ? (Object.keys(data.state.characters)[0] ?? null) : null,
+    );
+    setPausedMode(false);
+    setPausedQueue([]);
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      setCampaignSidebarOpen(false);
+    }
+    playSound("navigation.forward");
+    void fetchCampaignsList();
+  }
+
+  async function handleDeleteCampaign(targetId: string) {
+    if (!targetId || isBusy) return;
+    try {
+      const res = await fetch(
+        `/api/game/campaigns?campaignId=${encodeURIComponent(targetId)}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) {
+        pushToast({
+          title: "No se pudo borrar la partida",
+          description: "Intentá nuevamente en unos instantes.",
+          tone: "rose",
+        });
+        return;
+      }
+
+      const wasActive = targetId === campaignIdRef.current;
+      let nextItems: CampaignSummary[] = [];
+      const listRes = await fetch("/api/game/campaigns?list=1&limit=20");
+      if (listRes.ok) {
+        const listData = (await listRes.json()) as { items?: CampaignSummary[] };
+        if (Array.isArray(listData.items)) {
+          nextItems = listData.items;
+          setCampaignsList(nextItems);
+        }
+      } else {
+        nextItems = campaignsList.filter((item) => item.campaignId !== targetId);
+        setCampaignsList(nextItems);
+      }
+
+      if (wasActive) {
+        const nextCampaign = nextItems[0];
+        if (nextCampaign) {
+          const loadRes = await fetch(
+            `/api/game/campaigns?campaignId=${encodeURIComponent(nextCampaign.campaignId)}`,
+          );
+          if (loadRes.ok) {
+            const data = (await loadRes.json()) as CampaignApiPayload;
+            applyCampaignPayload(data, true);
+            setSelectedActorId(
+              data.state
+                ? (Object.keys(data.state.characters)[0] ?? null)
+                : null,
+            );
+            setPausedMode(false);
+            setPausedQueue([]);
+            setRollingBackSeq(null);
+            setStreamingIntroId(null);
+          } else {
+            resetToEmptyCampaign();
+          }
+        } else {
+          resetToEmptyCampaign();
+        }
+      }
+
+      playSound("interaction.tap");
+      pushToast({
+        title: "Partida eliminada",
+        description: wasActive
+          ? nextItems[0]
+            ? `Cargada "${nextItems[0].title}".`
+            : "No quedan partidas guardadas."
+          : undefined,
+        tone: "neutral",
+      });
+    } catch {
+      pushToast({
+        title: "No se pudo borrar la partida",
+        description: "Error de red al conectar con el servidor.",
+        tone: "rose",
+      });
+    }
+  }
+
+  async function handleDeleteAllCampaigns() {
+    if (isBusy) return;
+    try {
+      const res = await fetch("/api/game/campaigns?all=1", {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        pushToast({
+          title: "No se pudieron borrar las partidas",
+          description: "Intentá nuevamente en unos instantes.",
+          tone: "rose",
+        });
+        return;
+      }
+      const data = (await res.json()) as { ok?: boolean; deletedCount?: number };
+      setCampaignsList([]);
+      resetToEmptyCampaign();
+      playSound("interaction.tap");
+      pushToast({
+        title: "Partidas eliminadas",
+        description:
+          typeof data.deletedCount === "number" && data.deletedCount > 0
+            ? `Se eliminaron ${data.deletedCount} partida${data.deletedCount === 1 ? "" : "s"}.`
+            : "Tu mesa quedó vacía y lista para empezar.",
+        tone: "neutral",
+      });
+    } catch {
+      pushToast({
+        title: "No se pudieron borrar las partidas",
+        description: "Error de red al conectar con el servidor.",
+        tone: "rose",
+      });
+    }
+  }
+
   async function handleStartCampaignIntro(overrideCampaignId?: string | null) {
-    const targetId = overrideCampaignId ?? campaignId;
-    if (!targetId || seedingIntro || isBusy) return;
+    if (seedingIntro || isBusy) return;
     setSeedingIntro(true);
     try {
+      const targetId = overrideCampaignId ?? (await ensureCampaignId());
+      if (!targetId) {
+        pushToast({
+          title: "No se pudo iniciar la campaña",
+          description: "Intentá nuevamente en unos instantes.",
+          tone: "rose",
+        });
+        return;
+      }
       const res = await fetch("/api/game/campaigns/intro", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -707,7 +1121,15 @@ export function Chat({ models }: { models: GatewayModel[] }) {
             setStreamingIntroId((prev) => (prev === introId ? null : prev));
           }, 2800);
         }
+        void fetchCampaignsList();
         playSound("notification.info");
+        pushToast({
+          title: "Nuevo objetivo",
+          description: `${AGUAS_INQUIETAS_QUEST.titleEs} — ${AGUAS_INQUIETAS_QUEST.objectiveEs}`,
+          tone: "amber",
+          meta: "Objetivo principal",
+          durationMs: 7000,
+        });
       }
     } finally {
       setSeedingIntro(false);
@@ -926,7 +1348,10 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       : undefined;
 
   const firstAssistantIndex = messages.findIndex((m) => m.role === "assistant");
-  const level1Slots = activeChar?.spellSlots["1"];
+  const questProgress = React.useMemo(
+    () => (gameState ? getAguasInquietasProgress(gameState) : null),
+    [gameState],
+  );
 
   const ttsAvailable = access.tier === "whitelisted" && settings.ttsEnabled;
   const showContextMeter = settings.showDevContextMeter;
@@ -962,7 +1387,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   }, [gameState?.lastSeq, messageSeqMap, messages]);
 
   const submitPrompt = React.useCallback(
-    (prompt: string) => {
+    async (prompt: string) => {
       if (isBusy) return;
 
       if (
@@ -983,6 +1408,17 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         return;
       }
 
+      const targetCampaignId = campaignId ?? (await ensureCampaignId());
+      if (!targetCampaignId) {
+        pushToast({
+          title: "No se pudo crear la partida",
+          description: "Intentá nuevamente en unos instantes.",
+          tone: "rose",
+        });
+        return;
+      }
+
+      const resolvedActorId = activeActorId ?? "pc_kael";
       const outgoing =
         partyChars.length > 1 && activeActorId
           ? formatSingleActorMessage(activeActorId, prompt)
@@ -993,9 +1429,9 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         {
           body: {
             model: effectiveModel,
-            campaignId,
+            campaignId: targetCampaignId,
             reasoningEffort: settings.reasoningEffort,
-            activeActorId,
+            activeActorId: resolvedActorId,
           },
         },
       );
@@ -1004,6 +1440,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       activeActorId,
       campaignId,
       effectiveModel,
+      ensureCampaignId,
       gameState?.combat?.active,
       isBusy,
       partyChars,
@@ -1043,531 +1480,737 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   ]);
 
   return (
-    <div className="tavern-backdrop relative flex min-h-0 flex-1 overflow-hidden">
-      {/* Píldora flotante compacta de estado vital cuando el HUD está colapsado */}
-      {!sidebarOpen && activeChar && gameState && (
-        <button
-          type="button"
-          onClick={() => {
-            playSound("overlay.open");
-            setSidebarOpen(true);
-          }}
-          title="Ver ficha completa, conjuros, memoria y rollback (Alt+H)"
-          aria-label={`Abrir ficha de ${activeChar.name}. Puntos de golpe: ${activeChar.hp.current} de ${activeChar.hp.max}${gameState.combat?.active ? `; combate, ronda ${gameState.combat.round}` : ""}`}
-          aria-controls="campaign-hud-panel"
-          aria-expanded={false}
-          className={cn(
-            "fixed right-3 top-14 z-30 flex min-h-10 max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] shadow-sm backdrop-blur-md transition-all hover:border-amber-500/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:right-4 sm:top-16",
-            gameState.combat?.active
-              ? "border-rose-500/45 bg-rose-500/15 text-rose-950 dark:bg-rose-950/75 dark:text-rose-100"
-              : activeChar.hp.current === 0
-                ? "animate-pulse border-rose-500/60 bg-rose-500/20 text-rose-950 dark:bg-rose-950/85 dark:text-rose-100"
-                : "border-border/70 bg-card/85 text-foreground/90",
+    <div className="tavern-backdrop flex h-svh min-h-0 flex-1 flex-col overflow-hidden">
+      {/* Header único superior (44px) */}
+      <header className="flex h-11 shrink-0 items-center justify-between gap-1.5 border-b border-border bg-background px-2 sm:gap-2 sm:px-3.5">
+        <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              const next = !campaignSidebarOpen;
+              setCampaignSidebarOpen(next);
+              playSound(next ? "overlay.open" : "overlay.close");
+              if (next) {
+                void fetchCampaignsList();
+              }
+            }}
+            title="Campañas (Alt+C)"
+            aria-label="Abrir panel de campañas (Alt+C)"
+            aria-controls="campaign-list-sidebar"
+            aria-expanded={campaignSidebarOpen}
+            className={cn(
+              "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-none border px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              campaignSidebarOpen
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border bg-card/60 text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+            )}
+          >
+            <PanelLeftIcon className="size-3.5 shrink-0" />
+            <span
+              className={cn(
+                "hidden",
+                partyChars.length > 1 ? "xl:inline" : "lg:inline",
+              )}
+            >
+              Campañas
+            </span>
+          </button>
+
+          <span aria-hidden="true" className="h-4 w-px shrink-0 bg-border" />
+
+          <Link
+            href="/"
+            className="flex shrink-0 items-center gap-1.5 transition-opacity hover:opacity-85"
+          >
+            <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-none border border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400">
+              <FlameIcon className="size-3.5" />
+            </span>
+            <span className="hidden font-serif text-sm font-semibold tracking-tight text-foreground min-[360px]:inline sm:text-base">
+              Dungeons
+            </span>
+          </Link>
+
+          <AuthButton className="h-7 rounded-none px-2 text-xs" />
+
+          <span
+            aria-hidden="true"
+            className="hidden h-4 w-px shrink-0 bg-border md:inline-block"
+          />
+
+          <div className="hidden min-w-0 items-center gap-2 md:flex">
+            <span className="truncate font-serif text-sm font-medium text-foreground">
+              {currentScene?.titleEs ?? "Aguas Inquietas"}
+            </span>
+            {questProgress && (
+              <span className="hidden shrink-0 rounded-none border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground lg:inline-flex">
+                Etapa {questProgress.currentStageIndex + 1}/
+                {questProgress.quest.stages.length}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
+          {activeChar && gameState && (
+            <button
+              type="button"
+              onClick={() => {
+                playSound("interaction.subtle");
+                setPartyHudOpen((prev) => !prev);
+              }}
+              aria-pressed={partyHudOpen}
+              aria-label={
+                partyHudOpen
+                  ? "Ocultar party estilo RPG"
+                  : "Mostrar party estilo RPG"
+              }
+              title={
+                partyHudOpen
+                  ? `Ocultar grupo (${partyChars.length} PJ)`
+                  : `Mostrar grupo (${partyChars.length} PJ)`
+              }
+              className={cn(
+                "inline-flex h-7 items-center gap-1 rounded-full border px-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                partyHudOpen
+                  ? "border-primary/60 bg-primary/15 text-primary"
+                  : "border-border bg-card/60 text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+              )}
+            >
+              <span className="flex items-center -space-x-1.5">
+                {partyChars.slice(0, 3).map((ch) => {
+                  const initial = ch.name.trim().slice(0, 1).toUpperCase() || "J";
+                  const isActive = ch.id === activeChar.id;
+                  return (
+                    <span
+                      key={ch.id}
+                      className={cn(
+                        "inline-flex size-5 items-center justify-center rounded-full border text-[10px] font-semibold",
+                        isActive
+                          ? "z-10 border-primary bg-primary text-primary-foreground"
+                          : "border-background bg-muted text-foreground",
+                      )}
+                    >
+                      {initial}
+                    </span>
+                  );
+                })}
+              </span>
+              {partyChars.length > 3 && (
+                <span className="pr-0.5 font-mono text-[10px] font-semibold tabular-nums">
+                  +{partyChars.length - 3}
+                </span>
+              )}
+              {partyChars.length === 1 && (
+                <UsersIcon className="hidden size-3 opacity-70 sm:inline-block" />
+              )}
+            </button>
           )}
+
+          <div
+            role="group"
+            aria-label="Preferencias de la mesa"
+            className="inline-flex items-center rounded-none border border-border bg-card/60"
+          >
+            <SoundToggle />
+            <ThemeToggle />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Ajustes de la Mesa (P)"
+              title="Ajustes de la Mesa (P)"
+              onClick={() => {
+                playSound("overlay.open");
+                window.dispatchEvent(new CustomEvent("dungeons:open-settings"));
+              }}
+              className="rounded-none"
+            >
+              <SlidersHorizontalIcon className="size-4" />
+            </Button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              const next = !sidebarOpen;
+              setSidebarOpen(next);
+              playSound(next ? "overlay.open" : "overlay.close");
+            }}
+            title="Ver ficha completa, conjuros, memoria y rollback (Alt+H)"
+            aria-label="Abrir panel de ficha (Alt+H)"
+            aria-controls="campaign-hud-panel"
+            aria-expanded={sidebarOpen}
+            className={cn(
+              "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-none border px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              sidebarOpen
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border bg-card/60 text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+            )}
+          >
+            <PanelRightIcon className="size-3.5 shrink-0" />
+            <span className="hidden lg:inline">Ficha</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Shell de 3 zonas: flujo izquierdo + columna editorial + flujo derecho */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <CampaignSidebar
+          open={campaignSidebarOpen}
+          onClose={() => setCampaignSidebarOpen(false)}
+          activeCampaignId={campaignId}
+          campaigns={campaignsList}
+          loadingCampaigns={loadingCampaigns}
+          presets={presets}
+          onSelectCampaign={handleSelectCampaign}
+          onNewCampaign={handleNewCampaign}
+          onDeleteCampaign={handleDeleteCampaign}
+          onDeleteAllCampaigns={handleDeleteAllCampaigns}
+        />
+
+        {/* Columna editorial principal */}
+        <main
+          id="main-content"
+          className="relative mx-auto flex min-h-0 min-w-0 flex-1 flex-col"
         >
-          {partyChars.length > 1 ? (
-            <span className="flex flex-wrap items-center gap-2">
-              {partyChars.map((ch) => {
+          {/* Party HUD estilo RPG apilado en el margen derecho */}
+          {partyHudOpen && !sidebarOpen && activeChar && gameState && (
+            <aside
+              aria-label="Estado del grupo"
+              className="pointer-events-auto absolute right-3 top-3 z-20 hidden w-48 flex-col gap-1 sm:flex"
+            >
+              {partyChars.map((ch, idx) => {
                 const isSelected = ch.id === activeChar.id;
                 const isCombatTurn = combatActivePcId === ch.id;
-                const first = ch.name.split(" ")[0] ?? ch.name;
+                const first = ch.name.trim().split(/\s+/)[0] ?? ch.name;
+                const hpPct = Math.max(
+                  0,
+                  Math.min(100, (ch.hp.current / Math.max(1, ch.hp.max)) * 100),
+                );
                 return (
-                  <span
+                  <button
                     key={ch.id}
+                    type="button"
+                    aria-pressed={isSelected}
+                    title={
+                      partyChars.length > 1
+                        ? `${ch.name}${ch.playerName ? ` (${ch.playerName})` : ""} · Clic para activar (Alt+${idx + 1}), o abrir ficha si ya está activo`
+                        : `${ch.name} · Abrir ficha completa (Alt+H)`
+                    }
+                    onClick={() => {
+                      if (partyChars.length > 1 && !isSelected) {
+                        playSound("interaction.subtle");
+                        setSelectedActorId(ch.id);
+                      } else {
+                        playSound("overlay.open");
+                        setSidebarOpen(true);
+                      }
+                    }}
                     className={cn(
-                      "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 transition-colors",
-                      isSelected && "bg-amber-500/15 font-semibold",
-                      isCombatTurn && "ring-1 ring-rose-500/60",
+                      "group relative flex w-full flex-col overflow-hidden rounded-none border bg-card/90 px-2.5 py-1.5 text-left text-[11px] backdrop-blur-sm transition-colors hover:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      isCombatTurn
+                        ? "border-rose-500/70 border-l-2 border-l-rose-500 bg-rose-500/10"
+                        : isSelected
+                          ? "border-primary/55 border-l-2 border-l-primary bg-card"
+                          : "border-border text-muted-foreground hover:text-foreground",
                     )}
                   >
-                    <span className="max-w-16 truncate text-amber-700 dark:text-amber-300">
-                      {first}
+                    <div className="flex w-full items-center justify-between gap-2">
+                      <span className="flex min-w-0 items-center gap-1">
+                        {isCombatTurn && (
+                          <SwordsIcon className="size-3 shrink-0 text-rose-500" />
+                        )}
+                        <span
+                          className={cn(
+                            "truncate font-medium",
+                            isSelected ? "text-primary" : "text-foreground/85",
+                          )}
+                        >
+                          {first}
+                        </span>
+                      </span>
+                      <div className="flex shrink-0 items-center gap-2 font-mono text-[10.5px] tabular-nums">
+                        <span className="inline-flex items-center gap-1 text-foreground">
+                          {ch.hp.current === 0 ? (
+                            <SkullIcon className="size-3 text-rose-500" />
+                          ) : (
+                            <HeartPulseIcon className="size-3 text-emerald-500" />
+                          )}
+                          {ch.hp.current}/{ch.hp.max}
+                        </span>
+                        <span className="inline-flex items-center gap-0.5 text-muted-foreground">
+                          <ShieldIcon className="size-3" />
+                          {ch.ac}
+                        </span>
+                      </div>
+                    </div>
+                    <span
+                      aria-hidden="true"
+                      className="mt-1.5 block h-0.5 w-full bg-muted"
+                    >
+                      <span
+                        className={cn(
+                          "block h-full transition-[width]",
+                          ch.hp.current === 0
+                            ? "bg-rose-500"
+                            : hpPct <= 25
+                              ? "bg-amber-500"
+                              : "bg-emerald-500",
+                        )}
+                        style={{ width: `${hpPct}%` }}
+                      />
                     </span>
-                    <span className="font-mono text-[10px] tabular-nums">
-                      {ch.hp.current}/{ch.hp.max}
-                    </span>
-                  </span>
+                  </button>
                 );
               })}
-            </span>
-          ) : (
-            <>
-              <span className="max-w-24 truncate font-medium text-amber-700 dark:text-amber-300">
-                {activeChar.name.split(" ")[0]}
-              </span>
-              <span className="inline-flex items-center gap-1 font-mono tabular-nums">
-                {activeChar.hp.current === 0 ? (
-                  <SkullIcon className="size-3 text-rose-600 dark:text-rose-400" />
-                ) : (
-                  <HeartPulseIcon className="size-3 text-emerald-600 dark:text-emerald-400" />
-                )}
-                {activeChar.hp.current}/{activeChar.hp.max}
-              </span>
-              <span
-                aria-hidden="true"
-                className="h-1.5 w-8 overflow-hidden rounded-full bg-foreground/15"
-              >
-                <span
-                  className={cn(
-                    "block h-full rounded-full transition-[width]",
-                    activeChar.hp.current === 0
-                      ? "bg-rose-500"
-                      : activeChar.hp.current / Math.max(1, activeChar.hp.max) <=
-                          0.25
-                        ? "bg-amber-500"
-                        : "bg-emerald-500",
-                  )}
-                  style={{
-                    width: `${Math.max(0, Math.min(100, (activeChar.hp.current / Math.max(1, activeChar.hp.max)) * 100))}%`,
-                  }}
-                />
-              </span>
-              <span className="hidden items-center gap-0.5 font-mono tabular-nums text-muted-foreground sm:inline-flex">
-                <ShieldIcon className="size-3" />
-                {activeChar.ac}
-              </span>
-              {level1Slots && (
-                <span className="hidden items-center gap-0.5 font-mono tabular-nums text-violet-700 dark:text-violet-300 sm:inline-flex">
-                  <SparklesIcon className="size-3" />
-                  {level1Slots.current}/{level1Slots.max}
-                </span>
+              {gameState.combat?.active && (
+                <div className="flex items-center justify-between rounded-none border border-rose-500/50 bg-rose-500/15 px-2.5 py-1 font-mono text-[10px] font-semibold text-rose-800 dark:text-rose-200">
+                  <span className="inline-flex items-center gap-1">
+                    <SwordsIcon className="size-3" />
+                    Combate activo
+                  </span>
+                  <span>Ronda {gameState.combat.round}</span>
+                </div>
               )}
-            </>
+            </aside>
           )}
-          {gameState.combat?.active && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/20 px-1.5 py-0 font-mono text-[10px] font-semibold text-rose-800 dark:bg-rose-500/25 dark:text-rose-200">
-              <SwordsIcon className="size-2.5" />R{gameState.combat.round}
-            </span>
-          )}
-          <PanelRightIcon className="size-3 text-muted-foreground" />
-        </button>
-      )}
-
-      {/* Columna editorial principal */}
-      <main
-        id="main-content"
-        className={cn(
-          "mx-auto flex min-h-0 w-full flex-1 flex-col transition-[padding] duration-200 ease-out",
-          sidebarOpen && "lg:pr-[388px]",
-        )}
-      >
-        {messages.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center p-6 pt-16 sm:pt-6">
-            <Empty className="max-w-2xl border-none p-4 sm:p-8">
-              <EmptyHeader className="max-w-lg">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-0.5 font-mono text-[10px] font-medium text-amber-700 dark:text-amber-300">
-                  SRD 5.2.1 · {gameState?.ruleset ?? "5e-full"} · Motor determinista · Voz STT
-                </span>
-                <EmptyTitle className="mt-2 font-serif text-3xl font-semibold tracking-tight">
-                  <h1>Aguas Inquietas</h1>
-                </EmptyTitle>
-                <EmptyDescription className="text-[14px] leading-relaxed">
-                  Crónica interactiva 5e asistida por motor determinista. Escribí,
-                  dictá con el micrófono o abrí el panel lateral (
-                  <KbdGroup>
-                    <Kbd>Alt</Kbd>
-                    <span>+</span>
-                    <Kbd>H</Kbd>
-                  </KbdGroup>
-                  ) para elegir ficha o modo híbrido.
-                </EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent className="max-w-xl">
-                <Suggestions
-                  onStartCampaign={() => {
-                    void handleStartCampaignIntro();
-                  }}
-                  onSelect={submitPrompt}
-                  presets={presets}
-                  onStartLocalParty={async (party, mode, ruleset) => {
-                    const createdId = await handleNewCampaign(
-                      party,
-                      mode,
-                      ruleset,
-                    );
-                    if (createdId) {
-                      await handleStartCampaignIntro(createdId);
-                    }
-                  }}
-                  disabled={isBusy || seedingIntro}
-                />
-              </EmptyContent>
-            </Empty>
-          </div>
-        ) : (
-          <MessageScrollerProvider autoScroll>
-            <MessageScroller className="relative flex-1">
-              {/* Degradado superior sutil estilo lectura nocturna */}
-              <div
-                aria-hidden
-                className="pointer-events-none sticky top-0 z-10 h-6 w-full bg-gradient-to-b from-background/90 to-transparent"
-              />
-              <MessageScrollerViewport>
-                <MessageScrollerContent className="mx-auto flex w-full max-w-[700px] flex-col gap-7 px-5 pb-8 pt-12 sm:px-6 sm:pt-4">
-                  {messages.map((message, idx) => {
-                    const nextMessage = messages[idx + 1];
-                    const turnOutcome =
-                      message.role === "user"
-                        ? extractTurnOutcomeSummary(nextMessage)
-                        : null;
-
-                    let sceneHeader: { microLabel: string; title: string } | null =
-                      null;
-                    if (message.role === "assistant") {
-                      const transitionPart = message.parts.find(
-                        (
-                          p,
-                        ): p is Extract<
-                          typeof p,
-                          {
-                            type: "tool-transition_scene";
-                            state: "output-available";
-                          }
-                        > =>
-                          p.type === "tool-transition_scene" &&
-                          p.state === "output-available" &&
-                          p.output.ok,
+          {messages.length === 0 ? (
+            <div className="flex min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+              <Empty className="m-auto max-w-2xl rounded-none border-none p-4 sm:p-8">
+                <EmptyHeader className="max-w-lg">
+                  <span className="inline-flex items-center gap-1.5 rounded-none border border-amber-500/25 bg-amber-500/10 px-2.5 py-0.5 font-mono text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                    SRD 5.2.1 · {gameState?.ruleset ?? "5e-full"} · Motor determinista · Voz STT
+                  </span>
+                  <EmptyTitle className="mt-2 font-serif text-3xl font-semibold tracking-tight">
+                    <h1>Aguas Inquietas</h1>
+                  </EmptyTitle>
+                  <EmptyDescription className="text-[14px] leading-relaxed">
+                    Crónica interactiva 5e asistida por motor determinista. Escribí,
+                    dictá con el micrófono o abrí el panel lateral (
+                    <KbdGroup>
+                      <Kbd>Alt</Kbd>
+                      <span>+</span>
+                      <Kbd>H</Kbd>
+                    </KbdGroup>
+                    ) para elegir ficha o modo híbrido.
+                  </EmptyDescription>
+                </EmptyHeader>
+                <EmptyContent className="max-w-xl">
+                  <Suggestions
+                    onStartCampaign={() => {
+                      void handleStartCampaignIntro();
+                    }}
+                    onSelect={(prompt) => {
+                      void submitPrompt(prompt);
+                    }}
+                    presets={presets}
+                    onStartLocalParty={async (party, mode, ruleset) => {
+                      const createdId = await handleNewCampaign(
+                        party,
+                        mode,
+                        ruleset,
                       );
-                      if (transitionPart?.output.titleEs) {
-                        sceneHeader = {
-                          microLabel: "AGUAS INQUIETAS · NUEVA ESCENA",
-                          title: transitionPart.output.titleEs,
-                        };
-                      } else if (idx === firstAssistantIndex && currentScene) {
-                        sceneHeader = {
-                          microLabel: `AGUAS INQUIETAS · ${gameState?.ruleset.toUpperCase() ?? "5E-FULL"}`,
-                          title: currentScene.titleEs,
-                        };
+                      if (createdId) {
+                        await handleStartCampaignIntro(createdId);
                       }
-                    }
-
-                    const isLastAssistant =
-                      message.role === "assistant" &&
-                      idx === messages.length - 1;
-
-                    const speechText =
-                      ttsAvailable && message.role === "assistant"
-                        ? extractAssistantSpeechText(message)
-                        : "";
-
-                    const checkpointSeq =
-                      visibleCheckpointByMessageId.get(message.id) ?? null;
-
-                    return (
-                      <MessageScrollerItem
-                        key={message.id}
-                        messageId={message.id}
-                      >
-                        <ChatMessage
-                          message={message}
-                          isStreaming={
-                            (isBusy && message.id === lastMessage?.id) ||
-                            message.id === streamingIntroId
-                          }
-                          streamSpeed={settings.streamSpeed}
-                          isLastAssistant={isLastAssistant}
-                          hideSuggestions={Boolean(
-                            pendingQuestion || pendingDeclareCheck,
-                          )}
-                          showReasoning={settings.showDevReasoningView}
-                          ttsAvailable={ttsAvailable}
-                          isSpeaking={ttsPlayer.playingId === message.id}
-                          isLoadingAudio={ttsPlayer.loadingId === message.id}
-                          onSpeak={
-                            ttsAvailable && speechText
-                              ? () => {
-                                  void ttsPlayer.speak({
-                                    id: message.id,
-                                    text: speechText,
-                                    model: settings.ttsModel,
-                                    voice: settings.ttsVoice,
-                                    speed: settings.ttsSpeed,
-                                  });
-                                }
-                              : undefined
-                          }
-                          onStopAudio={
-                            ttsAvailable ? ttsPlayer.stop : undefined
-                          }
-                          characterName={activeChar?.name}
-                          characterClassName={activeChar?.className}
-                          charactersById={gameState?.characters}
-                          turnOutcome={turnOutcome}
-                          sceneHeader={sceneHeader}
-                          pcNames={pcNames}
-                          npcNames={npcNames}
-                          onSelectSuggestion={submitPrompt}
-                          onRetry={
-                            !isBusy && message.id === lastMessage?.id
-                              ? () =>
-                                  regenerate({
-                                    messageId: message.id,
-                                    body: {
-                                      model: effectiveModel,
-                                      campaignId,
-                                      reasoningEffort: settings.reasoningEffort,
-                                      activeActorId,
-                                    },
-                                  })
-                              : undefined
-                          }
-                        />
-                        {checkpointSeq !== null && (
-                          <Checkpoint className="mt-3">
-                            <CheckpointIcon />
-                            <CheckpointTrigger
-                              disabled={isBusy || rollingBackSeq !== null}
-                              tooltip={`Volver al estado guardado en la secuencia #${checkpointSeq}`}
-                              onClick={async () => {
-                                playSound("navigation.backward");
-                                setRollingBackSeq(checkpointSeq);
-                                try {
-                                  await handleRollback(checkpointSeq);
-                                } finally {
-                                  setRollingBackSeq(null);
-                                }
-                              }}
-                            >
-                              {rollingBackSeq === checkpointSeq
-                                ? "Restaurando…"
-                                : `Restaurar punto #${checkpointSeq}`}
-                            </CheckpointTrigger>
-                          </Checkpoint>
-                        )}
-                      </MessageScrollerItem>
-                    );
-                  })}
-                  {status === "submitted" && (
-                    <MessageScrollerItem messageId="thinking">
-                      <Message>
-                        <MessageContent>
-                          <Trace>
-                            <TraceLine status="running">
-                              <TraceIcon>
-                                <StatusIcon status="running" />
-                              </TraceIcon>
-                              <TraceTitle>El DM está deliberando…</TraceTitle>
-                            </TraceLine>
-                          </Trace>
-                        </MessageContent>
-                      </Message>
-                    </MessageScrollerItem>
-                  )}
-                  {pendingQuestion && (
-                    <MessageScrollerItem messageId="pending-question">
-                      <QuestionCard
-                        part={pendingQuestion}
-                        onAnswer={(toolCallId, answer) =>
-                          addToolOutput({
-                            tool: "ask_user",
-                            toolCallId,
-                            output: answer,
-                          })
-                        }
-                      />
-                    </MessageScrollerItem>
-                  )}
-                  {pausedQueue.map((entry) => {
-                    const speakerChar = gameState?.characters[entry.actorId];
-                    return (
-                      <MessageScrollerItem
-                        key={entry.id}
-                        messageId={`paused-${entry.id}`}
-                      >
-                        <div className="flex justify-end">
-                          <div className="w-full max-w-[88%] rounded-xl border border-dashed border-amber-500/45 bg-amber-500/[0.04] px-3.5 py-2.5 sm:max-w-[78%]">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="flex min-w-0 items-center gap-1.5">
-                                <span className="truncate text-xs font-semibold text-amber-700 dark:text-amber-300">
-                                  {speakerChar?.name ?? entry.actorId}
-                                </span>
-                                {speakerChar?.playerName && (
-                                  <span className="rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                                    {speakerChar.playerName}
-                                  </span>
-                                )}
-                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[9.5px] font-medium text-amber-700 dark:text-amber-300">
-                                  <PauseIcon className="size-2.5" />
-                                  En pausa
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                aria-label="Quitar mensaje en pausa"
-                                onClick={() => {
-                                  playSound("interaction.tap");
-                                  setPausedQueue((prev) =>
-                                    prev.filter((item) => item.id !== entry.id),
-                                  );
-                                }}
-                                className="rounded p-0.5 text-muted-foreground hover:text-rose-500"
-                              >
-                                <XIcon className="size-3.5" />
-                              </button>
-                            </div>
-                            <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/90">
-                              {entry.text}
-                            </p>
-                          </div>
-                        </div>
-                      </MessageScrollerItem>
-                    );
-                  })}
-                  {pendingDeclareCheck &&
-                    pendingDeclareCheck.state === "input-available" &&
-                    campaignId && (
-                      <MessageScrollerItem messageId="pending-declare-check">
-                        <HybridCheckCard
-                          key={pendingDeclareCheck.toolCallId}
-                          campaignId={campaignId}
-                          sceneId={pendingDeclareCheck.input.sceneId}
-                          actorId={pendingDeclareCheck.input.actorId}
-                          actorName={pendingDeclareActor?.name}
-                          playerName={pendingDeclareActor?.playerName}
-                          queuePosition={
-                            allDeclareChecks.length > 1
-                              ? {
-                                  current: resolvedDeclareCount + 1,
-                                  total: allDeclareChecks.length,
-                                }
-                              : undefined
-                          }
-                          skill={pendingDeclareCheck.input.skill}
-                          dc={pendingDeclareCheck.input.dc}
-                          dcRef={pendingDeclareCheck.input.dcRef}
-                          mode={pendingDeclareCheck.input.mode ?? "normal"}
-                          promptEs={pendingDeclareCheck.input.promptEs}
-                          checkId={pendingDeclareCheck.toolCallId}
-                          onVerified={(output, nextState, event) => {
-                            setGameState(nextState);
-                            setEvents((prev) => [...prev, event]);
-                            notifyNewEvents([event], false);
-                            void addToolOutput({
-                              tool: "declare_check",
-                              toolCallId: pendingDeclareCheck.toolCallId,
-                              output,
-                            });
-                          }}
-                        />
-                      </MessageScrollerItem>
-                    )}
-                </MessageScrollerContent>
-              </MessageScrollerViewport>
-              <MessageScrollerButton />
-            </MessageScroller>
-          </MessageScrollerProvider>
-        )}
-
-        <div className="mx-auto flex w-full max-w-[700px] flex-col gap-2 px-5 pb-5 pt-2 sm:px-6">
-          {error && (
-            <Alert variant="destructive">
-              <AlertTitle>Error en la solicitud</AlertTitle>
-              <AlertDescription>{error.message}</AlertDescription>
-            </Alert>
-          )}
-          {ttsPlayer.error && (
-            <Alert variant="destructive">
-              <AlertTitle>Error de audio (TTS)</AlertTitle>
-              <AlertDescription>{ttsPlayer.error}</AlertDescription>
-              <AlertAction>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Cerrar alerta de audio"
-                  onClick={ttsPlayer.clearError}
-                >
-                  <XIcon className="size-3.5" />
-                </Button>
-              </AlertAction>
-            </Alert>
-          )}
-          {(showContextMeter ||
-            (showTensionMeter && gameState) ||
-            activeTurnStatus !== null) && (
-            <div className="flex flex-wrap items-center justify-between gap-2 px-0.5">
-              <div className="flex flex-wrap items-center gap-1.5">
-                {showContextMeter && (
-                  <ContextMeter messages={messages} isBusy={isBusy} />
-                )}
-                {showTensionMeter && gameState && (
-                  <TensionMeter
-                    state={gameState}
-                    events={events}
-                    pendingPlayerRoll={Boolean(
-                      pendingDeclareCheck || pendingQuestion,
-                    )}
-                    isStreaming={isBusy}
+                    }}
+                    disabled={isBusy || seedingIntro}
                   />
+                </EmptyContent>
+              </Empty>
+            </div>
+          ) : (
+            <MessageScrollerProvider autoScroll>
+              <MessageScroller className="relative flex-1">
+                {/* Degradado superior sutil estilo lectura nocturna */}
+                <div
+                  aria-hidden
+                  className="pointer-events-none sticky top-0 z-10 h-6 w-full bg-gradient-to-b from-background/90 to-transparent"
+                />
+                <MessageScrollerViewport>
+                  <MessageScrollerContent className="mx-auto flex w-full max-w-[700px] flex-col gap-7 px-5 pb-8 pt-5 sm:px-6">
+                    {messages.map((message, idx) => {
+                      const nextMessage = messages[idx + 1];
+                      const turnOutcome =
+                        message.role === "user"
+                          ? extractTurnOutcomeSummary(nextMessage)
+                          : null;
+
+                      let sceneHeader: { microLabel: string; title: string } | null =
+                        null;
+                      if (message.role === "assistant") {
+                        const transitionPart = message.parts.find(
+                          (
+                            p,
+                          ): p is Extract<
+                            typeof p,
+                            {
+                              type: "tool-transition_scene";
+                              state: "output-available";
+                            }
+                          > =>
+                            p.type === "tool-transition_scene" &&
+                            p.state === "output-available" &&
+                            p.output.ok,
+                        );
+                        if (transitionPart?.output.titleEs) {
+                          sceneHeader = {
+                            microLabel: "AGUAS INQUIETAS · NUEVA ESCENA",
+                            title: transitionPart.output.titleEs,
+                          };
+                        } else if (idx === firstAssistantIndex && currentScene) {
+                          sceneHeader = {
+                            microLabel: `AGUAS INQUIETAS · ${gameState?.ruleset.toUpperCase() ?? "5E-FULL"}`,
+                            title: currentScene.titleEs,
+                          };
+                        }
+                      }
+
+                      const isLastAssistant =
+                        message.role === "assistant" &&
+                        idx === messages.length - 1;
+
+                      const speechText =
+                        ttsAvailable && message.role === "assistant"
+                          ? extractAssistantSpeechText(message)
+                          : "";
+
+                      const checkpointSeq =
+                        visibleCheckpointByMessageId.get(message.id) ?? null;
+
+                      return (
+                        <MessageScrollerItem
+                          key={message.id}
+                          messageId={message.id}
+                        >
+                          <ChatMessage
+                            message={message}
+                            isStreaming={
+                              (isBusy && message.id === lastMessage?.id) ||
+                              message.id === streamingIntroId
+                            }
+                            streamSpeed={settings.streamSpeed}
+                            isLastAssistant={isLastAssistant}
+                            hideSuggestions={Boolean(
+                              pendingQuestion || pendingDeclareCheck,
+                            )}
+                            showReasoning={settings.showDevReasoningView}
+                            ttsAvailable={ttsAvailable}
+                            isSpeaking={ttsPlayer.playingId === message.id}
+                            isLoadingAudio={ttsPlayer.loadingId === message.id}
+                            onSpeak={
+                              ttsAvailable && speechText
+                                ? () => {
+                                    void ttsPlayer.speak({
+                                      id: message.id,
+                                      text: speechText,
+                                      model: settings.ttsModel,
+                                      voice: settings.ttsVoice,
+                                      speed: settings.ttsSpeed,
+                                    });
+                                  }
+                                : undefined
+                            }
+                            onStopAudio={
+                              ttsAvailable ? ttsPlayer.stop : undefined
+                            }
+                            checkpointSeq={checkpointSeq}
+                            isRollingBack={
+                              checkpointSeq !== null &&
+                              rollingBackSeq === checkpointSeq
+                            }
+                            onRollback={
+                              !isBusy
+                                ? (seq) => {
+                                    if (rollingBackSeq !== null) return;
+                                    void (async () => {
+                                      playSound("navigation.backward");
+                                      setRollingBackSeq(seq);
+                                      try {
+                                        await handleRollback(seq);
+                                      } finally {
+                                        setRollingBackSeq(null);
+                                      }
+                                    })();
+                                  }
+                                : undefined
+                            }
+                            characterName={activeChar?.name}
+                            characterClassName={activeChar?.className}
+                            charactersById={gameState?.characters}
+                            activeChar={activeChar}
+                            ruleset={gameState?.ruleset}
+                            turnOutcome={turnOutcome}
+                            sceneHeader={sceneHeader}
+                            pcNames={pcNames}
+                            npcNames={npcNames}
+                            onSelectSuggestion={(prompt) => {
+                              void submitPrompt(prompt);
+                            }}
+                            onRetry={
+                              !isBusy && message.id === lastMessage?.id
+                                ? () =>
+                                    regenerate({
+                                      messageId: message.id,
+                                      body: {
+                                        model: effectiveModel,
+                                        campaignId,
+                                        reasoningEffort: settings.reasoningEffort,
+                                        activeActorId,
+                                      },
+                                    })
+                                : undefined
+                            }
+                          />
+                        </MessageScrollerItem>
+                      );
+                    })}
+                    {status === "submitted" && (
+                      <MessageScrollerItem messageId="thinking">
+                        <Message>
+                          <MessageContent>
+                            <Trace>
+                              <TraceLine status="running">
+                                <TraceIcon>
+                                  <StatusIcon status="running" />
+                                </TraceIcon>
+                                <TraceTitle>El DM está deliberando…</TraceTitle>
+                              </TraceLine>
+                            </Trace>
+                          </MessageContent>
+                        </Message>
+                      </MessageScrollerItem>
+                    )}
+                    {pendingQuestion && (
+                      <MessageScrollerItem messageId="pending-question">
+                        <QuestionCard
+                          part={pendingQuestion}
+                          onAnswer={(toolCallId, answer) =>
+                            addToolOutput({
+                              tool: "ask_user",
+                              toolCallId,
+                              output: answer,
+                            })
+                          }
+                        />
+                      </MessageScrollerItem>
+                    )}
+                    {pausedQueue.map((entry) => {
+                      const speakerChar = gameState?.characters[entry.actorId];
+                      return (
+                        <MessageScrollerItem
+                          key={entry.id}
+                          messageId={`paused-${entry.id}`}
+                        >
+                          <div className="flex justify-end">
+                            <div className="w-full max-w-[88%] rounded-none border border-dashed border-amber-500/45 bg-amber-500/[0.04] px-3.5 py-2.5 sm:max-w-[78%]">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex min-w-0 items-center gap-1.5">
+                                  <span className="truncate text-xs font-semibold text-amber-700 dark:text-amber-300">
+                                    {speakerChar?.name ?? entry.actorId}
+                                  </span>
+                                  {speakerChar?.playerName && (
+                                    <span className="rounded-none bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                      {speakerChar.playerName}
+                                    </span>
+                                  )}
+                                  <span className="inline-flex items-center gap-1 rounded-none border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[9.5px] font-medium text-amber-700 dark:text-amber-300">
+                                    <PauseIcon className="size-2.5" />
+                                    En pausa
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  aria-label="Quitar mensaje en pausa"
+                                  onClick={() => {
+                                    playSound("interaction.tap");
+                                    setPausedQueue((prev) =>
+                                      prev.filter((item) => item.id !== entry.id),
+                                    );
+                                  }}
+                                  className="rounded-none p-0.5 text-muted-foreground hover:text-rose-500"
+                                >
+                                  <XIcon className="size-3.5" />
+                                </button>
+                              </div>
+                              <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/90">
+                                {entry.text}
+                              </p>
+                            </div>
+                          </div>
+                        </MessageScrollerItem>
+                      );
+                    })}
+                    {pendingDeclareCheck &&
+                      pendingDeclareCheck.state === "input-available" &&
+                      campaignId && (
+                        <MessageScrollerItem messageId="pending-declare-check">
+                          <HybridCheckCard
+                            key={pendingDeclareCheck.toolCallId}
+                            campaignId={campaignId}
+                            sceneId={pendingDeclareCheck.input.sceneId}
+                            actorId={pendingDeclareCheck.input.actorId}
+                            actorName={pendingDeclareActor?.name}
+                            playerName={pendingDeclareActor?.playerName}
+                            queuePosition={
+                              allDeclareChecks.length > 1
+                                ? {
+                                    current: resolvedDeclareCount + 1,
+                                    total: allDeclareChecks.length,
+                                  }
+                                : undefined
+                            }
+                            skill={pendingDeclareCheck.input.skill}
+                            purpose={pendingDeclareCheck.input.purpose}
+                            dc={pendingDeclareCheck.input.dc}
+                            dcRef={pendingDeclareCheck.input.dcRef}
+                            mode={pendingDeclareCheck.input.mode ?? "normal"}
+                            promptEs={pendingDeclareCheck.input.promptEs}
+                            checkId={pendingDeclareCheck.toolCallId}
+                            onVerified={(output, nextState, event) => {
+                              setGameState(nextState);
+                              setEvents((prev) => [...prev, event]);
+                              notifyNewEvents([event], false);
+                              void addToolOutput({
+                                tool: "declare_check",
+                                toolCallId: pendingDeclareCheck.toolCallId,
+                                output,
+                              });
+                            }}
+                          />
+                        </MessageScrollerItem>
+                      )}
+                    {gameState &&
+                      !isBusy &&
+                      gameState.sceneId === "escena_08_otra_orilla" && (
+                        <MessageScrollerItem messageId="epilogue-card">
+                          <EpilogueCard
+                            state={gameState}
+                            onStartNewCampaign={() => {
+                              setCampaignSidebarOpen(true);
+                              void fetchCampaignsList();
+                            }}
+                          />
+                        </MessageScrollerItem>
+                      )}
+                  </MessageScrollerContent>
+                </MessageScrollerViewport>
+                <MessageScrollerButton />
+              </MessageScroller>
+            </MessageScrollerProvider>
+          )}
+
+          {/* Dock inferior recto */}
+          <div className="mx-auto w-full max-w-[700px] shrink-0 px-4 pb-4 pt-2 sm:px-6 sm:pb-5">
+            {(error || ttsPlayer.error) && (
+              <div className="mb-2 flex flex-col gap-2">
+                {error && (
+                  <Alert variant="destructive" className="rounded-none">
+                    <AlertTitle>Error en la solicitud</AlertTitle>
+                    <AlertDescription>{error.message}</AlertDescription>
+                  </Alert>
+                )}
+                {ttsPlayer.error && (
+                  <Alert variant="destructive" className="rounded-none">
+                    <AlertTitle>Error de audio (TTS)</AlertTitle>
+                    <AlertDescription>{ttsPlayer.error}</AlertDescription>
+                    <AlertAction>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label="Cerrar alerta de audio"
+                        onClick={ttsPlayer.clearError}
+                        className="rounded-none"
+                      >
+                        <XIcon className="size-3.5" />
+                      </Button>
+                    </AlertAction>
+                  </Alert>
                 )}
               </div>
-              {activeTurnStatus && (
-                <LiveTurnStatus status={activeTurnStatus} />
-              )}
-            </div>
-          )}
-          <PromptForm
-            formRef={promptFormRef}
-            models={models}
-            model={effectiveModel}
-            lockedModelIds={lockedModelIds}
-            onModelChange={(nextModel) => {
-              updateSettings({ textModel: nextModel });
-            }}
-            isBusy={isBusy}
-            campaignId={campaignId}
-            gameState={gameState}
-            activeActorId={activeActorId}
-            onSelectActor={(actorId) => setSelectedActorId(actorId)}
-            pausedMode={pausedMode}
-            onTogglePausedMode={() => setPausedMode((prev) => !prev)}
-            pausedCount={pausedQueue.length}
-            onFlushPaused={handleFlushPaused}
-            onClearPaused={() => setPausedQueue([])}
-            lastDmText={extractAssistantSpeechText(
-              [...messages].reverse().find((m) => m.role === "assistant"),
             )}
-            onSubmit={(text) => {
-              setStreamingIntroId(null);
-              submitPrompt(text);
-            }}
-            onStop={() => {
-              playSound("interaction.tap");
-              stop();
-            }}
-          />
-        </div>
-      </main>
+            <div className="flex flex-col rounded-none">
+              {(showContextMeter ||
+                (showTensionMeter && gameState) ||
+                activeTurnStatus !== null) && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-none border-x border-t border-border bg-card/70 px-2.5 py-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {showContextMeter && (
+                      <ContextMeter messages={messages} isBusy={isBusy} />
+                    )}
+                    {showTensionMeter && gameState && (
+                      <TensionMeter
+                        state={gameState}
+                        events={events}
+                        pendingPlayerRoll={Boolean(
+                          pendingDeclareCheck || pendingQuestion,
+                        )}
+                        isStreaming={isBusy}
+                      />
+                    )}
+                  </div>
+                  {activeTurnStatus && (
+                    <LiveTurnStatus status={activeTurnStatus} />
+                  )}
+                </div>
+              )}
+              <PromptForm
+                formRef={promptFormRef}
+                models={models}
+                model={effectiveModel}
+                lockedModelIds={lockedModelIds}
+                onModelChange={(nextModel) => {
+                  updateSettings({ textModel: nextModel });
+                }}
+                isBusy={isBusy}
+                gameState={gameState}
+                activeActorId={activeActorId}
+                pausedMode={pausedMode}
+                onTogglePausedMode={() => setPausedMode((prev) => !prev)}
+                pausedCount={pausedQueue.length}
+                onFlushPaused={handleFlushPaused}
+                onClearPaused={() => setPausedQueue([])}
+                onSubmit={(text) => {
+                  setStreamingIntroId(null);
+                  void submitPrompt(text);
+                }}
+                onStop={() => {
+                  playSound("interaction.tap");
+                  stop();
+                }}
+              />
+            </div>
+          </div>
+        </main>
 
-      {/* HUD Lateral colapsable (acoplado en desktop lg+, drawer en móvil) */}
-      <GameSidebar
-        open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        campaignId={campaignId}
-        sessionNumber={sessionNumber}
-        state={gameState}
-        events={events}
-        sessionSummaries={sessionSummaries}
-        memoryFacts={memoryFacts}
-        presets={presets}
-        activeActorId={activeActorId}
-        onSelectActor={(actorId) => setSelectedActorId(actorId)}
-        onAddPartyMember={handleAddPartyMember}
-        onRemovePartyMember={handleRemovePartyMember}
-        onNewCampaign={async (party, mode, ruleset) => {
-          await handleNewCampaign(party, mode, ruleset);
-        }}
-        onStartNewSession={handleStartNewSession}
-        onToggleMode={handleToggleMode}
-        onRollback={handleRollback}
-        onQuickAction={(commandDraft) => {
-          playSound("interaction.tap");
-          if (typeof window !== "undefined" && window.innerWidth < 1024) {
-            setSidebarOpen(false);
-          }
-          promptFormRef.current?.setDraft(commandDraft);
-        }}
-      />
+        {/* HUD Lateral colapsable (acoplado en desktop lg+, drawer en móvil) */}
+        <GameSidebar
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          campaignId={campaignId}
+          sessionNumber={sessionNumber}
+          state={gameState}
+          events={events}
+          sessionSummaries={sessionSummaries}
+          memoryFacts={memoryFacts}
+          presets={presets}
+          activeActorId={activeActorId}
+          onSelectActor={(actorId) => setSelectedActorId(actorId)}
+          onAddPartyMember={handleAddPartyMember}
+          onRemovePartyMember={handleRemovePartyMember}
+          onStartNewSession={handleStartNewSession}
+          onToggleMode={handleToggleMode}
+          onRollback={handleRollback}
+          onQuickAction={(commandDraft) => {
+            playSound("interaction.tap");
+            if (typeof window !== "undefined" && window.innerWidth < 1024) {
+              setSidebarOpen(false);
+            }
+            promptFormRef.current?.setDraft(commandDraft);
+          }}
+        />
+      </div>
     </div>
   );
 }

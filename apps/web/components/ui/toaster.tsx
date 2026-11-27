@@ -110,27 +110,27 @@ const TONE_STYLES: Record<
   { border: string; iconBg: string; iconText: string }
 > = {
   neutral: {
-    border: "border-border/80",
+    border: "border-l-muted-foreground/50",
     iconBg: "bg-muted/80",
     iconText: "text-muted-foreground",
   },
   amber: {
-    border: "border-amber-500/40",
+    border: "border-l-amber-500",
     iconBg: "bg-amber-500/15",
     iconText: "text-amber-600 dark:text-amber-300",
   },
   emerald: {
-    border: "border-emerald-500/40",
+    border: "border-l-emerald-500",
     iconBg: "bg-emerald-500/15",
     iconText: "text-emerald-600 dark:text-emerald-300",
   },
   rose: {
-    border: "border-rose-500/45",
+    border: "border-l-rose-500",
     iconBg: "bg-rose-500/15",
     iconText: "text-rose-600 dark:text-rose-300",
   },
   violet: {
-    border: "border-violet-500/40",
+    border: "border-l-violet-500",
     iconBg: "bg-violet-500/15",
     iconText: "text-violet-600 dark:text-violet-300",
   },
@@ -175,13 +175,13 @@ export function Toaster() {
             key={item.id}
             role="status"
             className={cn(
-              "pointer-events-auto flex items-start gap-2.5 rounded-xl border bg-card/95 px-3 py-2.5 text-xs shadow-lg backdrop-blur-md transition-all animate-in fade-in slide-in-from-bottom-2 duration-200",
+              "pointer-events-auto flex items-start gap-2.5 rounded-none border border-border border-l-2 bg-card/95 px-3 py-2.5 text-xs shadow-lg backdrop-blur-md transition-all animate-in fade-in slide-in-from-bottom-2 duration-200",
               style.border,
             )}
           >
             <span
               className={cn(
-                "mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-lg",
+                "mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-none",
                 style.iconBg,
                 style.iconText,
               )}
@@ -209,7 +209,7 @@ export function Toaster() {
               type="button"
               onClick={() => dismissToast(item.id)}
               aria-label="Cerrar notificación"
-              className="shrink-0 rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+              className="shrink-0 rounded-none p-0.5 text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
             >
               <XIcon className="size-3.5" />
             </button>

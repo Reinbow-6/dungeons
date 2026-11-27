@@ -1,7 +1,7 @@
 const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
 const DELIMITER_TAGS_RE =
-  /<(\/?)\s*(player_action|memory_facts|session_recaps|older_turns_digest|system|assistant|developer|instructions)\s*>/gi;
+  /<(\/?)\s*(player_action|game_state|lorebook|memory_facts|session_recaps|older_turns_digest|system|assistant|developer|instructions)\s*>/gi;
 
 const INJECTION_SIGNAL_RULES: ReadonlyArray<{
   label: string;
@@ -35,7 +35,7 @@ const INJECTION_SIGNAL_RULES: ReadonlyArray<{
   {
     label: "delimiter_spoof",
     pattern:
-      /<\/?\s*(player_action|memory_facts|session_recaps|older_turns_digest|system|developer|instructions)\s*>/i,
+      /<\/?\s*(player_action|game_state|lorebook|memory_facts|session_recaps|older_turns_digest|system|developer|instructions)\s*>/i,
   },
 ];
 

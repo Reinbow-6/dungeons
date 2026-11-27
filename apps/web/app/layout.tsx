@@ -2,7 +2,6 @@ import { Geist, Geist_Mono, Newsreader } from "next/font/google";
 
 import "./globals.css";
 import { SettingsPanel } from "@/components/settings-panel";
-import { SiteHeader } from "@/components/site-header";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -43,12 +42,11 @@ export default function RootLayout({
           <TooltipProvider>
             <a
               href="#main-content"
-              className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-2 focus:z-50 focus:rounded-lg focus:border focus:border-border focus:bg-background focus:px-3 focus:py-1.5 focus:text-xs focus:font-medium focus:text-foreground focus:shadow-md"
+              className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-2 focus:z-50 focus:rounded-none focus:border focus:border-border focus:bg-background focus:px-3 focus:py-1.5 focus:text-xs focus:font-medium focus:text-foreground focus:shadow-md"
             >
               Ir al contenido principal
             </a>
-            <div className="flex h-svh flex-col">
-              <SiteHeader />
+            <div className="flex h-svh min-h-0 flex-col overflow-hidden">
               {children}
             </div>
             <SettingsPanel />
