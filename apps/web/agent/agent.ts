@@ -1,16 +1,18 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
-  AGUAS_QUIETAS_LOREBOOK,
+  AGUAS_QUIETAS_PACK,
   computeMacroStoryArc,
   computeTensionMeter,
   deriveTurnContext,
-  getAguasInquietasProgress,
+  getAdventureProgress,
   getCheckModifier,
+  getEffectiveAc,
   getSpellcastingStats,
   selectActiveNpcMinds,
   selectLorebookEntries,
   selectMentionActivatedMemories,
+  type AdventurePack,
   type GameEvent,
   type GameState,
   type LorebookSelectionResult,
@@ -91,12 +93,14 @@ function loadInstructionsMarkdown(): string {
 
 export function buildDmStaticSystemPrompt(
   state?: Pick<GameState, "ruleset" | "characters">,
+  adventurePack?: AdventurePack,
 ): string {
   const base = loadInstructionsMarkdown();
   if (!state) {
     return base;
   }
 
+  const pack = adventurePack ?? AGUAS_QUIETAS_PACK;
   const orderedChars = Object.values(state.characters).sort((a, b) =>
     a.id.localeCompare(b.id),
   );
@@ -116,7 +120,7 @@ export function buildDmStaticSystemPrompt(
       ? (() => {
           const scalingGuide =
             partySize === 2
-              ? "2 PJs: agregá +1 enemigo menor o subí a 2–3 exploradores / 3 necrófagos en encuentros armados."
+              ? "2 PJs: agregá +1 enemigo menor o subí a 2–3 enemigos básicos en encuentros armados."
               : partySize === 3
                 ? "3 PJs: usá 3–4 enemigos o tácticas de flanqueo y cobertura en encuentros armados."
                 : "4 PJs: usá 4–5 enemigos o doble frente (arqueros + cuerpo a cuerpo) para sostener el desafío.";
@@ -128,7 +132,23 @@ export function buildDmStaticSystemPrompt(
         })()
       : "";
 
+  const bestiaryLines =
+    pack.bestiary.length > 0
+      ? pack.bestiary.map(
+          (c) => `- \`${c.id}\` (${c.nameEs}): CR ${c.cr} · CA ${c.ac} · PG ${c.hp}`,
+        )
+      : ["- (Sin criaturas predefinidas en este módulo)"];
+
   return `${base}
+
+---
+
+## Tono y campaña (${pack.titleEs})
+- **Mundo:** ${pack.worldSummaryEs}
+- **Tono:** ${pack.tonePromptEs}
+
+### Bestiario de la campaña (${pack.bestiary.length})
+${bestiaryLines.join("\n")}
 
 ---
 
@@ -141,6 +161,7 @@ export function buildDmDynamicTurnContext(
   state: GameState,
   events: readonly GameEvent[],
   memoryContext?: DmMemoryPromptContext,
+  adventurePack?: AdventurePack,
 ): { dynamicTurnContext: string; lorebook: LorebookSelectionResult } {
   const currentScene = state.scenes[state.sceneId];
   const unlockedIds = state.unlockedClues[state.sceneId] ?? [];
@@ -218,12 +239,28 @@ export function buildDmDynamicTurnContext(
       if (char.exhaustionLevel > 0)
         extrasHp.push(`Agotamiento: ${char.exhaustionLevel}`);
       if (safeConc) extrasHp.push(`Conc: ${safeConc}`);
+      if (char.activeEffects && char.activeEffects.length > 0) {
+        extrasHp.push(
+          `Efectos: ${char.activeEffects
+            .map((e) =>
+              e.remainingRounds !== null
+                ? `${e.labelEs} (${e.remainingRounds}r)`
+                : e.labelEs,
+            )
+            .join(", ")}`,
+        );
+      }
+      const effAc = getEffectiveAc(char);
+      const acLabel =
+        effAc.effectiveAc !== char.ac
+          ? `${effAc.effectiveAc} (base ${char.ac})`
+          : `${char.ac}`;
       const extrasHpStr =
         extrasHp.length > 0 ? ` | ${extrasHp.join(" | ")}` : "";
 
       return [
         `- **${safeName}** (actorId: \`${char.id}\`, ${char.species}, ${char.className} Nv.${char.level}${safePlayer})`,
-        `  - PG: ${char.hp.current}/${char.hp.max} | CA: ${char.ac} | DG: ${hitDiceText} | Cond: ${cond}${extrasHpStr}`,
+        `  - PG: ${char.hp.current}/${char.hp.max} | CA: ${acLabel} | DG: ${hitDiceText} | Cond: ${cond}${extrasHpStr}`,
         ...(deathSavesLine ? [deathSavesLine] : []),
         ...(spellLine ? [spellLine] : []),
         `  - \`rollAuthority\`: \`${char.rollAuthority}\` (${char.rollAuthority === "player-declared" ? "MODO HÍBRIDO: usá `declare_check` (y `purpose: \"investigate\"` para buscar pistas)" : "MODO DIGITAL: usá `resolve_check` o `investigate`"})`,
@@ -270,8 +307,24 @@ export function buildDmDynamicTurnContext(
             if (c.conditions && c.conditions.length > 0) {
               extras.push(`Cond: ${c.conditions.join(", ")}`);
             }
+            if (c.activeEffects && c.activeEffects.length > 0) {
+              extras.push(
+                `Efectos: ${c.activeEffects
+                  .map((e) =>
+                    e.remainingRounds !== null
+                      ? `${e.labelEs} (${e.remainingRounds}r)`
+                      : e.labelEs,
+                  )
+                  .join(", ")}`,
+              );
+            }
+            const effAc = getEffectiveAc(c);
+            const acLabel =
+              effAc.effectiveAc !== c.ac
+                ? `${effAc.effectiveAc} (base ${c.ac})`
+                : `${c.ac}`;
             const extrasStr = extras.length > 0 ? ` | ${extras.join(" · ")}` : "";
-            return `- ${idx + 1}. **${sanitizeUntrustedText(c.name, 80)}** (id: \`${c.id}\`, ${roleLabel})${statusTag} — Ini ${c.initiative} | PG ${c.hp.current}/${c.hp.max} | CA ${c.ac}${extrasStr}\n  - Ataques: ${attacksList || "ninguno"}`;
+            return `- ${idx + 1}. **${sanitizeUntrustedText(c.name, 80)}** (id: \`${c.id}\`, ${roleLabel})${statusTag} — Ini ${c.initiative} | PG ${c.hp.current}/${c.hp.max} | CA ${acLabel}${extrasStr}\n  - Ataques: ${attacksList || "ninguno"}`;
           })
           .join("\n");
 
@@ -318,8 +371,9 @@ ${rows}
           .join("\n")}\n</memory_facts>\n`
       : "";
 
+  const pack = adventurePack ?? AGUAS_QUIETAS_PACK;
   const lorebook = selectLorebookEntries(
-    AGUAS_QUIETAS_LOREBOOK,
+    pack.lorebook,
     state,
     scanTexts,
     {
@@ -339,7 +393,12 @@ ${rows}
           .join("\n")}\n</lorebook>\n`
       : "";
 
-  const activeNpcMinds = selectActiveNpcMinds(state, events, combinedScanText);
+  const activeNpcMinds = selectActiveNpcMinds(
+    state,
+    events,
+    combinedScanText,
+    pack,
+  );
   const npcMindsBlock =
     activeNpcMinds.length > 0
       ? `\n### Mentes compartimentadas de NPCs activos/mencionados\n${activeNpcMinds
@@ -371,9 +430,9 @@ ${rows}
     ? `\n### Turnos antiguos compactados\n<older_turns_digest>\n${sanitizeUntrustedText(memoryContext.olderTurnsDigest, 900)}\n</older_turns_digest>\n`
     : "";
 
-  const progress = getAguasInquietasProgress(state);
-  const storyArc = computeMacroStoryArc(state, events);
-  const tension = computeTensionMeter(state, events);
+  const progress = getAdventureProgress(state, pack);
+  const storyArc = computeMacroStoryArc(state, events, pack);
+  const tension = computeTensionMeter(state, events, pack);
   const turnCtx = deriveTurnContext(state, {
     activeActorId: memoryContext?.activeActorId,
   });
@@ -382,12 +441,14 @@ ${rows}
     partySize > 1
       ? `\n### Foco actual de mesa (${partySize} jugadores)\n- **Hablante/actor en foco:** ${turnCtx.activeActorName ?? "Grupo"} (\`${turnCtx.activeActorId ?? "party"}\`).\n`
       : "";
+  const defaultEndingTitle =
+    pack.scenes[pack.epilogueSceneIds[0] ?? ""]?.titleEs ?? "final estándar";
   const unlockedEndingsStr =
     progress.unlockedAlternativeEndings.length > 0
       ? progress.unlockedAlternativeEndings
           .map((e) => `${e.titleEs} (${e.summaryEs})`)
           .join("; ")
-      : "ninguno todavía (solo final estándar Escape en la Niebla)";
+      : `ninguno todavía (solo final estándar: ${defaultEndingTitle})`;
 
   const dynamicTurnContext = `## Estado vivo de la campaña (fuente autoritativa)
 - **Ruleset:** \`${state.ruleset}\` | **Sesión actual:** #${memoryContext?.sessionNumber ?? 1} | **Última secuencia (\`lastSeq\`):** ${state.lastSeq} | **Fase de turno (\`turnPhase\`):** \`${turnCtx.phase}\`${turnCtx.activeActorName ? ` (${turnCtx.activeActorName})` : ""}
@@ -419,12 +480,14 @@ export function buildDmPromptLayers(
   state: GameState,
   events: readonly GameEvent[],
   memoryContext?: DmMemoryPromptContext,
+  adventurePack?: AdventurePack,
 ): DmPromptLayers {
-  const staticSystemPrompt = buildDmStaticSystemPrompt(state);
+  const staticSystemPrompt = buildDmStaticSystemPrompt(state, adventurePack);
   const { dynamicTurnContext, lorebook } = buildDmDynamicTurnContext(
     state,
     events,
     memoryContext,
+    adventurePack,
   );
   return {
     staticSystemPrompt,
@@ -437,8 +500,14 @@ export function buildDmSystemPrompt(
   state: GameState,
   events: readonly GameEvent[],
   memoryContext?: DmMemoryPromptContext,
+  adventurePack?: AdventurePack,
 ): string {
-  const layers = buildDmPromptLayers(state, events, memoryContext);
+  const layers = buildDmPromptLayers(
+    state,
+    events,
+    memoryContext,
+    adventurePack,
+  );
   return `${layers.staticSystemPrompt}
 
 ---
@@ -518,7 +587,7 @@ export function createDmTools(rt: DmToolRuntime) {
     transition_scene: createTransitionSceneTool(rt),
     inventory: createInventoryTool(rt),
     rollback_to_event: createRollbackTool(rt),
-    lookup_rules: createLookupRulesTool(),
+    lookup_rules: createLookupRulesTool(rt.adventurePack),
     combat_start: createCombatStartTool(rt),
     combat_attack: createCombatAttackTool(rt),
     combat_next_turn: createCombatNextTurnTool(rt),

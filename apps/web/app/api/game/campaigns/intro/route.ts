@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { resolveGuestSessionFromRequest } from "@/lib/auth/guest-session";
+import { getFallbackAdventurePack } from "@/lib/game/adventure-packs";
 import { getDefaultGameStore } from "@/lib/game/store";
 import { serverErrorResponse } from "@/lib/http/errors";
 import { hashGuestId } from "@/lib/observability/logger";
@@ -89,6 +90,8 @@ export async function POST(req: Request) {
         ok: true,
         campaignId: seeded.campaignId,
         sessionId: seeded.sessionId,
+        adventureId: seeded.adventureId,
+        adventurePack: seeded.adventurePack ?? getFallbackAdventurePack(),
         state: seeded.state,
         events: seeded.events,
         messages: seeded.messages,

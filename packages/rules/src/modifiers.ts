@@ -1,3 +1,4 @@
+import { buildRollTags, resolveModifiers } from './effects.js';
 import { rollD20, type Rng, type RollMode } from './rng.js';
 import {
   SKILL_TO_ABILITY,
@@ -5,8 +6,10 @@ import {
   type Character,
   type CheckTarget,
   type Condition5e,
+  type ResolvedModifierEntry,
   type RulesetProfile,
   type Skill,
+  type SourcedModifier,
 } from './types.js';
 
 export function getAbilityModifier(score: number): number {
@@ -161,19 +164,25 @@ export interface CheckModifierBreakdown {
   conditionMod: number;
   totalMod: number;
   imposesDisadvantage: boolean;
+  grantsAdvantage: boolean;
+  breakdown: ResolvedModifierEntry[];
+  diceBonusRange: { min: number; max: number };
+  consumedEffectIds: string[];
 }
 
 export function getCheckModifier(
   character: Character,
   target: CheckTarget,
   ruleset: RulesetProfile,
+  options?: { rng?: Rng; tags?: ReadonlySet<string> },
 ): CheckModifierBreakdown {
   const ability: Ability = isSkill(target) ? SKILL_TO_ABILITY[target] : target;
   const abilityMod = getAbilityModifier(character.abilities[ability]);
 
   let proficiencyMod = 0;
+  let tier: 'none' | 'proficient' | 'expertise' = 'none';
   if (isSkill(target)) {
-    const tier = character.skillProficiencies[target] ?? 'none';
+    tier = character.skillProficiencies[target] ?? 'none';
     const pb = getProficiencyBonus(character.level);
     if (tier === 'proficient') {
       proficiencyMod = pb;
@@ -185,13 +194,63 @@ export function getCheckModifier(
   const conditions = getConditionPenalty(character, ruleset);
   const conditionMod = conditions.d20Modifier;
 
+  const baseModifiers: SourcedModifier[] = [];
+  if (abilityMod !== 0) {
+    baseModifiers.push({
+      slug: `ability:${ability}`,
+      labelEs: ability.toUpperCase(),
+      target: 'check',
+      value: abilityMod,
+      type: 'untyped',
+    });
+  }
+  if (proficiencyMod !== 0) {
+    baseModifiers.push({
+      slug: `proficiency:${target}`,
+      labelEs: tier === 'expertise' ? 'Pericia' : 'Comp.',
+      target: 'check',
+      value: proficiencyMod,
+      type: 'untyped',
+    });
+  }
+  if (conditions.effectiveExhaustionLevel > 0) {
+    baseModifiers.push({
+      slug: 'exhaustion',
+      labelEs: `Agotamiento Nv.${conditions.effectiveExhaustionLevel}`,
+      target: 'check',
+      value: conditionMod,
+      type: 'status',
+    });
+  }
+
+  const tags =
+    options?.tags ??
+    buildRollTags({
+      kind: 'check',
+      ...(isSkill(target) ? { skill: target } : {}),
+      ability,
+      conditions: character.conditions,
+    });
+  const resolved = resolveModifiers({
+    baseModifiers,
+    activeEffects: character.activeEffects,
+    target: 'check',
+    tags,
+    rng: options?.rng,
+  });
+
   return {
     ability,
     abilityMod,
     proficiencyMod,
     conditionMod,
-    totalMod: abilityMod + proficiencyMod + conditionMod,
-    imposesDisadvantage: conditions.imposesDisadvantageOnChecks,
+    totalMod: resolved.totalMod,
+    imposesDisadvantage:
+      conditions.imposesDisadvantageOnChecks || resolved.imposesDisadvantage,
+    grantsAdvantage: resolved.grantsAdvantage,
+    breakdown: resolved.breakdown,
+    diceBonusRange: resolved.diceBonusRange,
+    consumedEffectIds: resolved.consumedEffectIds,
   };
 }
 
@@ -201,24 +260,80 @@ export interface SaveModifierBreakdown {
   proficiencyMod: number;
   conditionMod: number;
   totalMod: number;
+  imposesDisadvantage: boolean;
+  grantsAdvantage: boolean;
+  breakdown: ResolvedModifierEntry[];
+  diceBonusRange: { min: number; max: number };
+  consumedEffectIds: string[];
 }
 
 export function getSavingThrowModifier(
   character: Character,
   ability: Ability,
   ruleset: RulesetProfile,
+  options?: { rng?: Rng; tags?: ReadonlySet<string> },
 ): SaveModifierBreakdown {
   const abilityMod = getAbilityModifier(character.abilities[ability]);
   const isProficient = character.savingThrowProficiencies.includes(ability);
   const proficiencyMod = isProficient ? getProficiencyBonus(character.level) : 0;
-  const conditionMod = getConditionPenalty(character, ruleset).d20Modifier;
+  const conditions = getConditionPenalty(character, ruleset);
+  const conditionMod = conditions.d20Modifier;
+
+  const baseModifiers: SourcedModifier[] = [];
+  if (abilityMod !== 0) {
+    baseModifiers.push({
+      slug: `ability:${ability}`,
+      labelEs: ability.toUpperCase(),
+      target: 'save',
+      value: abilityMod,
+      type: 'untyped',
+    });
+  }
+  if (proficiencyMod !== 0) {
+    baseModifiers.push({
+      slug: `proficiency:save:${ability}`,
+      labelEs: 'Comp. salv.',
+      target: 'save',
+      value: proficiencyMod,
+      type: 'untyped',
+    });
+  }
+  if (conditions.effectiveExhaustionLevel > 0) {
+    baseModifiers.push({
+      slug: 'exhaustion',
+      labelEs: `Agotamiento Nv.${conditions.effectiveExhaustionLevel}`,
+      target: 'save',
+      value: conditionMod,
+      type: 'status',
+    });
+  }
+
+  const tags =
+    options?.tags ??
+    buildRollTags({
+      kind: 'save',
+      ability,
+      conditions: character.conditions,
+    });
+  const resolved = resolveModifiers({
+    baseModifiers,
+    activeEffects: character.activeEffects,
+    target: 'save',
+    tags,
+    rng: options?.rng,
+  });
 
   return {
     ability,
     abilityMod,
     proficiencyMod,
     conditionMod,
-    totalMod: abilityMod + proficiencyMod + conditionMod,
+    totalMod: resolved.totalMod,
+    imposesDisadvantage: resolved.imposesDisadvantage,
+    grantsAdvantage: resolved.grantsAdvantage,
+    breakdown: resolved.breakdown,
+    diceBonusRange: resolved.diceBonusRange,
+    consumedEffectIds: resolved.consumedEffectIds,
   };
 }
 

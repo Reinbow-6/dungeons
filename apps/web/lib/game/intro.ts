@@ -1,4 +1,8 @@
-import type { GameState } from "@dungeons/rules";
+import {
+  AGUAS_QUIETAS_PACK,
+  type AdventurePack,
+  type GameState,
+} from "@dungeons/rules";
 
 import type {
   DmChatMessagePart,
@@ -7,63 +11,58 @@ import type {
 
 export const SEEDED_INTRO_TOOL_CALL_ID = "seeded-intro-suggest-actions";
 
-const INTRO_ACTIONS: SuggestedActionItem[] = [
-  {
-    skill: "Percepción",
-    tone: "blue",
-    label: "Escudriñar los juncos y la niebla antes de avanzar",
-  },
-  {
-    skill: "Persuasión",
-    tone: "violet",
-    label: "Alzar las manos y parlamentar con quienes vigilan desde la maleza",
-  },
-  {
-    skill: "Sigilo",
-    tone: "emerald",
-    label: "Deslizarte en silencio hacia la columna de humo al este",
-  },
-];
+function formatIntroParagraphs(
+  paragraphs: readonly string[],
+  vars: { charName: string; partyNames: string },
+): string {
+  return paragraphs
+    .map((p) =>
+      p
+        .replaceAll("{{charName}}", vars.charName)
+        .replaceAll("{{partyNames}}", vars.partyNames),
+    )
+    .join("\n\n");
+}
 
 /**
- * Deterministic opening assistant turn seeded into every new Aguas Quietas campaign.
+ * Deterministic opening assistant turn seeded into any campaign from its AdventurePack.
  * Consumes 0 LLM tokens at turn 0 while giving immediate narrative framing + action buttons.
  */
-export function buildSeededIntroParts(state: GameState): DmChatMessagePart[] {
-  const scene = state.scenes[state.sceneId];
+export function buildSeededIntroParts(
+  state: GameState,
+  pack?: AdventurePack | null,
+): DmChatMessagePart[] {
+  const resolvedPack = pack ?? AGUAS_QUIETAS_PACK;
   const pcs = Object.values(state.characters);
   const activeChar = pcs[0];
   const charName = activeChar?.name ?? "viajero";
   const isGroup = pcs.length > 1;
-  const hook =
-    scene?.narrativeHookEs ??
-    "Tras huir del asedio en la capital del sur, llegás al atardecer a un banco de tierra firme rodeado de ciénaga.";
 
-  let introText: string;
-  if (isGroup) {
-    const namesList = pcs.map((pc) =>
-      pc.playerName ? `${pc.name} (${pc.playerName})` : pc.name,
-    );
-    const partyNames =
-      namesList.length === 2
-        ? `${namesList[0]} y ${namesList[1]}`
-        : `${namesList.slice(0, -1).join(", ")} y ${namesList.at(-1)}`;
-    const groupHook = hook
-      .replace("llegás al atardecer", "llegan al atardecer")
-      .replace("cruzarlo", "cruzarlo");
+  const namesList = pcs.map((pc) =>
+    pc.playerName ? `${pc.name} (${pc.playerName})` : pc.name,
+  );
+  const partyNames =
+    namesList.length === 0
+      ? charName
+      : namesList.length === 1
+        ? namesList[0]!
+        : namesList.length === 2
+          ? `${namesList[0]} y ${namesList[1]}`
+          : `${namesList.slice(0, -1).join(", ")} y ${namesList.at(-1)}`;
 
-    introText = [
-      `${groupHook}`,
-      `El agua oscura del río fronterizo arrastra ramas y ceniza, demasiado ancha y helada para cruzarla a nado. Bajo las botas de **${partyNames}** el barro cruje entre los juncos altos; a lo lejos se distingue el roce seco de madera tensada y figuras inmóviles midiendo cada uno de sus pasos. La iniciativa es suya: ¿qué hacen?`,
-    ].join("\n\n");
-  } else {
-    introText = [
-      `${hook}`,
-      `El agua oscura del río fronterizo arrastra ramas y ceniza, demasiado ancha y helada para cruzarla a nado. A tus pies el barro cruje bajo las botas, ${charName}; entre los juncos altos creés distinguir el roce seco de madera tensada y figuras inmóviles midiendo cada uno de tus pasos. La iniciativa es tuya: ¿qué hacés?`,
-    ].join("\n\n");
-  }
+  const paragraphs = isGroup
+    ? resolvedPack.intro.groupParagraphsEs
+    : resolvedPack.intro.soloParagraphsEs;
+  const introText = formatIntroParagraphs(paragraphs, { charName, partyNames });
 
-  const sceneLabel = `AGUAS INQUIETAS · ${state.ruleset.toUpperCase()}`;
+  const sceneLabel = `${resolvedPack.titleEs.toUpperCase()} · ${state.ruleset.toUpperCase()}`;
+  const actions: SuggestedActionItem[] = resolvedPack.intro.suggestedActions.map(
+    (a) => ({
+      skill: a.skill,
+      tone: a.tone === "rose" ? "amber" : a.tone,
+      label: a.label,
+    }),
+  );
 
   return [
     {
@@ -76,12 +75,12 @@ export function buildSeededIntroParts(state: GameState): DmChatMessagePart[] {
       state: "output-available",
       input: {
         sceneLabel,
-        actions: INTRO_ACTIONS,
+        actions,
       },
       output: {
         ok: true,
         sceneLabel,
-        actions: INTRO_ACTIONS,
+        actions,
       },
     },
   ];

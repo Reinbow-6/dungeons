@@ -1,5 +1,14 @@
 import { z } from 'zod';
 import {
+  buildRollTags,
+  collectCombatEndPurge,
+  collectConcentrationPurge,
+  getEffectiveAc,
+  resolveModifiers,
+  tickCombatEffects,
+  type ExpiredEffectSummary,
+} from './effects.js';
+import {
   applyDelta,
   type GameEvent,
   type GameStateDelta,
@@ -34,6 +43,8 @@ import {
   type CombatantKind,
   type CombatState,
   type GameState,
+  type ResolvedModifierEntry,
+  type SourcedModifier,
 } from './types.js';
 
 export type { DamageRelation } from './modifiers.js';
@@ -412,6 +423,9 @@ export function startCombat(
       ...(char.conditions.length > 0
         ? { conditions: [...char.conditions] }
         : {}),
+      ...(char.activeEffects && char.activeEffects.length > 0
+        ? { activeEffects: char.activeEffects.map((e) => ({ ...e })) }
+        : {}),
       defeated: char.hp.current <= 0,
     };
     rolledEntries.push({
@@ -605,8 +619,11 @@ export type ResolveCombatAttackResult =
       attackRolls: number[];
       naturalRoll: number;
       attackBonus: number;
+      attackBreakdown?: ResolvedModifierEntry[];
       attackTotal: number;
+      targetBaseAc?: number;
       targetAc: number;
+      acBreakdown?: ResolvedModifierEntry[];
       hit: boolean;
       isCritical: boolean;
       isCriticalMiss: boolean;
@@ -816,26 +833,76 @@ export function resolveCombatAttack(
     : getConditionsEffects(targetConditions, 0);
 
   const ranged = isRangedAttack(attack);
+  const attackerActiveEffects =
+    attackerChar?.activeEffects ?? attacker.activeEffects ?? [];
+  const targetActiveEffects =
+    targetChar?.activeEffects ?? target.activeEffects ?? [];
+  const attackTags = buildRollTags({
+    kind: 'attack',
+    attackKind: ranged ? 'ranged' : 'melee',
+    conditions: attackerChar ? attackerChar.conditions : attacker.conditions,
+    inCombat: true,
+    sceneId: input.sceneId,
+  });
+  const baseAttackModifiers: SourcedModifier[] = [
+    {
+      slug: 'attack:base',
+      labelEs: attack.nameEs,
+      target: 'attack',
+      value: attack.attackBonus,
+      type: 'untyped',
+    },
+  ];
+  if (attackerEffects.effectiveExhaustionLevel > 0) {
+    baseAttackModifiers.push({
+      slug: 'exhaustion',
+      labelEs: `Agotamiento Nv.${attackerEffects.effectiveExhaustionLevel}`,
+      target: 'attack',
+      value: attackerEffects.d20Modifier,
+      type: 'status',
+    });
+  }
+  const attackResolved = resolveModifiers({
+    baseModifiers: baseAttackModifiers,
+    activeEffects: attackerActiveEffects,
+    opponentEffects: targetActiveEffects,
+    target: 'attack',
+    tags: attackTags,
+    rng: ctx.rng,
+  });
+  const acRes = getEffectiveAc(
+    { ac: target.ac, activeEffects: targetActiveEffects },
+    buildRollTags({
+      kind: 'ac',
+      attackKind: ranged ? 'ranged' : 'melee',
+      conditions: targetConditions,
+      inCombat: true,
+      sceneId: input.sceneId,
+    }),
+  );
+
   const hasAdvantage =
     attackerEffects.grantsAdvantageOnAttacks ||
     targetEffects.grantsAdvantageToAttackers ||
-    (!ranged && targetConditions.includes('prone'));
+    (!ranged && targetConditions.includes('prone')) ||
+    attackResolved.grantsAdvantage;
   const hasDisadvantage =
     attackerEffects.imposesDisadvantageOnAttacks ||
     targetEffects.imposesDisadvantageToAttackers ||
-    (ranged && targetConditions.includes('prone'));
+    (ranged && targetConditions.includes('prone')) ||
+    attackResolved.imposesDisadvantage;
 
   const effectiveMode = resolveRollMode({
     requested: input.mode ?? 'normal',
     hasAdvantage,
     hasDisadvantage,
   });
-  const effectiveAttackBonus = attack.attackBonus + attackerEffects.d20Modifier;
+  const effectiveAttackBonus = attackResolved.totalMod;
   const attackRoll = rollD20(ctx.rng, effectiveMode);
   const isCriticalMiss = attackRoll.isNatural1;
   const attackTotal = attackRoll.chosen + effectiveAttackBonus;
   const hit =
-    attackRoll.isNatural20 || (!isCriticalMiss && attackTotal >= target.ac);
+    attackRoll.isNatural20 || (!isCriticalMiss && attackTotal >= acRes.effectiveAc);
   const isCritical =
     attackRoll.isNatural20 ||
     (!isCriticalMiss && hit && !ranged && targetEffects.autoCritFromMelee);
@@ -944,6 +1011,42 @@ export function resolveCombatAttack(
         })
       : undefined;
 
+  const lostConcentration =
+    targetChar &&
+    targetChar.concentratingOn &&
+    ((concentrationCheck && !concentrationCheck.maintained) || addUnconscious);
+  const concPurge = lostConcentration
+    ? collectConcentrationPurge(state, targetChar.id, targetChar.concentratingOn!)
+    : { effectsRemoved: [], conditionsRemoved: [] };
+
+  const consumedRemovals: Array<{ targetId: string; effectId: string }> = [];
+  for (const effId of attackResolved.consumedEffectIds) {
+    if (attackerActiveEffects.some((e) => e.id === effId)) {
+      consumedRemovals.push({
+        targetId: attackerChar?.id ?? attacker.id,
+        effectId: effId,
+      });
+    } else if (targetActiveEffects.some((e) => e.id === effId)) {
+      consumedRemovals.push({
+        targetId: targetChar?.id ?? target.id,
+        effectId: effId,
+      });
+    }
+  }
+  const allEffectsRemoved = [...concPurge.effectsRemoved, ...consumedRemovals];
+  const conditionsRemovedDelta = concPurge.conditionsRemoved;
+
+  if (conditionsRemovedDelta.length > 0) {
+    for (const rem of conditionsRemovedDelta) {
+      const comb = nextCombat.combatants.find(
+        (c) => c.actorId === rem.actorId || c.id === rem.actorId,
+      );
+      if (comb?.conditions) {
+        comb.conditions = comb.conditions.filter((c) => c !== rem.condition);
+      }
+    }
+  }
+
   const allEnemiesDefeated = nextCombat.combatants
     .filter((c) => c.kind === 'enemy')
     .every((c) => c.defeated);
@@ -983,6 +1086,12 @@ export function resolveCombatAttack(
           ],
         }
       : {}),
+    ...(conditionsRemovedDelta.length > 0
+      ? { conditionsRemoved: conditionsRemovedDelta }
+      : {}),
+    ...(allEffectsRemoved.length > 0
+      ? { effectsRemoved: allEffectsRemoved }
+      : {}),
     ...(targetChar && nextDeathSaves
       ? {
           deathSaveChanges: [
@@ -1001,9 +1110,7 @@ export function resolveCombatAttack(
           },
         }
       : {}),
-    ...(targetChar &&
-    ((concentrationCheck && !concentrationCheck.maintained) || addUnconscious) &&
-    targetChar.concentratingOn
+    ...(lostConcentration && targetChar
       ? {
           concentrationChanges: [
             {
@@ -1039,9 +1146,12 @@ export function resolveCombatAttack(
       attackNameEs: attack.nameEs,
       mode: effectiveMode,
       attackBonus: effectiveAttackBonus,
+      attackBreakdown: attackResolved.breakdown,
       naturalRoll: attackRoll.chosen,
       attackTotal,
-      targetAc: target.ac,
+      targetBaseAc: target.ac,
+      targetAc: acRes.effectiveAc,
+      acBreakdown: acRes.breakdown,
       hit,
       isCritical,
       isCriticalMiss,
@@ -1078,8 +1188,11 @@ export function resolveCombatAttack(
     attackRolls: attackRoll.rolls,
     naturalRoll: attackRoll.chosen,
     attackBonus: effectiveAttackBonus,
+    attackBreakdown: attackResolved.breakdown,
     attackTotal,
-    targetAc: target.ac,
+    targetBaseAc: target.ac,
+    targetAc: acRes.effectiveAc,
+    acBreakdown: acRes.breakdown,
     hit,
     isCritical,
     isCriticalMiss,
@@ -1121,6 +1234,7 @@ export type AdvanceCombatTurnResult =
       activeCombatant: Combatant;
       round: number;
       roundAdvanced: boolean;
+      expiredEffects: ExpiredEffectSummary[];
       event: GameEvent;
       nextState: GameState;
     }
@@ -1203,9 +1317,33 @@ export function advanceCombatTurn(
   nextCombat.round = nextRound;
 
   const activeCombatant = nextCombat.combatants[nextIdx]!;
+  const tick = tickCombatEffects(state, {
+    previousCombatant,
+    activeCombatant,
+  });
+  if (tick.conditionsRemoved.length > 0) {
+    for (const rem of tick.conditionsRemoved) {
+      const comb = nextCombat.combatants.find(
+        (c) => c.actorId === rem.actorId || c.id === rem.actorId,
+      );
+      if (comb?.conditions) {
+        comb.conditions = comb.conditions.filter((c) => c !== rem.condition);
+      }
+    }
+  }
+
   const nextSeq = state.lastSeq + 1;
   const stateDelta: GameStateDelta = {
     combat: nextCombat,
+    ...(tick.effectsUpdated.length > 0
+      ? { effectsUpdated: tick.effectsUpdated }
+      : {}),
+    ...(tick.effectsRemoved.length > 0
+      ? { effectsRemoved: tick.effectsRemoved }
+      : {}),
+    ...(tick.conditionsRemoved.length > 0
+      ? { conditionsRemoved: tick.conditionsRemoved }
+      : {}),
   };
 
   const event: GameEvent = {
@@ -1228,6 +1366,9 @@ export function advanceCombatTurn(
       turnIndex: nextIdx,
       round: nextRound,
       roundAdvanced,
+      ...(tick.expiredEffects.length > 0
+        ? { expiredEffects: tick.expiredEffects }
+        : {}),
     },
     stateDelta,
     revertedByEventId: null,
@@ -1243,6 +1384,7 @@ export function advanceCombatTurn(
     activeCombatant,
     round: nextRound,
     roundAdvanced,
+    expiredEffects: tick.expiredEffects,
     event,
     nextState,
   };
@@ -1269,6 +1411,7 @@ export type EndCombatResult =
       outcome: CombatOutcome | null;
       reason: string | null;
       roundsElapsed: number;
+      expiredEffects: ExpiredEffectSummary[];
       event: GameEvent;
       nextState: GameState;
     }
@@ -1310,9 +1453,16 @@ export function endCombat(
   }
 
   const roundsElapsed = state.combat.round;
+  const purge = collectCombatEndPurge(state);
   const nextSeq = state.lastSeq + 1;
   const stateDelta: GameStateDelta = {
     combat: null,
+    ...(purge.effectsRemoved.length > 0
+      ? { effectsRemoved: purge.effectsRemoved }
+      : {}),
+    ...(purge.conditionsRemoved.length > 0
+      ? { conditionsRemoved: purge.conditionsRemoved }
+      : {}),
     ...(input.outcome
       ? {
           flagsSet: {
@@ -1341,6 +1491,9 @@ export function endCombat(
       outcome: input.outcome ?? null,
       reason: input.reason ?? null,
       roundsElapsed,
+      ...(purge.expiredEffects.length > 0
+        ? { expiredEffects: purge.expiredEffects }
+        : {}),
     },
     stateDelta,
     revertedByEventId: null,
@@ -1354,6 +1507,7 @@ export function endCombat(
     outcome: input.outcome ?? null,
     reason: input.reason ?? null,
     roundsElapsed,
+    expiredEffects: purge.expiredEffects,
     event,
     nextState,
   };

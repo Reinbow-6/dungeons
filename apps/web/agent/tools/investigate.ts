@@ -39,6 +39,7 @@ export function createInvestigateTool(rt: DmToolRuntime) {
         total: res.total,
         naturalRoll: res.naturalRoll,
         modifier: res.modifier,
+        ...(res.breakdown ? { breakdown: res.breakdown } : {}),
         unlockedClues: res.unlockedClues.map((c) => ({
           id: c.id,
           dc: c.dc,

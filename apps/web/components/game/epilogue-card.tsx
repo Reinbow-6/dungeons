@@ -1,22 +1,34 @@
 "use client";
 
-import { getAguasInquietasProgress, type GameState } from "@dungeons/rules";
+import {
+  AGUAS_QUIETAS_PACK,
+  getAdventureProgress,
+  type AdventurePack,
+  type GameState,
+} from "@dungeons/rules";
 import { FlagIcon, PlusIcon, SparklesIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
 export function EpilogueCard({
   state,
+  adventurePack,
   onStartNewCampaign,
 }: {
   state: GameState;
+  adventurePack?: AdventurePack | null;
   onStartNewCampaign?: () => void;
 }) {
-  if (state.sceneId !== "escena_08_otra_orilla") {
+  const pack = adventurePack ?? AGUAS_QUIETAS_PACK;
+  if (!pack.epilogueSceneIds.includes(state.sceneId)) {
     return null;
   }
 
-  const progress = getAguasInquietasProgress(state);
+  const progress = getAdventureProgress(state, pack);
+  const currentSceneTitle =
+    state.scenes[state.sceneId]?.shortLabelEs ??
+    state.scenes[state.sceneId]?.titleEs ??
+    "Epílogo";
   const standardEnding = progress.endings.find((e) => e.isStandard);
   const altEndings = progress.unlockedAlternativeEndings;
 
@@ -31,7 +43,7 @@ export function EpilogueCard({
             Crónica completada
           </p>
           <h3 className="mt-0.5 font-serif text-xl font-semibold text-foreground">
-            La Otra Orilla · Aguas Inquietas
+            {currentSceneTitle} · {pack.titleEs}
           </h3>
         </div>
         <span className="inline-flex items-center gap-1 rounded-none border border-primary/35 bg-primary/10 px-2.5 py-1 font-mono text-[11px] font-semibold text-primary tabular-nums">

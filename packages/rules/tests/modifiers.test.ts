@@ -29,7 +29,7 @@ describe('5e modifiers & SRD 5.2.1 conditions', () => {
     const kael = state.characters.pc_kael!;
 
     const inv = getCheckModifier(kael, 'investigation', '5e-lite');
-    expect(inv).toEqual({
+    expect(inv).toMatchObject({
       ability: 'int',
       abilityMod: 2,
       proficiencyMod: 2,

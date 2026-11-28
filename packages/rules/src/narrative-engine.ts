@@ -1,4 +1,8 @@
-import { getAguasInquietasProgress } from './adventures/aguas-quietas.js';
+import {
+  getAdventureProgress,
+  type AdventurePack,
+} from './adventure-pack.js';
+import { AGUAS_QUIETAS_PACK } from './adventures/aguas-quietas.js';
 import type { GameEvent } from './events.js';
 import type { GameState, TurnPhase } from './types.js';
 
@@ -117,8 +121,13 @@ const HARSH_CONDITIONS = new Set([
 export function computeTensionMeter(
   state: GameState,
   events: readonly GameEvent[],
+  pack?: AdventurePack,
 ): TensionReading {
-  let score = SCENE_BASE_TENSION[state.sceneId] ?? 35;
+  let score =
+    state.scenes[state.sceneId]?.baseTension ??
+    pack?.scenes[state.sceneId]?.baseTension ??
+    SCENE_BASE_TENSION[state.sceneId] ??
+    35;
   const factorsEs: string[] = [];
 
   const sceneTitle = state.scenes[state.sceneId]?.titleEs ?? state.sceneId;
@@ -270,14 +279,19 @@ const ACT_METADATA: Record<
 export function computeMacroStoryArc(
   state: GameState,
   events: readonly GameEvent[],
+  pack?: AdventurePack,
 ): MacroStoryArc {
-  const progress = getAguasInquietasProgress(state);
+  const resolvedPack = pack ?? AGUAS_QUIETAS_PACK;
+  const progress = getAdventureProgress(state, resolvedPack);
   const actNumber = Math.min(4, Math.max(1, progress.currentStage.order)) as
     | 1
     | 2
     | 3
     | 4;
-  const meta = ACT_METADATA[actNumber];
+  const fallbackMeta = ACT_METADATA[actNumber];
+  const actTitleEs = progress.currentStage.actTitleEs ?? fallbackMeta.titleEs;
+  const dramaticBeatEs =
+    progress.currentStage.dramaticBeatEs ?? fallbackMeta.beatEs;
 
   const active = events.filter(
     (e) => e.revertedByEventId === null && e.type !== 'ROLLBACK',
@@ -292,16 +306,16 @@ export function computeMacroStoryArc(
     !state.combat?.active &&
     !progress.completed &&
     eventsSinceLastTransition >= 5
-      ? 'La escena lleva varios eventos sin avanzar: introducí una señal del frente o una presión concreta que empuje hacia la siguiente escena.'
+      ? 'La escena lleva varios eventos sin avanzar: introducí una señal de peligro o una presión concreta que empuje hacia la siguiente escena.'
       : null;
 
   return {
     actNumber,
-    actTitleEs: meta.titleEs,
-    dramaticBeatEs: meta.beatEs,
+    actTitleEs,
+    dramaticBeatEs,
     eventsSinceLastTransition,
     stagnationWarningEs,
-    summaryLineEs: `${meta.titleEs} (${meta.beatEs}) — Etapa ${progress.currentStage.order}/${progress.quest.stages.length}: ${progress.currentStage.titleEs}`,
+    summaryLineEs: `${actTitleEs} (${dramaticBeatEs}) — Etapa ${progress.currentStage.order}/${progress.quest.stages.length}: ${progress.currentStage.titleEs}`,
   };
 }
 
@@ -324,7 +338,9 @@ export function selectActiveNpcMinds(
   state: GameState,
   events: readonly GameEvent[],
   latestUserText = '',
+  pack?: AdventurePack,
 ): NpcMindCard[] {
+  const resolvedPack = pack ?? AGUAS_QUIETAS_PACK;
   const normText = normalizeForMatch(latestUserText);
   const discovered = new Set<string>();
   for (const ids of Object.values(state.unlockedClues)) {
@@ -337,93 +353,44 @@ export function selectActiveNpcMinds(
       (e.type === 'COMBAT_STARTED' || e.type === 'COMBAT_ATTACK'),
   );
 
-  const catalog: NpcMindCard[] = [
-    {
-      id: 'comandante_mireia',
-      nameEs: 'Comandante Mireia',
-      roleEs: 'Líder de la guarnición del embarcadero',
-      activeSceneIds: ['escena_06_comandante'],
-      triggerKeywords: ['mireia', 'comandante', 'jefa', 'barcaza', 'ordenes'],
-      knowsEs:
-        'Sabe que su tropa está mermada por bajas y que las patrullas del norte y del sur los persiguen.',
-      doesNotKnowEs:
-        'Ignora qué descubriste en la orilla o en la enfermería salvo que se lo digas explícitamente.',
-      wantsEs:
-        'Proteger a los civiles refugiados bajo su mando y evitar espías del asedio en el cruce.',
-      hidesEs:
-        'Desertó con órdenes reales rotas para evacuar civiles; mantiene una fachada dura para ocultar que casi no le quedan combatientes sanos.',
-      attitudeEs:
-        discovered.has('pista_mireia_14')
-          ? 'Recelosa al inicio, pero dispuesta a pactar si le demostrás que conocés sus verdaderas órdenes.'
-          : hadCombat
-            ? 'Muy hostil y a la defensiva por el choque armado previo.'
-            : 'Cautelosa, agotada y pragmática; respeta la franqueza y la utilidad.',
-    },
-    {
-      id: 'exploradores_espesura',
-      nameEs: 'Exploradores de la Espesura',
-      roleEs: 'Vigías y milicia fronteriza',
-      activeSceneIds: [
-        'escena_01_orilla',
-        'escena_02_batalla_orilla',
-        'escena_03_parlamento',
-        'escena_04b_reparar_porton',
-      ],
-      triggerKeywords: [
-        'explorador',
-        'exploradores',
-        'vigia',
-        'vigias',
-        'arquero',
-        'juncos',
-        'maleza',
-        'porton',
-      ],
-      knowsEs:
-        'Conocen los senderos de la ciénaga, el estado dañado del portón y que Mireia controla la única barcaza.',
-      doesNotKnowEs:
-        'Desconocen el contenido de las órdenes selladas de Mireia y los planes del frente al sur.',
-      wantsEs:
-        'Evitar una emboscada, conseguir manos para reparar el portón o monedas sin perder hombres.',
-      hidesEs:
-        'Se quitaron las insignias del ejército y temen una incursión nocturna desde el río.',
-      attitudeEs: hadCombat
-        ? 'Alarma máxima: buscan replegarse al campamento para avisar a Mireia.'
-        : discovered.has('pista_orilla_14') || discovered.has('pista_parlamento_13')
-          ? 'Nerviosos pero negociables si les hablás como sobreviviente y no como soldado.'
-          : 'Desconfiados, arcos tensados, midiendo si sos espía o refugiado.',
-    },
-    {
-      id: 'aldeanos_ocultos',
-      nameEs: 'Sobrevivientes de la Enfermería',
-      roleEs: 'Heridos y antiguos civiles del caserío',
-      activeSceneIds: [],
-      triggerKeywords: ['enfermeria', 'heridos', 'aldeanos', 'civiles', 'lona'],
-      knowsEs:
-        'Saben cuántos defensores están fuera de combate y recuerdan la voladura del portón.',
-      doesNotKnowEs:
-        'No saben quién sos ni qué acordaste fuera de la empalizada.',
-      wantsEs: 'Cruzar el río con vida sin quedar atrapados en otro tiroteo.',
-      hidesEs:
-        'Guarda silencio por miedo a represalias si estalla un motín en el campamento.',
-      attitudeEs:
-        'Temerosos pero agradecidos ante cualquier muestra de curación o compasión.',
-    },
-  ];
-
-  return catalog.filter((card) => {
+  const selectedTemplates = resolvedPack.npcMinds.filter((card) => {
     if (card.activeSceneIds.includes(state.sceneId)) return true;
     if (
-      card.id === 'aldeanos_ocultos' &&
-      state.sceneId === 'escena_04_campamento' &&
-      (discovered.has('pista_camp_18') || discovered.has('pista_camp_14'))
+      card.revealInSceneWhenAnyClue &&
+      state.sceneId === card.revealInSceneWhenAnyClue.sceneId &&
+      card.revealInSceneWhenAnyClue.clueIds.some((id) => discovered.has(id))
     ) {
       return true;
     }
     return (
       normText.length > 0 &&
-      card.triggerKeywords.some((kw) => normText.includes(kw))
+      card.triggerKeywords.some((kw) => normText.includes(normalizeForMatch(kw)))
     );
+  });
+
+  return selectedTemplates.map((tpl) => {
+    const matchedRule = (tpl.attitudeRules ?? []).find((rule) => {
+      if (rule.requiresCombat !== undefined && rule.requiresCombat !== hadCombat) {
+        return false;
+      }
+      if (rule.requiresClueId && !discovered.has(rule.requiresClueId)) {
+        return false;
+      }
+      return rule.requiresClueId !== undefined || rule.requiresCombat !== undefined;
+    });
+
+    return {
+      id: tpl.id,
+      nameEs: tpl.nameEs,
+      roleEs: tpl.roleEs,
+      activeSceneIds: [...tpl.activeSceneIds],
+      triggerKeywords: [...tpl.triggerKeywords],
+      knowsEs: tpl.knowsEs,
+      doesNotKnowEs: tpl.doesNotKnowEs,
+      wantsEs: tpl.wantsEs,
+      hidesEs: tpl.hidesEs,
+      attitudeEs: matchedRule?.attitudeEs ?? tpl.defaultAttitudeEs,
+    };
   });
 }
 

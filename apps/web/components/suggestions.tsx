@@ -1,6 +1,6 @@
 "use client";
 
-import type { RulesetProfile } from "@dungeons/rules";
+import type { AdventurePack, RulesetProfile } from "@dungeons/rules";
 import {
   ArrowRightIcon,
   BookOpenIcon,
@@ -12,43 +12,33 @@ import * as React from "react";
 
 import { PartyBuilder } from "@/components/game/party-builder";
 import { usePlaySound } from "@/components/ui/sensory-ui/config/use-play-sound";
+import type { AdventurePackSummary } from "@/lib/game/adventure-packs";
 import type { CharacterPresetInfo, PartyMemberSpec } from "@/lib/game/presets";
 import { cn } from "@/lib/utils";
-
-const CAMPAIGN_START = {
-  label: "Comenzar campaña",
-  subtitle: "Entrá en Aguas Inquietas y descubrí qué oculta la niebla.",
-} as const;
-
-const STARTING_POINTS = [
-  {
-    label: "¿Cómo se juega?",
-    prompt:
-      "Soy nuevo en Dungeons & Dragons. Explicame brevemente cómo puedo interactuar con el mundo y qué puedo intentar en una escena.",
-    icon: BookOpenIcon,
-  },
-  {
-    label: "Sorprendeme",
-    prompt:
-      "Quiero empezar Aguas Inquietas con una escena breve e intrigante. Presentame un misterio cerca del río y dejame decidir qué hacer.",
-    icon: SparklesIcon,
-  },
-] as const;
 
 export function Suggestions({
   onStartCampaign,
   onSelect,
   presets = [],
+  adventurePack,
+  adventurePacks = [],
+  selectedAdventureId,
+  onSelectAdventure,
   onStartLocalParty,
   disabled = false,
 }: {
   onStartCampaign: () => void;
   onSelect: (prompt: string) => void;
   presets?: readonly CharacterPresetInfo[];
+  adventurePack?: AdventurePack | null;
+  adventurePacks?: readonly AdventurePackSummary[];
+  selectedAdventureId?: string;
+  onSelectAdventure?: (adventureId: string) => void;
   onStartLocalParty?: (
     party: PartyMemberSpec[],
     mode: "digital" | "hybrid",
     ruleset: RulesetProfile,
+    adventureId?: string,
   ) => Promise<void>;
   disabled?: boolean;
 }) {
@@ -57,9 +47,58 @@ export function Suggestions({
   const [creatingParty, setCreatingParty] = React.useState(false);
 
   const hasPartyOption = Boolean(onStartLocalParty && presets.length > 0);
+  const activeSummary = adventurePacks.find(
+    (p) => p.id === (selectedAdventureId ?? adventurePack?.id),
+  );
+  const activeTitle =
+    activeSummary?.titleEs ?? adventurePack?.titleEs ?? "Aguas Quietas";
+  const startSubtitle =
+    activeSummary?.subtitleEs ??
+    adventurePack?.subtitleEs ??
+    `Entrá en ${activeTitle} y descubrí qué oculta la primera escena.`;
+  const startingPoints = [
+    {
+      label: "¿Cómo se juega?",
+      prompt:
+        "Soy nuevo en Dungeons & Dragons. Explicame brevemente cómo puedo interactuar con el mundo y qué puedo intentar en una escena.",
+      icon: BookOpenIcon,
+    },
+    {
+      label: "Sorprendeme",
+      prompt: `Quiero empezar ${activeTitle} con una escena breve e intrigante. Presentame el primer gancho de la aventura y dejame decidir qué hacer.`,
+      icon: SparklesIcon,
+    },
+  ] as const;
 
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-2.5">
+      {adventurePacks.length > 1 && onSelectAdventure && (
+        <div className="flex items-center justify-between gap-2 rounded-none border border-border bg-card px-3 py-2 text-left">
+          <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Módulo
+          </span>
+          <select
+            aria-label="Seleccionar módulo de aventura"
+            disabled={disabled}
+            value={selectedAdventureId ?? adventurePacks[0]?.id ?? "aguas-quietas"}
+            onChange={(e) => {
+              play();
+              onSelectAdventure(e.target.value);
+            }}
+            className="h-7 min-w-0 flex-1 rounded-none border border-border bg-background px-2 text-xs text-foreground"
+          >
+            {adventurePacks.map((pack) => (
+              <option key={pack.id} value={pack.id}>
+                {pack.titleEs}
+                {pack.recommendedLevels
+                  ? ` (Nv. ${pack.recommendedLevels.min}–${pack.recommendedLevels.max})`
+                  : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div className="w-full rounded-none border border-border bg-card">
         <button
           type="button"
@@ -75,10 +114,10 @@ export function Suggestions({
           </span>
           <span className="min-w-0 flex-1">
             <span className="block font-serif text-base font-semibold text-foreground">
-              {CAMPAIGN_START.label}
+              Comenzar campaña
             </span>
             <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
-              {CAMPAIGN_START.subtitle}
+              {startSubtitle}
             </span>
           </span>
           <ArrowRightIcon className="size-4 shrink-0 text-primary/80 transition-transform group-hover:translate-x-0.5" />
@@ -90,7 +129,7 @@ export function Suggestions({
             hasPartyOption ? "sm:grid-cols-3" : "sm:grid-cols-2",
           )}
         >
-          {STARTING_POINTS.map(({ label, prompt, icon: Icon }) => (
+          {startingPoints.map(({ label, prompt, icon: Icon }) => (
             <button
               key={label}
               type="button"
@@ -132,12 +171,15 @@ export function Suggestions({
         <div className="rounded-none border border-border border-l-2 border-l-amber-500 bg-card p-3.5 text-left">
           <PartyBuilder
             presets={presets}
+            adventurePacks={adventurePacks}
+            selectedAdventureId={selectedAdventureId}
+            onAdventureChange={onSelectAdventure}
             busy={creatingParty || disabled}
             submitLabel="Iniciar partida local"
-            onSubmit={async (party, mode, ruleset) => {
+            onSubmit={async (party, mode, ruleset, adventureId) => {
               setCreatingParty(true);
               try {
-                await onStartLocalParty(party, mode, ruleset);
+                await onStartLocalParty(party, mode, ruleset, adventureId);
                 setShowPartySetup(false);
               } finally {
                 setCreatingParty(false);

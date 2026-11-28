@@ -20,6 +20,7 @@ npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*
 
-# Copyrighted reference PDFs must never be committed
+# Copyrighted reference PDFs and compiled commercial adventure packs must never be committed
 *.pdf
 The_Witcher_TRPG_Easy_Mode.pdf
+data/packs/

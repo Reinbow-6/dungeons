@@ -29,9 +29,13 @@ export function createCombatNextTurnTool(rt: DmToolRuntime) {
       await rt.commitEvent(res.event, res.nextState);
 
       const roundNote = res.roundAdvanced ? ` (nueva Ronda ${res.round})` : "";
+      const expiredNote =
+        res.expiredEffects.length > 0
+          ? ` Expiraron: ${res.expiredEffects.map((e) => `${e.labelEs} (${e.targetName})`).join(", ")}.`
+          : "";
       return {
         ok: true,
-        messageEs: `Turno de ${res.activeCombatant.name} — Ronda ${res.round}${roundNote}.`,
+        messageEs: `Turno de ${res.activeCombatant.name} — Ronda ${res.round}${roundNote}.${expiredNote}`,
         round: res.round,
         roundAdvanced: res.roundAdvanced,
         turnIndex: res.combat.turnIndex,
@@ -43,6 +47,9 @@ export function createCombatNextTurnTool(rt: DmToolRuntime) {
           hp: { ...res.activeCombatant.hp },
           ac: res.activeCombatant.ac,
         },
+        ...(res.expiredEffects.length > 0
+          ? { expiredEffects: res.expiredEffects }
+          : {}),
         seq: res.event.seq,
       };
     },

@@ -1,5 +1,24 @@
 import type { UIDataTypes, UIMessage } from "ai";
 
+export interface ModifierBreakdownItem {
+  slug: string;
+  labelEs: string;
+  value: number;
+  diceExpression?: string;
+  diceRolls?: number[];
+  type: "untyped" | "status" | "circumstance" | "item" | "spell";
+  ignored?: boolean;
+}
+
+export interface ExpiredEffectSummary {
+  targetId: string;
+  targetName: string;
+  effectId: string;
+  slug: string;
+  labelEs: string;
+  linkedConditionRemoved?: string;
+}
+
 export interface ResolveCheckToolInput {
   sceneId: string;
   actorId: string;
@@ -22,6 +41,7 @@ export interface ResolveCheckToolOutput {
   rolls?: number[];
   naturalRoll?: number;
   modifier?: number;
+  breakdown?: ModifierBreakdownItem[];
   total?: number;
   success?: boolean;
   margin?: number;
@@ -49,6 +69,7 @@ export interface ResolveSaveToolOutput {
   rolls?: number[];
   naturalRoll?: number;
   modifier?: number;
+  breakdown?: ModifierBreakdownItem[];
   total?: number;
   success?: boolean;
   margin?: number;
@@ -78,6 +99,7 @@ export interface DeclareCheckToolOutput {
   dieResults: number[];
   naturalRoll: number;
   expectedModifier: number;
+  breakdown?: ModifierBreakdownItem[];
   success: boolean;
   margin: number;
   unlockedClues?: Array<{
@@ -103,6 +125,7 @@ export interface InvestigateToolOutput {
   total?: number;
   naturalRoll?: number;
   modifier?: number;
+  breakdown?: ModifierBreakdownItem[];
   unlockedClues?: Array<{
     id: string;
     dc: number;
@@ -191,7 +214,7 @@ export type AguasQuietasCreatureId =
 export interface CombatStartToolInput {
   sceneId: string;
   enemies: Array<{
-    creatureId: AguasQuietasCreatureId;
+    creatureId: string;
     count: number;
   }>;
 }
@@ -244,8 +267,11 @@ export interface CombatAttackToolOutput {
   attackRolls?: number[];
   naturalRoll?: number;
   attackBonus?: number;
+  attackBreakdown?: ModifierBreakdownItem[];
   attackTotal?: number;
+  targetBaseAc?: number;
   targetAc?: number;
+  acBreakdown?: ModifierBreakdownItem[];
   hit?: boolean;
   isCritical?: boolean;
   isCriticalMiss?: boolean;
@@ -279,6 +305,12 @@ export interface ApplyConditionToolInput {
   exhaustionDelta?: number;
   concentratingOn?: string | null;
   reason: string;
+  durationRounds?: number;
+  expiryTiming?:
+    | "start_of_owner_turn"
+    | "end_of_owner_turn"
+    | "start_of_source_turn"
+    | "end_of_source_turn";
 }
 
 export interface ApplyConditionToolOutput {
@@ -325,6 +357,7 @@ export interface CombatNextTurnToolOutput {
     hp: { current: number; max: number };
     ac: number;
   };
+  expiredEffects?: ExpiredEffectSummary[];
   seq?: number;
 }
 
@@ -340,6 +373,7 @@ export interface CombatEndToolOutput {
   outcome?: "victory" | "fled" | "truce";
   reason?: string;
   roundsElapsed?: number;
+  expiredEffects?: ExpiredEffectSummary[];
   seq?: number;
 }
 

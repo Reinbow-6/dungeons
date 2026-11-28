@@ -19,6 +19,15 @@ export function createApplyConditionTool(rt: DmToolRuntime) {
         exhaustionDelta: z.number().int().min(-6).max(6).optional(),
         concentratingOn: z.string().min(1).nullable().optional(),
         reason: z.string().min(1),
+        durationRounds: z.number().int().min(1).max(100).optional(),
+        expiryTiming: z
+          .enum([
+            "start_of_owner_turn",
+            "end_of_owner_turn",
+            "start_of_source_turn",
+            "end_of_source_turn",
+          ])
+          .optional(),
       })
       .strict(),
     execute: async (input): Promise<ApplyConditionToolOutput> => {

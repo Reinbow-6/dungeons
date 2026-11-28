@@ -1,4 +1,5 @@
 import type {
+  AdventurePack,
   GameEvent,
   GameState,
   Rng,
@@ -59,6 +60,7 @@ export interface DmToolRuntime {
   campaignId: string;
   sessionId: string;
   guestId: string;
+  adventurePack?: AdventurePack;
   getState: () => GameState;
   getInitialState: () => GameState;
   getEvents: () => GameEvent[];

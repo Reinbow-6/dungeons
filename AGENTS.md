@@ -22,6 +22,10 @@ Este documento define las invariantes técnicas y convenciones de trabajo para e
 4. **Consistencia UI ↔ Estado:**
    - Cada transición de escena, combate, creación/eliminación de campaña y rollback debe reflejarse inmediatamente en el cliente sin estados huérfanos. Si un usuario queda con `0` campañas tras borrar partidas, `GET /api/game/campaigns` no crea una campaña fantasma en automático; el cliente crea bajo demanda vía `ensureCampaignId()`.
 
+5. **Límite Zod v3 ↔ Zod v4 y contenido con copyright:**
+   - `@dungeons/rules` usa **Zod v3** y `@dungeons/web` usa **Zod v4**: nunca anides un esquema de `@dungeons/rules` dentro de un `z.object(...)` de `apps/web` (validalos por separado con `AdventurePackSchema.safeParse(...)`).
+   - Los PDFs fuente (`*.pdf`) y los packs compilados localmente (`data/packs/`) están excluidos en `.gitignore` y **nunca** deben subirse al repositorio.
+
 ---
 
 ## 2. Convenciones de UI/UX y Frontend
@@ -39,11 +43,12 @@ Este documento define las invariantes técnicas y convenciones de trabajo para e
 
 | Ruta | Responsabilidad |
 | --- | --- |
-| `packages/rules/src/` | Tipos (`types.ts`), eventos/rollback (`events.ts`), resolvers (`resolvers.ts`), combate (`combat.ts`), conjuros (`spells.ts`), descansos (`rest-and-death.ts`), grupo (`party.ts`), lorebook (`lorebook.ts`), narrativa (`narrative-engine.ts`) y aventura (`adventures/aguas-quietas.ts`). |
-| `packages/srd/src/` | Carga/validación SRD (`catalog.ts`, `schemas.ts`), `overrides-521.ts`, `translations-es.ts` y bestiario (`aguas-quietas-bestiary.ts`). |
+| `packages/rules/src/` | Tipos (`types.ts`), `AdventurePack` (`adventure-pack.ts`), eventos/rollback (`events.ts`), resolvers (`resolvers.ts`), combate (`combat.ts`), conjuros (`spells.ts`), descansos (`rest-and-death.ts`), grupo (`party.ts`), lorebook (`lorebook.ts`), narrativa (`narrative-engine.ts`) y campaña integrada (`adventures/aguas-quietas.ts`). |
+| `packages/srd/src/` | Carga/validación SRD (`catalog.ts`, `schemas.ts`), `overrides-521.ts`, `translations-es.ts` y bestiario base (`aguas-quietas-bestiary.ts`). |
 | `apps/web/agent/` | Prompt en capas + filtrado de tools (`agent.ts`), reglas del DM (`instructions.md`), `tools/*`, subagente de memoria (`subagents/memory/`). |
-| `apps/web/app/api/` | Endpoints `chat`, `game/campaigns` (`GET`/`POST`/`DELETE`), `game/campaigns/intro`, `game/declare-check`, `game/mode`, `game/party`, `game/rollback`, `game/sessions`, `auth/status`, `stt`, `tts`, `usage`. |
-| `apps/web/lib/` | Store Postgres/InMemory (`game/store.ts`), presets e intros (`game/presets.ts`, `game/intro.ts`), Drizzle (`db/schema.ts`), auth/whitelist (`auth/`), guardrails/provider (`ai/`, `guardrails/`). |
+| `apps/web/app/api/` | Endpoints `chat`, `game/campaigns` (`GET`/`POST`/`DELETE`), `game/campaigns/intro`, `game/packs` (`GET`/`POST`/`DELETE`), `game/declare-check`, `game/mode`, `game/party`, `game/rollback`, `game/sessions`, `auth/status`, `stt`, `tts`, `usage`. |
+| `apps/web/lib/` | Store Postgres/InMemory (`game/store.ts`), packs (`game/adventure-packs.ts`), presets e intros (`game/presets.ts`, `game/intro.ts`), Drizzle (`db/schema.ts`), auth/whitelist (`auth/`), guardrails/provider (`ai/`, `guardrails/`). |
+| `scripts/` | Compilador CLI `compile-adventure-pdf.mjs` (`PDF → AdventurePack JSON`). |
 | `apps/web/components/` | `chat.tsx`, `chat-message.tsx`, `prompt-form.tsx`, `settings-panel.tsx`, `auth-dialog.tsx`, `game/*` (`campaign-sidebar`, `game-sidebar`, `dice-roll-card`, `hybrid-check-card`, `suggested-actions`, `epilogue-card`, `combat-tracker`, `party-builder`) y primitivos `ui/*`. |
 
 ---

@@ -6,6 +6,7 @@ import {
   computeMacroStoryArc,
   computeTensionMeter,
   deriveTurnContext,
+  type AdventurePack,
   type GameEvent,
   type GameState,
   type TensionLevel,
@@ -51,23 +52,25 @@ const LEVEL_STYLES: Record<
 export function TensionMeter({
   state,
   events,
+  adventurePack,
   pendingPlayerRoll = false,
   isStreaming = false,
 }: {
   state: GameState;
   events: readonly GameEvent[];
+  adventurePack?: AdventurePack | null;
   pendingPlayerRoll?: boolean;
   isStreaming?: boolean;
 }) {
   const { play } = usePlaySound({ sound: "interaction.subtle" });
 
   const reading = React.useMemo(
-    () => computeTensionMeter(state, events),
-    [events, state],
+    () => computeTensionMeter(state, events, adventurePack ?? undefined),
+    [adventurePack, events, state],
   );
   const arc = React.useMemo(
-    () => computeMacroStoryArc(state, events),
-    [events, state],
+    () => computeMacroStoryArc(state, events, adventurePack ?? undefined),
+    [adventurePack, events, state],
   );
   const turnCtx = React.useMemo(
     () => deriveTurnContext(state, { pendingPlayerRoll, isStreaming }),

@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import {
+  buildRollTags,
+  collectConcentrationPurge,
+} from './effects.js';
+import {
   applyDelta,
   type GameEvent,
   type GameStateDelta,
@@ -28,10 +32,14 @@ import {
   AbilitySchema,
   CheckTargetSchema,
   Condition5eSchema,
+  EffectExpiryTimingSchema,
+  SKILL_TO_ABILITY,
   VisibilitySchema,
+  type ActiveEffect,
   type Character,
   type Condition5e,
   type GameState,
+  type ResolvedModifierEntry,
   type SceneClue,
   type Visibility,
 } from './types.js';
@@ -120,6 +128,7 @@ export type ResolveCheckResult =
       dc: number;
       naturalRoll: number;
       modifier: number;
+      breakdown?: ResolvedModifierEntry[];
       effectiveMode: RollMode;
       rolls: number[];
       event: GameEvent;
@@ -186,12 +195,29 @@ export function resolveCheck(
     return { ok: false, code: resolvedDc.code, messageEs: resolvedDc.messageEs };
   }
 
-  const modBreakdown = getCheckModifier(actor, input.skill, state.ruleset);
+  const ability =
+    input.skill in SKILL_TO_ABILITY
+      ? SKILL_TO_ABILITY[input.skill as keyof typeof SKILL_TO_ABILITY]
+      : input.skill;
+  const tags = buildRollTags({
+    kind: 'check',
+    skill: input.skill,
+    ability: ability as Character['savingThrowProficiencies'][number],
+    requiresSight: input.requiresSight,
+    conditions: actor.conditions,
+    inCombat: Boolean(state.combat?.active),
+    sceneId: input.sceneId,
+  });
+  const modBreakdown = getCheckModifier(actor, input.skill, state.ruleset, {
+    rng: ctx.rng,
+    tags,
+  });
   const condEffects = getConditionPenalty(actor, state.ruleset);
-  const effectiveMode = combineRollMode(
-    input.mode ?? 'normal',
-    modBreakdown.imposesDisadvantage,
-  );
+  const effectiveMode = resolveRollMode({
+    requested: input.mode ?? 'normal',
+    hasAdvantage: modBreakdown.grantsAdvantage,
+    hasDisadvantage: modBreakdown.imposesDisadvantage,
+  });
   const checkId = input.checkId ?? ctx.createId();
   const nextSeq = state.lastSeq + 1;
 
@@ -207,6 +233,14 @@ export function resolveCheck(
     flagsSet: {
       [`check:${checkId}:success`]: success,
     },
+    ...(modBreakdown.consumedEffectIds.length > 0
+      ? {
+          effectsRemoved: modBreakdown.consumedEffectIds.map((effectId) => ({
+            targetId: actor.id,
+            effectId,
+          })),
+        }
+      : {}),
   };
 
   const event: GameEvent = {
@@ -230,6 +264,7 @@ export function resolveCheck(
       dcDeclaredByModel: input.dc ?? null,
       mode: effectiveMode,
       modifier: modBreakdown.totalMod,
+      breakdown: modBreakdown.breakdown,
       total,
       success,
       margin,
@@ -252,6 +287,7 @@ export function resolveCheck(
     dc: resolvedDc.dc,
     naturalRoll,
     modifier: modBreakdown.totalMod,
+    breakdown: modBreakdown.breakdown,
     effectiveMode,
     rolls,
     event,
@@ -286,6 +322,7 @@ export type ResolveSaveResult =
       dc: number;
       naturalRoll: number;
       modifier: number;
+      breakdown?: ResolvedModifierEntry[];
       effectiveMode?: RollMode;
       rolls: number[];
       event: GameEvent;
@@ -352,17 +389,28 @@ export function resolveSave(
     return { ok: false, code: resolvedDc.code, messageEs: resolvedDc.messageEs };
   }
 
+  const saveTags = buildRollTags({
+    kind: 'save',
+    ability: input.ability,
+    conditions: actor.conditions,
+    inCombat: Boolean(state.combat?.active),
+    sceneId: input.sceneId,
+  });
   const saveBreakdown = getSavingThrowModifier(
     actor,
     input.ability,
     state.ruleset,
+    { rng: ctx.rng, tags: saveTags },
   );
   const condEffects = getConditionPenalty(actor, state.ruleset);
   const isStrOrDex = input.ability === 'str' || input.ability === 'dex';
   const autoFailed = Boolean(condEffects.autoFailStrDexSaves && isStrOrDex);
   const effectiveMode = resolveRollMode({
     requested: input.mode ?? 'normal',
-    hasDisadvantage: condEffects.disadvantageOnDexSaves && input.ability === 'dex',
+    hasAdvantage: saveBreakdown.grantsAdvantage,
+    hasDisadvantage:
+      saveBreakdown.imposesDisadvantage ||
+      (condEffects.disadvantageOnDexSaves && input.ability === 'dex'),
   });
   const checkId = input.checkId ?? ctx.createId();
   const nextSeq = state.lastSeq + 1;
@@ -378,6 +426,14 @@ export function resolveSave(
     flagsSet: {
       [`save:${checkId}:success`]: success,
     },
+    ...(saveBreakdown.consumedEffectIds.length > 0
+      ? {
+          effectsRemoved: saveBreakdown.consumedEffectIds.map((effectId) => ({
+            targetId: actor.id,
+            effectId,
+          })),
+        }
+      : {}),
   };
 
   const event: GameEvent = {
@@ -401,6 +457,7 @@ export function resolveSave(
       dcDeclaredByModel: input.dc ?? null,
       mode: effectiveMode,
       modifier: saveBreakdown.totalMod,
+      breakdown: saveBreakdown.breakdown,
       total,
       success,
       margin,
@@ -423,6 +480,7 @@ export function resolveSave(
     dc: resolvedDc.dc,
     naturalRoll,
     modifier: saveBreakdown.totalMod,
+    breakdown: saveBreakdown.breakdown,
     effectiveMode,
     rolls,
     event,
@@ -475,6 +533,7 @@ export type DeclareCheckResult =
       declaredTotal: number;
       naturalRoll: number;
       expectedModifier: number;
+      breakdown?: ResolvedModifierEntry[];
       stateDelta: GameStateDelta;
       event: GameEvent;
       nextState: GameState;
@@ -506,10 +565,11 @@ function validatePaperPlayerTotal(
   actor: Character,
   naturalRoll: number,
   declaredTotal: number,
+  diceRange: { min: number; max: number } = { min: 0, max: 0 },
 ): { valid: boolean; expectedRange: { min: number; max: number } } {
   const pb = getProficiencyBonus(actor.level);
-  const minMod = -5;
-  const maxMod = 10 + 2 * pb;
+  const minMod = -5 + diceRange.min;
+  const maxMod = 10 + 2 * pb + diceRange.max;
   const expectedRange = {
     min: naturalRoll + minMod,
     max: naturalRoll + maxMod,
@@ -579,7 +639,21 @@ export function declareCheck(
     };
   }
 
-  const modBreakdown = getCheckModifier(actor, input.skill, state.ruleset);
+  const skillAbility =
+    input.skill in SKILL_TO_ABILITY
+      ? SKILL_TO_ABILITY[input.skill as keyof typeof SKILL_TO_ABILITY]
+      : input.skill;
+  const declareTags = buildRollTags({
+    kind: 'check',
+    skill: input.skill,
+    ability: skillAbility as Character['savingThrowProficiencies'][number],
+    conditions: actor.conditions,
+    inCombat: Boolean(state.combat?.active),
+    sceneId: input.sceneId,
+  });
+  const modBreakdown = getCheckModifier(actor, input.skill, state.ruleset, {
+    tags: declareTags,
+  });
   const effectiveMode = combineRollMode(
     input.mode ?? 'normal',
     modBreakdown.imposesDisadvantage,
@@ -617,6 +691,7 @@ export function declareCheck(
       actor,
       naturalRoll,
       input.declaredTotal,
+      modBreakdown.diceBonusRange,
     );
     if (!check.valid) {
       return {
@@ -628,16 +703,22 @@ export function declareCheck(
     }
     resolvedTotal = input.declaredTotal;
   } else {
-    const expectedTotal = naturalRoll + modBreakdown.totalMod;
+    const minTotal =
+      naturalRoll + modBreakdown.totalMod + modBreakdown.diceBonusRange.min;
+    const maxTotal =
+      naturalRoll + modBreakdown.totalMod + modBreakdown.diceBonusRange.max;
     const expectedRange = {
-      min: 1 + modBreakdown.totalMod,
-      max: 20 + modBreakdown.totalMod,
+      min: 1 + modBreakdown.totalMod + modBreakdown.diceBonusRange.min,
+      max: 20 + modBreakdown.totalMod + modBreakdown.diceBonusRange.max,
     };
-    if (input.declaredTotal !== expectedTotal) {
+    if (input.declaredTotal < minTotal || input.declaredTotal > maxTotal) {
       return {
         ok: false,
         code: 'INCOHERENT_TOTAL',
-        messageEs: `Total incoherente: declaraste ${input.declaredTotal}, pero ${naturalRoll} + (${modBreakdown.totalMod >= 0 ? '+' : ''}${modBreakdown.totalMod}) = ${expectedTotal}. Corregí el total.`,
+        messageEs:
+          minTotal === maxTotal
+            ? `Total incoherente: declaraste ${input.declaredTotal}, pero ${naturalRoll} + (${modBreakdown.totalMod >= 0 ? '+' : ''}${modBreakdown.totalMod}) = ${minTotal}. Corregí el total.`
+            : `Total incoherente: declaraste ${input.declaredTotal}, pero con bonificadores activos debe estar entre ${minTotal} y ${maxTotal}. Corregí el total.`,
         expectedRange,
       };
     }
@@ -653,6 +734,14 @@ export function declareCheck(
     flagsSet: {
       [`check:${checkId}:success`]: success,
     },
+    ...(modBreakdown.consumedEffectIds.length > 0
+      ? {
+          effectsRemoved: modBreakdown.consumedEffectIds.map((effectId) => ({
+            targetId: actor.id,
+            effectId,
+          })),
+        }
+      : {}),
   };
 
   const event: GameEvent = {
@@ -676,6 +765,7 @@ export function declareCheck(
       dcDeclaredByModel: input.dc ?? null,
       mode: effectiveMode,
       expectedModifier: modBreakdown.totalMod,
+      breakdown: modBreakdown.breakdown,
       total: resolvedTotal,
       success,
       margin,
@@ -697,6 +787,7 @@ export function declareCheck(
     declaredTotal: resolvedTotal,
     naturalRoll,
     expectedModifier: modBreakdown.totalMod,
+    breakdown: modBreakdown.breakdown,
     stateDelta,
     event,
     nextState,
@@ -733,6 +824,7 @@ export type ResolveInvestigateResult =
       total: number;
       naturalRoll: number;
       modifier: number;
+      breakdown?: ResolvedModifierEntry[];
       unlockedClues: SceneClue[];
       allUnlockedClueIds: string[];
       event: GameEvent;
@@ -790,6 +882,8 @@ export function resolveInvestigate(
   let total: number;
   let naturalRoll: number;
   let modifier: number;
+  let breakdown: ResolvedModifierEntry[] | undefined;
+  let effectsRemoved: GameStateDelta['effectsRemoved'];
   let dieResults: number[];
   let source: 'engine' | 'player-declared';
   let declaredTotal: number | null;
@@ -828,6 +922,8 @@ export function resolveInvestigate(
     total = declResult.total;
     naturalRoll = declResult.naturalRoll;
     modifier = declResult.expectedModifier;
+    breakdown = declResult.breakdown;
+    effectsRemoved = declResult.stateDelta.effectsRemoved;
     dieResults = [...input.declared.dieResults];
     source = 'player-declared';
     declaredTotal = declResult.declaredTotal;
@@ -839,15 +935,35 @@ export function resolveInvestigate(
         messageEs: `El personaje "${actor.id}" está en Modo Híbrido (dados físicos): pedí la tirada al jugador con declare_check (purpose: "investigate") en lugar de tirar con investigate.`,
       };
     }
-    const modBreakdown = getCheckModifier(actor, skill, state.ruleset);
-    const effectiveMode = combineRollMode(
-      input.mode ?? 'normal',
-      modBreakdown.imposesDisadvantage,
-    );
+    const ability = SKILL_TO_ABILITY[skill];
+    const tags = buildRollTags({
+      kind: 'check',
+      skill,
+      ability,
+      conditions: actor.conditions,
+      inCombat: Boolean(state.combat?.active),
+      sceneId: input.sceneId,
+    });
+    const modBreakdown = getCheckModifier(actor, skill, state.ruleset, {
+      rng: ctx.rng,
+      tags,
+    });
+    const effectiveMode = resolveRollMode({
+      requested: input.mode ?? 'normal',
+      hasAdvantage: modBreakdown.grantsAdvantage,
+      hasDisadvantage: modBreakdown.imposesDisadvantage,
+    });
     const roll = rollD20(ctx.rng, effectiveMode);
     total = roll.chosen + modBreakdown.totalMod;
     naturalRoll = roll.chosen;
     modifier = modBreakdown.totalMod;
+    breakdown = modBreakdown.breakdown;
+    if (modBreakdown.consumedEffectIds.length > 0) {
+      effectsRemoved = modBreakdown.consumedEffectIds.map((effectId) => ({
+        targetId: actor.id,
+        effectId,
+      }));
+    }
     dieResults = roll.rolls;
     source = 'engine';
     declaredTotal = null;
@@ -861,6 +977,7 @@ export function resolveInvestigate(
 
   const stateDelta: GameStateDelta = {
     cluesUnlocked: newlyUnlocked.map((c) => c.id),
+    ...(effectsRemoved && effectsRemoved.length > 0 ? { effectsRemoved } : {}),
   };
 
   const event: GameEvent = {
@@ -879,6 +996,7 @@ export function resolveInvestigate(
       sceneId: input.sceneId,
       skill,
       total,
+      ...(breakdown ? { breakdown } : {}),
       newlyUnlockedIds: newlyUnlocked.map((c) => c.id),
     },
     stateDelta,
@@ -894,6 +1012,7 @@ export function resolveInvestigate(
     total,
     naturalRoll,
     modifier,
+    ...(breakdown ? { breakdown } : {}),
     unlockedClues: newlyUnlocked,
     allUnlockedClueIds: nextState.unlockedClues[input.sceneId] ?? [],
     event,
@@ -1352,6 +1471,8 @@ export const ResolveConditionChangeInputSchema = z
     removeConditions: z.array(Condition5eSchema).min(1).optional(),
     exhaustionDelta: z.number().int().min(-6).max(6).optional(),
     concentratingOn: z.string().min(1).nullable().optional(),
+    durationRounds: z.number().int().min(1).max(100).optional(),
+    expiryTiming: EffectExpiryTimingSchema.optional(),
     reason: z.string().min(1),
     visibility: VisibilitySchema.optional(),
   })
@@ -1469,8 +1590,17 @@ export function resolveConditionChange(
   let concentrationChanges:
     | Array<{ actorId: string; before: string | null; after: string | null }>
     | undefined;
+  const concPurgeEffects: Array<{ targetId: string; effectId: string }> = [];
+
   if (addedIncapacitating || (input.concentratingOn && remainsIncapacitated)) {
     if (actor.concentratingOn !== null) {
+      const purged = collectConcentrationPurge(state, actor.id, actor.concentratingOn);
+      concPurgeEffects.push(...purged.effectsRemoved);
+      for (const rem of purged.conditionsRemoved) {
+        if (!conditionsRemoved.some((c) => c.actorId === rem.actorId && c.condition === rem.condition)) {
+          conditionsRemoved.push(rem);
+        }
+      }
       concentrationChanges = [
         { actorId: actor.id, before: actor.concentratingOn, after: null },
       ];
@@ -1479,6 +1609,15 @@ export function resolveConditionChange(
     input.concentratingOn !== undefined &&
     input.concentratingOn !== actor.concentratingOn
   ) {
+    if (actor.concentratingOn) {
+      const purged = collectConcentrationPurge(state, actor.id, actor.concentratingOn);
+      concPurgeEffects.push(...purged.effectsRemoved);
+      for (const rem of purged.conditionsRemoved) {
+        if (!conditionsRemoved.some((c) => c.actorId === rem.actorId && c.condition === rem.condition)) {
+          conditionsRemoved.push(rem);
+        }
+      }
+    }
     concentrationChanges = [
       {
         actorId: actor.id,
@@ -1488,9 +1627,33 @@ export function resolveConditionChange(
     ];
   }
 
+  const timedEffectsAdded: Array<{ targetId: string; effect: ActiveEffect }> = [];
+  if (input.durationRounds !== undefined && uniqueAdd.length > 0) {
+    for (const cond of uniqueAdd) {
+      if (cond === 'exhaustion') continue;
+      timedEffectsAdded.push({
+        targetId: actor.id,
+        effect: {
+          id: ctx.createId(),
+          slug: `condition:${cond}`,
+          labelEs: cond,
+          durationRounds: input.durationRounds,
+          remainingRounds: input.durationRounds,
+          expiryTiming: input.expiryTiming ?? 'end_of_owner_turn',
+          expiresOnCombatEnd: false,
+          expiresOnRest: 'long',
+          linkedCondition: cond,
+          modifiers: [],
+        },
+      });
+    }
+  }
+
   const stateDelta: GameStateDelta = {
     ...(conditionsAdded.length > 0 ? { conditionsAdded } : {}),
     ...(conditionsRemoved.length > 0 ? { conditionsRemoved } : {}),
+    ...(timedEffectsAdded.length > 0 ? { effectsAdded: timedEffectsAdded } : {}),
+    ...(concPurgeEffects.length > 0 ? { effectsRemoved: concPurgeEffects } : {}),
     ...(nextExhaustion !== actor.exhaustionLevel
       ? {
           exhaustionChanges: [

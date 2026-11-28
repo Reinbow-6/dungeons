@@ -1,20 +1,15 @@
 import {
   getAbilityModifier,
   startCombat,
+  type AdventureCreature,
   type CombatEnemyDefinition,
 } from "@dungeons/rules";
-import { getAguasQuietasCreature } from "@dungeons/srd";
+import { AGUAS_QUIETAS_BESTIARY, getAguasQuietasCreature } from "@dungeons/srd";
 import { tool } from "ai";
 import { z } from "zod";
 
 import type { CombatStartToolOutput } from "@/agent/types";
 import type { DmToolRuntime } from "./runtime";
-
-const AguasQuietasCreatureIdZod = z.enum([
-  "explorador_espesura",
-  "necrofago_de_rio",
-  "comandante_mireia",
-]);
 
 function slugifyAttackId(nameEs: string): string {
   return nameEs
@@ -25,10 +20,34 @@ function slugifyAttackId(nameEs: string): string {
     .replace(/^_+|_+$/g, "");
 }
 
+function resolveCampaignCreature(
+  rt: DmToolRuntime,
+  creatureId: string,
+): AdventureCreature | null {
+  const fromPack = rt.adventurePack?.bestiary.find((c) => c.id === creatureId);
+  if (fromPack) {
+    return fromPack;
+  }
+  if (!rt.adventurePack || rt.adventurePack.id === "aguas-quietas") {
+    return getAguasQuietasCreature(creatureId) ?? null;
+  }
+  return null;
+}
+
 export function createCombatStartTool(rt: DmToolRuntime) {
+  const allowedIds = (
+    rt.adventurePack
+      ? rt.adventurePack.bestiary
+      : AGUAS_QUIETAS_BESTIARY
+  ).map((c) => c.id);
+  const creatureIdSchema =
+    allowedIds.length > 0
+      ? z.enum(allowedIds as [string, ...string[]])
+      : z.string().min(1);
+
   return tool({
     description:
-      "Inicia un encuentro de combate 5e-lite tirando iniciativa para los PJs y criaturas oficiales del bestiario de Aguas Quietas (PG, CA y ataques cargados del SRD; prohibido inventar estadísticas).",
+      "Inicia un encuentro de combate tirando iniciativa para los PJs y criaturas oficiales del bestiario de la campaña actual (PG, CA y ataques declarados en el módulo; prohibido inventar estadísticas).",
     inputSchema: z
       .object({
         sceneId: z.string().min(1),
@@ -36,7 +55,7 @@ export function createCombatStartTool(rt: DmToolRuntime) {
           .array(
             z
               .object({
-                creatureId: AguasQuietasCreatureIdZod,
+                creatureId: creatureIdSchema,
                 count: z.number().int().min(1).max(6),
               })
               .strict(),
@@ -70,11 +89,14 @@ export function createCombatStartTool(rt: DmToolRuntime) {
       const resolvedEnemies: CombatEnemyDefinition[] = [];
 
       for (const group of input.enemies) {
-        const statBlock = getAguasQuietasCreature(group.creatureId);
+        const statBlock = resolveCampaignCreature(rt, group.creatureId);
         if (!statBlock) {
+          const validIds = (rt.adventurePack?.bestiary ?? [])
+            .map((c) => c.id)
+            .join(", ");
           return {
             ok: false,
-            messageEs: `Criatura desconocida en el bestiario de Aguas Quietas: "${group.creatureId}".`,
+            messageEs: `Criatura desconocida en el bestiario de la campaña: "${group.creatureId}".${validIds ? ` Válidas: ${validIds}.` : ""}`,
           };
         }
 

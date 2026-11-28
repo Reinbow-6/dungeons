@@ -2,8 +2,9 @@
 
 import { useChat } from "@ai-sdk/react";
 import {
-  AGUAS_INQUIETAS_QUEST,
-  getAguasInquietasProgress,
+  AGUAS_QUIETAS_PACK,
+  getAdventureProgress,
+  type AdventurePack,
   type GameEvent,
   type GameState,
   type RulesetProfile,
@@ -70,6 +71,7 @@ import {
 import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
 import { pushToast } from "@/components/ui/toaster";
 import { Trace, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace";
+import type { AdventurePackSummary } from "@/lib/game/adventure-packs";
 import { formatGameEventToast } from "@/lib/game/event-toast";
 import {
   formatGroupRoundMessage,
@@ -178,6 +180,9 @@ interface CampaignApiPayload {
   campaignId: string | null;
   sessionId: string | null;
   sessionNumber?: number;
+  title?: string | null;
+  adventureId?: string | null;
+  adventurePack?: AdventurePack | null;
   worldSummary?: string;
   state: GameState | null;
   events: GameEvent[];
@@ -335,6 +340,14 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   const campaignIdRef = React.useRef<string | null>(null);
   const ensuringCampaignRef = React.useRef<Promise<string | null> | null>(null);
   const [sessionNumber, setSessionNumber] = React.useState<number>(1);
+  const [adventurePack, setAdventurePack] = React.useState<AdventurePack | null>(
+    null,
+  );
+  const [adventurePacks, setAdventurePacks] = React.useState<
+    AdventurePackSummary[]
+  >([]);
+  const [selectedAdventureId, setSelectedAdventureId] =
+    React.useState<string>("aguas-quietas");
   const [gameState, setGameState] = React.useState<GameState | null>(null);
   const [events, setEvents] = React.useState<GameEvent[]>([]);
   const [sessionSummaries, setSessionSummaries] = React.useState<
@@ -545,6 +558,87 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     }
   }, []);
 
+  const fetchAdventurePacks = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/game/packs");
+      if (!res.ok) return;
+      const data = (await res.json()) as { items?: AdventurePackSummary[] };
+      if (Array.isArray(data.items)) {
+        setAdventurePacks(data.items);
+      }
+    } catch {
+      // Non-fatal pack list fetch
+    }
+  }, []);
+
+  const handleImportPack = React.useCallback(
+    async (
+      rawPack: unknown,
+    ): Promise<{ ok: boolean; errorEs?: string }> => {
+      try {
+        const res = await fetch("/api/game/packs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(rawPack),
+        });
+        const data = (await res.json()) as {
+          ok?: boolean;
+          pack?: AdventurePackSummary;
+          messageEs?: string;
+          errors?: string[];
+        };
+        if (!res.ok || !data.ok) {
+          const detail = data.errors?.[0];
+          return {
+            ok: false,
+            errorEs: detail
+              ? `${data.messageEs ?? "Pack inválido"} (${detail})`
+              : (data.messageEs ?? "No se pudo importar el módulo."),
+          };
+        }
+        await fetchAdventurePacks();
+        if (data.pack?.id) {
+          setSelectedAdventureId(data.pack.id);
+        }
+        pushToast({
+          title: "Módulo importado",
+          description: data.pack
+            ? `${data.pack.titleEs} (${data.pack.sceneCount} escenas)`
+            : "Listo para crear campaña.",
+          tone: "amber",
+        });
+        return { ok: true };
+      } catch {
+        return { ok: false, errorEs: "Error de red al importar el JSON." };
+      }
+    },
+    [fetchAdventurePacks],
+  );
+
+  const handleDeletePack = React.useCallback(
+    async (slug: string): Promise<boolean> => {
+      try {
+        const res = await fetch(
+          `/api/game/packs?slug=${encodeURIComponent(slug)}`,
+          { method: "DELETE" },
+        );
+        if (!res.ok) return false;
+        await fetchAdventurePacks();
+        setSelectedAdventureId((prev) =>
+          prev === slug ? "aguas-quietas" : prev,
+        );
+        pushToast({
+          title: "Módulo eliminado",
+          tone: "neutral",
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [fetchAdventurePacks],
+  );
+
   React.useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
       if (event.altKey && event.key.toLowerCase() === "h") {
@@ -559,6 +653,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         playSoundRef.current(next ? "overlay.open" : "overlay.close");
         if (next) {
           void fetchCampaignsList();
+          void fetchAdventurePacks();
         }
       } else if (
         event.altKey &&
@@ -586,7 +681,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     return () => {
       window.removeEventListener("keydown", handleShortcut);
     };
-  }, [fetchCampaignsList, setCampaignSidebarOpen, setSidebarOpen]);
+  }, [fetchAdventurePacks, fetchCampaignsList, setCampaignSidebarOpen, setSidebarOpen]);
 
   const {
     messages,
@@ -638,6 +733,9 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       campaignIdRef.current = data.campaignId;
       setCampaignId(data.campaignId);
       setSessionNumber(data.sessionNumber ?? 1);
+      if ("adventurePack" in data) {
+        setAdventurePack(data.adventurePack ?? null);
+      }
       setGameState(data.state);
       setEvents(data.events);
       notifyNewEvents(data.events, restoreMessages);
@@ -702,6 +800,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     lastToastedSeqRef.current = 0;
     setCampaignId(null);
     setSessionNumber(1);
+    setAdventurePack(null);
     setGameState(null);
     setEvents([]);
     setSessionSummaries([]);
@@ -732,6 +831,10 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       campaignIdRef.current = data.campaignId;
       setCampaignId(data.campaignId);
       setSessionNumber(data.sessionNumber ?? 1);
+      setAdventurePack(data.adventurePack ?? null);
+      if (data.adventurePack?.id) {
+        setSelectedAdventureId(data.adventurePack.id);
+      }
       setGameState(data.state);
       setEvents(data.events);
       notifyNewEvents(data.events, true);
@@ -751,11 +854,22 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       );
       setMessageSeqMap(buildSeqMapFromApiMessages(data.messages));
 
-      const listRes = await fetch("/api/game/campaigns?list=1&limit=20");
+      const [listRes, packsRes] = await Promise.all([
+        fetch("/api/game/campaigns?list=1&limit=20"),
+        fetch("/api/game/packs"),
+      ]);
       if (listRes.ok && !cancelled) {
         const listData = (await listRes.json()) as { items?: CampaignSummary[] };
         if (Array.isArray(listData.items)) {
           setCampaignsList(listData.items);
+        }
+      }
+      if (packsRes.ok && !cancelled) {
+        const packsData = (await packsRes.json()) as {
+          items?: AdventurePackSummary[];
+        };
+        if (Array.isArray(packsData.items)) {
+          setAdventurePacks(packsData.items);
         }
       }
     }
@@ -840,9 +954,9 @@ export function Chat({ models }: { models: GatewayModel[] }) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            adventureId: selectedAdventureId,
             presetId: "pc_kael",
             mode: "digital",
-            ruleset: "5e-full",
           }),
         });
         if (!res.ok) return null;
@@ -854,6 +968,9 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         campaignIdRef.current = data.campaignId;
         setCampaignId(data.campaignId);
         setSessionNumber(data.sessionNumber ?? 1);
+        if ("adventurePack" in data) {
+          setAdventurePack(data.adventurePack ?? null);
+        }
         setGameState(data.state);
         setEvents(data.events);
         notifyNewEvents(data.events, true);
@@ -886,6 +1003,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     effectiveModel,
     fetchCampaignsList,
     notifyNewEvents,
+    selectedAdventureId,
     settings.reasoningEffort,
     transportBundle,
   ]);
@@ -894,11 +1012,14 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     party: PartyMemberSpec[],
     mode: "digital" | "hybrid",
     ruleset: RulesetProfile,
+    overrideAdventureId?: string,
   ): Promise<string | null> {
+    const targetAdventureId = overrideAdventureId ?? selectedAdventureId;
     const res = await fetch("/api/game/campaigns", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        adventureId: targetAdventureId,
         presetId: party[0]?.presetId ?? "pc_kael",
         party,
         mode,
@@ -913,6 +1034,12 @@ export function Chat({ models }: { models: GatewayModel[] }) {
     campaignIdRef.current = data.campaignId;
     setCampaignId(data.campaignId);
     setSessionNumber(data.sessionNumber ?? 1);
+    if ("adventurePack" in data) {
+      setAdventurePack(data.adventurePack ?? null);
+    }
+    if (data.adventurePack?.id) {
+      setSelectedAdventureId(data.adventurePack.id);
+    }
     setGameState(data.state);
     setEvents(data.events);
     notifyNewEvents(data.events, true);
@@ -939,7 +1066,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         party.length > 1
           ? `Mesa local lista (${party.length} jugadores)`
           : "Nueva campaña lista",
-      description: `Aguas Inquietas · ${ruleset}`,
+      description: `${data.title || data.adventurePack?.titleEs || "Aventura"} · ${ruleset}`,
       tone: "amber",
     });
     return data.campaignId;
@@ -1096,11 +1223,16 @@ export function Chat({ models }: { models: GatewayModel[] }) {
       if (!res.ok) return;
       const data = (await res.json()) as {
         ok: boolean;
+        adventurePack?: AdventurePack | null;
         state?: GameState;
         events?: GameEvent[];
         messages?: CampaignApiPayload["messages"];
       };
       if (data.ok && Array.isArray(data.messages)) {
+        if ("adventurePack" in data) {
+          setAdventurePack(data.adventurePack ?? null);
+        }
+        const activePack = data.adventurePack ?? adventurePack ?? AGUAS_QUIETAS_PACK;
         if (data.state) setGameState(data.state);
         if (data.events) {
           setEvents(data.events);
@@ -1125,7 +1257,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
         playSound("notification.info");
         pushToast({
           title: "Nuevo objetivo",
-          description: `${AGUAS_INQUIETAS_QUEST.titleEs} — ${AGUAS_INQUIETAS_QUEST.objectiveEs}`,
+          description: `${activePack.quest.titleEs} — ${activePack.quest.objectiveEs}`,
           tone: "amber",
           meta: "Objetivo principal",
           durationMs: 7000,
@@ -1300,20 +1432,27 @@ export function Chat({ models }: { models: GatewayModel[] }) {
   const isBusy = status === "submitted" || status === "streaming";
   const lastMessage = messages.at(-1);
   const currentScene = gameState ? gameState.scenes[gameState.sceneId] : undefined;
+  const activePack = adventurePack ?? AGUAS_QUIETAS_PACK;
+  const selectedPackSummary = adventurePacks.find(
+    (p) => p.id === selectedAdventureId,
+  );
+  const activeAdventureTitle = gameState
+    ? activePack.titleEs
+    : (selectedPackSummary?.titleEs ?? activePack.titleEs);
 
   const pcNames = React.useMemo(
     () => partyChars.map((c) => c.name),
     [partyChars],
   );
-  const npcNames = React.useMemo(
-    () =>
-      gameState?.combat?.active
-        ? gameState.combat.combatants
-            .filter((c) => c.kind !== "pc")
-            .map((c) => c.name)
-        : [],
-    [gameState],
-  );
+  const npcNames = React.useMemo(() => {
+    const combatNpcs = gameState?.combat?.active
+      ? gameState.combat.combatants
+          .filter((c) => c.kind !== "pc")
+          .map((c) => c.name)
+      : [];
+    const packNpcs = activePack.npcMinds.map((n) => n.nameEs);
+    return Array.from(new Set([...combatNpcs, ...packNpcs]));
+  }, [activePack.npcMinds, gameState]);
 
   const pendingQuestion =
     lastMessage?.role === "assistant"
@@ -1349,8 +1488,8 @@ export function Chat({ models }: { models: GatewayModel[] }) {
 
   const firstAssistantIndex = messages.findIndex((m) => m.role === "assistant");
   const questProgress = React.useMemo(
-    () => (gameState ? getAguasInquietasProgress(gameState) : null),
-    [gameState],
+    () => (gameState ? getAdventureProgress(gameState, activePack) : null),
+    [activePack, gameState],
   );
 
   const ttsAvailable = access.tier === "whitelisted" && settings.ttsEnabled;
@@ -1492,6 +1631,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
               playSound(next ? "overlay.open" : "overlay.close");
               if (next) {
                 void fetchCampaignsList();
+                void fetchAdventurePacks();
               }
             }}
             title="Campañas (Alt+C)"
@@ -1539,7 +1679,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
 
           <div className="hidden min-w-0 items-center gap-2 md:flex">
             <span className="truncate font-serif text-sm font-medium text-foreground">
-              {currentScene?.titleEs ?? "Aguas Inquietas"}
+              {currentScene?.titleEs ?? activeAdventureTitle}
             </span>
             {questProgress && (
               <span className="hidden shrink-0 rounded-none border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground lg:inline-flex">
@@ -1662,6 +1802,13 @@ export function Chat({ models }: { models: GatewayModel[] }) {
           campaigns={campaignsList}
           loadingCampaigns={loadingCampaigns}
           presets={presets}
+          adventurePacks={adventurePacks}
+          selectedAdventureId={selectedAdventureId}
+          onSelectAdventure={(id) => {
+            setSelectedAdventureId(id);
+          }}
+          onImportPack={handleImportPack}
+          onDeletePack={handleDeletePack}
           onSelectCampaign={handleSelectCampaign}
           onNewCampaign={handleNewCampaign}
           onDeleteCampaign={handleDeleteCampaign}
@@ -1782,7 +1929,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                     SRD 5.2.1 · {gameState?.ruleset ?? "5e-full"} · Motor determinista · Voz STT
                   </span>
                   <EmptyTitle className="mt-2 font-serif text-3xl font-semibold tracking-tight">
-                    <h1>Aguas Inquietas</h1>
+                    <h1>{activeAdventureTitle}</h1>
                   </EmptyTitle>
                   <EmptyDescription className="text-[14px] leading-relaxed">
                     Crónica interactiva 5e asistida por motor determinista. Escribí,
@@ -1804,11 +1951,23 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                       void submitPrompt(prompt);
                     }}
                     presets={presets}
-                    onStartLocalParty={async (party, mode, ruleset) => {
+                    adventurePack={adventurePack}
+                    adventurePacks={adventurePacks}
+                    selectedAdventureId={selectedAdventureId}
+                    onSelectAdventure={(id) => {
+                      setSelectedAdventureId(id);
+                    }}
+                    onStartLocalParty={async (
+                      party,
+                      mode,
+                      ruleset,
+                      adventureId,
+                    ) => {
                       const createdId = await handleNewCampaign(
                         party,
                         mode,
                         ruleset,
+                        adventureId,
                       );
                       if (createdId) {
                         await handleStartCampaignIntro(createdId);
@@ -1855,12 +2014,12 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                         );
                         if (transitionPart?.output.titleEs) {
                           sceneHeader = {
-                            microLabel: "AGUAS INQUIETAS · NUEVA ESCENA",
+                            microLabel: `${activePack.titleEs.toUpperCase()} · NUEVA ESCENA`,
                             title: transitionPart.output.titleEs,
                           };
                         } else if (idx === firstAssistantIndex && currentScene) {
                           sceneHeader = {
-                            microLabel: `AGUAS INQUIETAS · ${gameState?.ruleset.toUpperCase() ?? "5E-FULL"}`,
+                            microLabel: `${activePack.titleEs.toUpperCase()} · ${gameState?.ruleset.toUpperCase() ?? "5E-FULL"}`,
                             title: currentScene.titleEs,
                           };
                         }
@@ -2082,13 +2241,17 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                       )}
                     {gameState &&
                       !isBusy &&
-                      gameState.sceneId === "escena_08_otra_orilla" && (
+                      activePack.epilogueSceneIds.includes(
+                        gameState.sceneId,
+                      ) && (
                         <MessageScrollerItem messageId="epilogue-card">
                           <EpilogueCard
                             state={gameState}
+                            adventurePack={adventurePack}
                             onStartNewCampaign={() => {
                               setCampaignSidebarOpen(true);
                               void fetchCampaignsList();
+                              void fetchAdventurePacks();
                             }}
                           />
                         </MessageScrollerItem>
@@ -2143,6 +2306,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
                       <TensionMeter
                         state={gameState}
                         events={events}
+                        adventurePack={adventurePack}
                         pendingPlayerRoll={Boolean(
                           pendingDeclareCheck || pendingQuestion,
                         )}
@@ -2191,6 +2355,7 @@ export function Chat({ models }: { models: GatewayModel[] }) {
           campaignId={campaignId}
           sessionNumber={sessionNumber}
           state={gameState}
+          adventurePack={adventurePack}
           events={events}
           sessionSummaries={sessionSummaries}
           memoryFacts={memoryFacts}

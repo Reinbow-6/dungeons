@@ -87,6 +87,77 @@ export const Condition5eSchema = z.enum([
 ]);
 export type Condition5e = z.infer<typeof Condition5eSchema>;
 
+export const ModifierTargetSchema = z.enum([
+  'd20',
+  'check',
+  'save',
+  'attack',
+  'damage',
+  'ac',
+  'speed',
+]);
+export type ModifierTarget = z.infer<typeof ModifierTargetSchema>;
+
+export const ModifierStackTypeSchema = z.enum([
+  'untyped',
+  'status',
+  'circumstance',
+  'item',
+  'spell',
+]);
+export type ModifierStackType = z.infer<typeof ModifierStackTypeSchema>;
+
+export const SourcedModifierSchema = z.object({
+  slug: z.string().min(1),
+  labelEs: z.string().min(1),
+  target: ModifierTargetSchema,
+  value: z.number().int().optional(),
+  dice: z.string().min(1).optional(),
+  type: ModifierStackTypeSchema.default('untyped'),
+  predicate: z.array(z.string().min(1)).optional(),
+  grantsAdvantage: z.boolean().optional(),
+  imposesDisadvantage: z.boolean().optional(),
+  grantsAdvantageAgainst: z.boolean().optional(),
+  imposesDisadvantageAgainst: z.boolean().optional(),
+});
+export type SourcedModifier = z.infer<typeof SourcedModifierSchema>;
+
+export const ResolvedModifierEntrySchema = z.object({
+  slug: z.string().min(1),
+  labelEs: z.string().min(1),
+  value: z.number().int(),
+  diceExpression: z.string().optional(),
+  diceRolls: z.array(z.number().int()).optional(),
+  type: ModifierStackTypeSchema,
+  ignored: z.boolean().optional(),
+});
+export type ResolvedModifierEntry = z.infer<typeof ResolvedModifierEntrySchema>;
+
+export const EffectExpiryTimingSchema = z.enum([
+  'start_of_owner_turn',
+  'end_of_owner_turn',
+  'start_of_source_turn',
+  'end_of_source_turn',
+]);
+export type EffectExpiryTiming = z.infer<typeof EffectExpiryTimingSchema>;
+
+export const ActiveEffectSchema = z.object({
+  id: z.string().min(1),
+  slug: z.string().min(1),
+  labelEs: z.string().min(1),
+  sourceActorId: z.string().min(1).optional(),
+  concentrationSpell: z.string().min(1).optional(),
+  durationRounds: z.number().int().min(1).nullable(),
+  remainingRounds: z.number().int().min(0).nullable(),
+  expiryTiming: EffectExpiryTimingSchema.optional(),
+  expiresOnCombatEnd: z.boolean().optional(),
+  expiresOnRest: z.enum(['short', 'long', 'none']).optional(),
+  consumeOnUse: z.boolean().optional(),
+  linkedCondition: Condition5eSchema.optional(),
+  modifiers: z.array(SourcedModifierSchema).default([]),
+});
+export type ActiveEffect = z.infer<typeof ActiveEffectSchema>;
+
 export const CharacterFieldKeySchema = z.enum([
   'abilities',
   'skills',
@@ -206,6 +277,7 @@ export const CharacterSchema = z.object({
   deathSaves: DeathSavesSchema.optional(),
   concentratingOn: z.string().nullable(),
   resistances: z.array(z.string().min(1)).optional(),
+  activeEffects: z.array(ActiveEffectSchema).optional(),
   authority: CharacterAuthoritySchema,
   rollAuthority: RollAuthoritySchema,
 });
@@ -240,6 +312,7 @@ export const CombatantSchema = z.object({
   immunities: z.array(z.string().min(1)),
   resistances: z.array(z.string().min(1)).optional(),
   conditions: z.array(Condition5eSchema).optional(),
+  activeEffects: z.array(ActiveEffectSchema).optional(),
   defeated: z.boolean(),
 });
 export type Combatant = z.infer<typeof CombatantSchema>;
@@ -270,6 +343,10 @@ export interface SceneDefinition {
   titleEs: string;
   summaryEs: string;
   narrativeHookEs?: string;
+  /** Etiqueta corta opcional para listas de partidas (p. ej. "Orilla del Río"). */
+  shortLabelEs?: string;
+  /** Tensión narrativa base 0-100 para computeTensionMeter. */
+  baseTension?: number;
   allowedTransitions: string[];
   clues: SceneClue[];
   /** Requisitos opcionales por arista, con clave "origen>destino". */
@@ -287,6 +364,8 @@ export type TurnPhase = z.infer<typeof TurnPhaseSchema>;
 export interface GameState {
   campaignId: string;
   sessionId: string;
+  /** Slug del AdventurePack asociado (p. ej. "aguas-quietas"). */
+  adventureId?: string;
   ruleset: RulesetProfile;
   sceneId: string;
   lastSeq: number;

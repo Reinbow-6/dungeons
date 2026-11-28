@@ -37,12 +37,19 @@ export function createCombatEndTool(rt: DmToolRuntime) {
             ? "Retirada"
             : "Tregua";
 
+      const expiredNote =
+        res.expiredEffects.length > 0
+          ? ` Expiraron: ${res.expiredEffects.map((e) => `${e.labelEs} (${e.targetName})`).join(", ")}.`
+          : "";
       return {
         ok: true,
-        messageEs: `Combate finalizado (${outcomeLabel}) tras ${res.roundsElapsed} ronda(s): ${input.reason}`,
+        messageEs: `Combate finalizado (${outcomeLabel}) tras ${res.roundsElapsed} ronda(s): ${input.reason}${expiredNote}`,
         outcome: input.outcome,
         reason: input.reason,
         roundsElapsed: res.roundsElapsed,
+        ...(res.expiredEffects.length > 0
+          ? { expiredEffects: res.expiredEffects }
+          : {}),
         seq: res.event.seq,
       };
     },

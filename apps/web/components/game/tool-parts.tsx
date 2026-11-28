@@ -293,7 +293,9 @@ function summarizeTool(part: DmToolPart): {
             ? `${out.attackerName} → ${out.targetName}`
             : label,
         description: out.ok
-          ? `${out.attackTotal} vs CA ${out.targetAc}`
+          ? out.targetBaseAc !== undefined && out.targetBaseAc !== out.targetAc
+            ? `${out.attackTotal} vs CA ${out.targetAc} (base ${out.targetBaseAc})`
+            : `${out.attackTotal} vs CA ${out.targetAc}`
           : out.messageEs,
         badge,
         isError: !out.ok,
@@ -302,10 +304,14 @@ function summarizeTool(part: DmToolPart): {
     }
     case "tool-combat_next_turn": {
       const out = part.output;
+      const expiredText =
+        out.ok && out.expiredEffects && out.expiredEffects.length > 0
+          ? ` · Expiró: ${out.expiredEffects.map((e) => e.labelEs).join(", ")}`
+          : "";
       return {
         title: out.ok ? `${label} · R${out.round ?? "?"}` : label,
         description: out.ok
-          ? `Actúa: ${out.activeCombatant?.name ?? "?"}`
+          ? `Actúa: ${out.activeCombatant?.name ?? "?"}${expiredText}`
           : out.messageEs,
         isError: !out.ok,
         details: out,

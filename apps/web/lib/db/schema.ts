@@ -1,4 +1,9 @@
-import type { Character, GameState, GameStateDelta } from "@dungeons/rules";
+import type {
+  AdventurePack,
+  Character,
+  GameState,
+  GameStateDelta,
+} from "@dungeons/rules";
 import {
   bigint,
   index,
@@ -314,6 +319,36 @@ export const rateLimitBuckets = pgTable(
     uniqueIndex("rate_limit_bucket_window_idx").on(
       table.bucketKey,
       table.windowStart,
+    ),
+  ],
+);
+
+export const adventurePacks = pgTable(
+  "adventure_packs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    ownerGuestId: text("owner_guest_id").notNull(),
+    slug: text("slug").notNull(),
+    title: text("title").notNull(),
+    rulesetRecommended: rulesetProfileEnum("ruleset_recommended")
+      .notNull()
+      .default("5e-full"),
+    pack: jsonb("pack").$type<AdventurePack>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("adventure_packs_owner_slug_idx").on(
+      table.ownerGuestId,
+      table.slug,
+    ),
+    index("adventure_packs_owner_updated_idx").on(
+      table.ownerGuestId,
+      table.updatedAt,
     ),
   ],
 );

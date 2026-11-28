@@ -1,6 +1,6 @@
 "use client";
 
-import type { Combatant, CombatState } from "@dungeons/rules";
+import { getEffectiveAc, type Combatant, type CombatState } from "@dungeons/rules";
 import { ChevronRight, Shield, Skull, Swords } from "lucide-react";
 
 function getHpBarColor(current: number, max: number): string {
@@ -80,6 +80,14 @@ export function CombatTracker({
               ? Math.max(0, Math.min(100, Math.round((c.hp.current / c.hp.max) * 100)))
               : 0;
           const kindBadge = getKindBadge(c.kind);
+          const effAc = getEffectiveAc(c);
+          const acModified = effAc.effectiveAc !== c.ac;
+          const acTooltip = acModified
+            ? effAc.breakdown
+                .filter((b) => !b.ignored)
+                .map((b) => `${b.labelEs} ${b.value >= 0 ? `+${b.value}` : b.value}`)
+                .join(" · ")
+            : `Clase de Armadura ${c.ac}`;
 
           return (
             <li
@@ -141,19 +149,36 @@ export function CombatTracker({
                   {c.hp.current}/{c.hp.max} PG
                 </span>
                 <span
-                  className="inline-flex shrink-0 items-center gap-0.5 rounded-none border border-border bg-background px-1 py-0.5 font-mono text-[10px] text-muted-foreground"
-                  title={`Clase de Armadura ${c.ac}`}
+                  className={[
+                    "inline-flex shrink-0 items-center gap-0.5 rounded-none border px-1 py-0.5 font-mono text-[10px]",
+                    acModified
+                      ? "border-sky-500/40 bg-sky-500/10 font-semibold text-sky-700 dark:text-sky-300"
+                      : "border-border bg-background text-muted-foreground",
+                  ].join(" ")}
+                  title={acTooltip}
                 >
                   <Shield className="size-2.5" />
-                  CA {c.ac}
+                  CA {effAc.effectiveAc}
                 </span>
               </div>
 
               {(c.vulnerabilities.length > 0 ||
                 c.immunities.length > 0 ||
                 (c.resistances && c.resistances.length > 0) ||
-                (c.conditions && c.conditions.length > 0)) && (
+                (c.conditions && c.conditions.length > 0) ||
+                (c.activeEffects && c.activeEffects.length > 0)) && (
                 <div className="flex flex-wrap gap-1 border-t border-border/60 pt-1 text-[10px] text-muted-foreground">
+                  {c.activeEffects &&
+                    c.activeEffects.map((ef) => (
+                      <span
+                        key={ef.id}
+                        className="rounded-none border border-sky-500/30 bg-sky-500/10 px-1 py-0.5 font-mono text-sky-700 dark:text-sky-300"
+                        title={ef.concentrationSpell ? `Concentración: ${ef.concentrationSpell}` : ef.labelEs}
+                      >
+                        {ef.labelEs}
+                        {ef.remainingRounds !== null ? ` · ${ef.remainingRounds}r` : ""}
+                      </span>
+                    ))}
                   {c.vulnerabilities.length > 0 && (
                     <span className="rounded-none border border-amber-500/25 bg-amber-500/10 px-1 py-0.5 text-amber-700 dark:text-amber-300">
                       Vuln: {c.vulnerabilities.join(", ")}

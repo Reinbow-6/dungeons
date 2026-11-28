@@ -1,11 +1,15 @@
 "use client";
 
 import {
+  AGUAS_QUIETAS_PACK,
   CORE_SPELLS_521,
   getAbilityModifier,
-  getAguasInquietasProgress,
+  getAdventureProgress,
   getCheckModifier,
+  getEffectiveAc,
+  getEffectiveSpeed,
   getSpellcastingStats,
+  type AdventurePack,
   type GameEvent,
   type GameState,
   type Skill,
@@ -68,6 +72,7 @@ export function GameSidebar({
   campaignId,
   sessionNumber = 1,
   state,
+  adventurePack,
   events,
   sessionSummaries = [],
   memoryFacts = [],
@@ -86,6 +91,7 @@ export function GameSidebar({
   campaignId: string | null;
   sessionNumber?: number;
   state: GameState | null;
+  adventurePack?: AdventurePack | null;
   events: GameEvent[];
   sessionSummaries?: SessionSummaryItem[];
   memoryFacts?: StoredMemoryFact[];
@@ -191,6 +197,8 @@ export function GameSidebar({
         )
       : 0
     : 0;
+  const activeEffAc = activeChar ? getEffectiveAc(activeChar) : null;
+  const activeEffSpeed = activeChar ? getEffectiveSpeed(activeChar) : null;
 
   return (
     <>
@@ -220,7 +228,7 @@ export function GameSidebar({
             <div className="flex items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-1.5">
                 <h2 className="truncate font-serif text-base font-semibold tracking-tight">
-                  Aguas Inquietas
+                  {adventurePack?.titleEs ?? "Aguas Quietas"}
                 </h2>
                 <span className="rounded-none border border-border bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
                   #{sessionNumber}
@@ -501,22 +509,61 @@ export function GameSidebar({
                   </div>
                 </div>
 
-                <div className="flex flex-col items-center justify-center rounded-none bg-background/85 p-1.5">
+                <div
+                  className="flex flex-col items-center justify-center rounded-none bg-background/85 p-1.5"
+                  title={
+                    activeEffAc && activeEffAc.effectiveAc !== activeChar.ac
+                      ? activeEffAc.breakdown
+                          .filter((b) => !b.ignored)
+                          .map((b) => `${b.labelEs} ${b.value >= 0 ? `+${b.value}` : b.value}`)
+                          .join(" · ")
+                      : `Clase de Armadura ${activeChar.ac}`
+                  }
+                >
                   <span className="flex items-center gap-0.5 text-[9px] uppercase tracking-wider text-muted-foreground">
                     <ShieldIcon className="size-2.5" />
                     CA
                   </span>
-                  <span className="font-mono text-sm font-semibold tabular-nums">
-                    {activeChar.ac}
+                  <span
+                    className={cn(
+                      "font-mono text-sm font-semibold tabular-nums",
+                      activeEffAc &&
+                        activeEffAc.effectiveAc !== activeChar.ac &&
+                        "text-sky-600 dark:text-sky-400",
+                    )}
+                  >
+                    {activeEffAc ? activeEffAc.effectiveAc : activeChar.ac}
                   </span>
                 </div>
 
-                <div className="flex flex-col items-center justify-center rounded-none bg-background/85 p-1.5">
+                <div
+                  className="flex flex-col items-center justify-center rounded-none bg-background/85 p-1.5"
+                  title={
+                    activeEffSpeed &&
+                    activeEffSpeed.effectiveSpeed !== activeChar.speed
+                      ? `Base ${activeChar.speed} · ${activeEffSpeed.breakdown
+                          .filter((b) => !b.ignored && b.slug !== "speed:base")
+                          .map((b) => `${b.labelEs} ${b.value >= 0 ? `+${b.value}` : b.value}`)
+                          .join(" · ")}`
+                      : `Velocidad ${activeChar.speed} pies`
+                  }
+                >
                   <span className="text-[9px] uppercase tracking-wider text-muted-foreground">
                     VEL
                   </span>
-                  <span className="font-mono text-sm font-semibold tabular-nums">
-                    {activeChar.speed}
+                  <span
+                    className={cn(
+                      "font-mono text-sm font-semibold tabular-nums",
+                      activeEffSpeed &&
+                        activeEffSpeed.effectiveSpeed !== activeChar.speed &&
+                        (activeEffSpeed.effectiveSpeed < activeChar.speed
+                          ? "text-amber-600 dark:text-amber-400"
+                          : "text-sky-600 dark:text-sky-400"),
+                    )}
+                  >
+                    {activeEffSpeed
+                      ? activeEffSpeed.effectiveSpeed
+                      : activeChar.speed}
                   </span>
                 </div>
 
@@ -621,11 +668,28 @@ export function GameSidebar({
                 </div>
               )}
 
-              {/* Condiciones, agotamiento o concentración activa */}
+              {/* Condiciones, agotamiento, concentración o efectos activos */}
               {(activeChar.conditions.length > 0 ||
                 activeChar.exhaustionLevel > 0 ||
-                activeChar.concentratingOn) && (
+                activeChar.concentratingOn ||
+                (activeChar.activeEffects && activeChar.activeEffects.length > 0)) && (
                 <div className="flex flex-wrap gap-1">
+                  {activeChar.activeEffects?.map((ef) => (
+                    <span
+                      key={ef.id}
+                      className="rounded-none border border-sky-500/35 bg-sky-500/10 px-1.5 py-0.5 font-mono text-[10px] text-sky-700 dark:text-sky-300"
+                      title={
+                        ef.concentrationSpell
+                          ? `Concentración: ${ef.concentrationSpell}`
+                          : ef.labelEs
+                      }
+                    >
+                      {ef.labelEs}
+                      {ef.remainingRounds !== null
+                        ? ` (${ef.remainingRounds}r)`
+                        : ""}
+                    </span>
+                  ))}
                   {activeChar.conditions.map((cond) => (
                     <span
                       key={cond}
@@ -928,7 +992,10 @@ export function GameSidebar({
                 {activeTab === "escena" &&
                   currentScene &&
                   (() => {
-                    const progress = getAguasInquietasProgress(state);
+                    const progress = getAdventureProgress(
+                      state,
+                      adventurePack ?? AGUAS_QUIETAS_PACK,
+                    );
                     const altEndings = progress.endings.filter(
                       (e) => !e.isStandard,
                     );

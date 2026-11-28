@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { collectRestPurge } from './effects.js';
 import {
   applyDelta,
   type GameEvent,
@@ -261,6 +262,23 @@ function computeCharacterRestOutcome(
         { actorId: actor.id, before: actor.concentratingOn, after: null },
       ];
     }
+  }
+
+  const restPurge = collectRestPurge(actor, restType);
+  if (restPurge.effectsRemoved.length > 0) {
+    stateDelta.effectsRemoved = restPurge.effectsRemoved;
+  }
+  if (restPurge.conditionsRemoved.length > 0) {
+    const existingKeys = new Set(
+      (stateDelta.conditionsRemoved ?? []).map((c) => `${c.actorId}:${c.condition}`),
+    );
+    const merged = [...(stateDelta.conditionsRemoved ?? [])];
+    for (const rem of restPurge.conditionsRemoved) {
+      if (!existingKeys.has(`${rem.actorId}:${rem.condition}`)) {
+        merged.push(rem);
+      }
+    }
+    stateDelta.conditionsRemoved = merged;
   }
 
   return {
@@ -538,6 +556,12 @@ export function resolvePartyRest(
       stateDelta.concentrationChanges = [
         ...(stateDelta.concentrationChanges ?? []),
         ...out.delta.concentrationChanges,
+      ];
+    }
+    if (out.delta.effectsRemoved?.length) {
+      stateDelta.effectsRemoved = [
+        ...(stateDelta.effectsRemoved ?? []),
+        ...out.delta.effectsRemoved,
       ];
     }
   }

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  ActiveEffectSchema,
   CharacterSchema,
   CombatStateSchema,
   Condition5eSchema,
@@ -7,6 +8,7 @@ import {
   DeathSavesSchema,
   HitDieTypeSchema,
   VisibilitySchema,
+  type ActiveEffect,
   type Character,
   type CombatState,
   type Condition5e,
@@ -140,6 +142,31 @@ export const GameStateDeltaSchema = z.object({
     )
     .optional(),
   cluesUnlocked: z.array(z.string().min(1)).optional(),
+  effectsAdded: z
+    .array(
+      z.object({
+        targetId: z.string().min(1),
+        effect: ActiveEffectSchema,
+      }),
+    )
+    .optional(),
+  effectsRemoved: z
+    .array(
+      z.object({
+        targetId: z.string().min(1),
+        effectId: z.string().min(1),
+      }),
+    )
+    .optional(),
+  effectsUpdated: z
+    .array(
+      z.object({
+        targetId: z.string().min(1),
+        effectId: z.string().min(1),
+        remainingRounds: z.number().int().min(0).nullable(),
+      }),
+    )
+    .optional(),
   charactersAdded: z.array(CharacterSchema).optional(),
   charactersRemoved: z.array(z.string().min(1)).optional(),
   combat: CombatStateSchema.nullable().optional(),
@@ -165,6 +192,16 @@ export const GameEventSchema = z.object({
 });
 export type GameEvent = z.infer<typeof GameEventSchema>;
 
+function cloneEffect(ef: ActiveEffect): ActiveEffect {
+  return {
+    ...ef,
+    modifiers: ef.modifiers.map((m) => ({
+      ...m,
+      ...(m.predicate ? { predicate: [...m.predicate] } : {}),
+    })),
+  };
+}
+
 function cloneCharacter(char: Character): Character {
   return {
     ...char,
@@ -181,6 +218,9 @@ function cloneCharacter(char: Character): Character {
     ...(char.hitDice ? { hitDice: { ...char.hitDice } } : {}),
     ...(char.deathSaves ? { deathSaves: { ...char.deathSaves } } : {}),
     ...(char.resistances ? { resistances: [...char.resistances] } : {}),
+    ...(char.activeEffects
+      ? { activeEffects: char.activeEffects.map(cloneEffect) }
+      : {}),
     authority: { ...char.authority },
   };
 }
@@ -198,6 +238,9 @@ function cloneCombatState(combat: CombatState): CombatState {
       immunities: [...c.immunities],
       ...(c.resistances ? { resistances: [...c.resistances] } : {}),
       ...(c.conditions ? { conditions: [...c.conditions] } : {}),
+      ...(c.activeEffects
+        ? { activeEffects: c.activeEffects.map(cloneEffect) }
+        : {}),
     })),
   };
 }
@@ -209,6 +252,41 @@ const INCAPACITATING_CONDITIONS = new Set<Condition5e>([
   'stunned',
   'unconscious',
 ]);
+
+function upsertEffectList(
+  list: readonly ActiveEffect[] | undefined,
+  nextEffect: ActiveEffect,
+): ActiveEffect[] {
+  const base = (list ?? []).filter(
+    (ef) => ef.id !== nextEffect.id && ef.slug !== nextEffect.slug,
+  );
+  return [...base.map(cloneEffect), cloneEffect(nextEffect)];
+}
+
+function updateEffectList(
+  list: readonly ActiveEffect[] | undefined,
+  effectId: string,
+  remainingRounds: number | null,
+): ActiveEffect[] | undefined {
+  if (!list || list.length === 0) return list ? [] : undefined;
+  return list.map((ef) =>
+    ef.id === effectId ? { ...cloneEffect(ef), remainingRounds } : cloneEffect(ef),
+  );
+}
+
+function removeEffectList(
+  list: readonly ActiveEffect[] | undefined,
+  effectId: string,
+): { nextEffects: ActiveEffect[] | undefined; removedEffect?: ActiveEffect } {
+  if (!list || list.length === 0) {
+    return { nextEffects: list ? [] : undefined };
+  }
+  const removedEffect = list.find((ef) => ef.id === effectId);
+  const nextEffects = list
+    .filter((ef) => ef.id !== effectId)
+    .map(cloneEffect);
+  return { nextEffects, removedEffect };
+}
 
 /**
  * Pure, immutable state transition applying a deterministic `GameStateDelta`.
@@ -224,6 +302,10 @@ export function applyDelta(
     : { ...state.flags };
 
   let nextCharacters = state.characters;
+  const hasEffectMutations =
+    (delta.effectsAdded && delta.effectsAdded.length > 0) ||
+    (delta.effectsUpdated && delta.effectsUpdated.length > 0) ||
+    (delta.effectsRemoved && delta.effectsRemoved.length > 0);
   const needsCharacterCopy =
     (delta.hpChanges && delta.hpChanges.length > 0) ||
     (delta.tempHpChanges && delta.tempHpChanges.length > 0) ||
@@ -236,7 +318,8 @@ export function applyDelta(
     (delta.hitDiceChanges && delta.hitDiceChanges.length > 0) ||
     (delta.deathSaveChanges && delta.deathSaveChanges.length > 0) ||
     (delta.charactersAdded && delta.charactersAdded.length > 0) ||
-    (delta.charactersRemoved && delta.charactersRemoved.length > 0);
+    (delta.charactersRemoved && delta.charactersRemoved.length > 0) ||
+    hasEffectMutations;
 
   const explicitExhaustionActors = new Set(
     (delta.exhaustionChanges ?? []).map((change) => change.actorId),
@@ -403,6 +486,34 @@ export function applyDelta(
         stable: change.after.stable,
       };
     }
+
+    for (const rem of delta.effectsRemoved ?? []) {
+      const char = ensureCloned(rem.targetId);
+      if (char) {
+        char.activeEffects = removeEffectList(
+          char.activeEffects,
+          rem.effectId,
+        ).nextEffects;
+      }
+    }
+
+    for (const upd of delta.effectsUpdated ?? []) {
+      const char = ensureCloned(upd.targetId);
+      if (char) {
+        char.activeEffects = updateEffectList(
+          char.activeEffects,
+          upd.effectId,
+          upd.remainingRounds,
+        );
+      }
+    }
+
+    for (const added of delta.effectsAdded ?? []) {
+      const char = ensureCloned(added.targetId);
+      if (char) {
+        char.activeEffects = upsertEffectList(char.activeEffects, added.effect);
+      }
+    }
   }
 
   const nextUnlockedClues: Record<string, string[]> = Object.fromEntries(
@@ -474,6 +585,96 @@ export function applyDelta(
             }
           }
         }
+      }
+    }
+  }
+
+  if (nextCombat && nextCombat.active && hasEffectMutations) {
+    for (const rem of delta.effectsRemoved ?? []) {
+      const combatant = nextCombat.combatants.find(
+        (c) => c.id === rem.targetId || c.actorId === rem.targetId,
+      );
+      if (combatant) {
+        const res = removeEffectList(combatant.activeEffects, rem.effectId);
+        combatant.activeEffects = res.nextEffects;
+        if (
+          res.removedEffect?.linkedCondition &&
+          !combatant.actorId &&
+          combatant.conditions?.includes(res.removedEffect.linkedCondition) &&
+          !(combatant.activeEffects ?? []).some(
+            (e) => e.linkedCondition === res.removedEffect?.linkedCondition,
+          )
+        ) {
+          combatant.conditions = combatant.conditions.filter(
+            (c) => c !== res.removedEffect?.linkedCondition,
+          );
+        }
+      }
+    }
+    for (const upd of delta.effectsUpdated ?? []) {
+      const combatant = nextCombat.combatants.find(
+        (c) => c.id === upd.targetId || c.actorId === upd.targetId,
+      );
+      if (combatant) {
+        combatant.activeEffects = updateEffectList(
+          combatant.activeEffects,
+          upd.effectId,
+          upd.remainingRounds,
+        );
+      }
+    }
+    for (const added of delta.effectsAdded ?? []) {
+      const combatant = nextCombat.combatants.find(
+        (c) => c.id === added.targetId || c.actorId === added.targetId,
+      );
+      if (combatant) {
+        combatant.activeEffects = upsertEffectList(
+          combatant.activeEffects,
+          added.effect,
+        );
+      }
+    }
+  }
+
+  if ((delta.effectsRemoved?.length ?? 0) > 0) {
+    for (const ch of Object.values(nextCharacters)) {
+      if (!ch.concentratingOn) continue;
+      const spellName = ch.concentratingOn;
+      // Clear concentration only if this character's concentration spell had an effect removed in this delta and none remain.
+      const hadRemovedEffectForThisSpell = (delta.effectsRemoved ?? []).some((rem) => {
+        const prevCharEffects = state.characters[rem.targetId]?.activeEffects ?? [];
+        const prevCombatEffects =
+          state.combat?.combatants.find(
+            (cb) => cb.id === rem.targetId || cb.actorId === rem.targetId,
+          )?.activeEffects ?? [];
+        return [...prevCharEffects, ...prevCombatEffects].some(
+          (ef) =>
+            ef.id === rem.effectId &&
+            ef.sourceActorId === ch.id &&
+            ef.concentrationSpell === spellName,
+        );
+      });
+      if (!hadRemovedEffectForThisSpell) continue;
+
+      const stillActive =
+        Object.values(nextCharacters).some((other) =>
+          (other.activeEffects ?? []).some(
+            (ef) => ef.sourceActorId === ch.id && ef.concentrationSpell === spellName,
+          ),
+        ) ||
+        Boolean(
+          nextCombat?.active &&
+            nextCombat.combatants.some((cb) =>
+              (cb.activeEffects ?? []).some(
+                (ef) => ef.sourceActorId === ch.id && ef.concentrationSpell === spellName,
+              ),
+            ),
+        );
+      if (!stillActive) {
+        nextCharacters[ch.id] = {
+          ...ch,
+          concentratingOn: null,
+        };
       }
     }
   }

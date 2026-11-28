@@ -1,12 +1,14 @@
 # Dungeons — Dungeon Master IA con Motor Determinista 5e
 
-Plataforma de rol de mesa D&D 5e (**SRD 5.2.1**) en español rioplatense donde la IA narra e interpreta las reglas mientras un **motor determinista en TypeScript** valida cada tirada, combate, espacio de conjuro, pista descubierta y punto de golpe mediante un registro de eventos inmutable (`event_log`).
+Plataforma multi-campaña de rol de mesa D&D 5e (**SRD 5.2.1**) en español rioplatense donde la IA narra e interpreta las reglas mientras un **motor determinista en TypeScript** valida cada tirada, combate, espacio de conjuro, pista descubierta y punto de golpe mediante un registro de eventos inmutable (`event_log`).
 
-Incluye la campaña interactiva **Aguas Quietas**, soporte para mesa individual o **multijugador local en una pantalla (`1–4` jugadores)** y modo **Digital** (d20 resuelto en servidor) o **Híbrido** (d20 físico en tu mesa o botón *Tirar por mí*).
+Incluye la campaña integrada **Aguas Quietas**, soporte para **importar módulos propios (`AdventurePack` v1 `.json`)**, compilación local desde PDF (`pnpm compile:pdf`), **multijugador local en una pantalla (`1–4` jugadores)** y modo **Digital** (d20 resuelto en servidor) o **Híbrido** (d20 físico en tu mesa o botón *Tirar por mí*).
 
 ---
 
 ## Características principales
+
+- **Motor multi-campaña (`AdventurePack` v1):** Desacoplamiento completo de escenas, pistas, lorebook, PNJs compartimentados, bestiario y finales. Podés jugar *Aguas Quietas* por defecto, importar packs `.json` desde **Campañas → Módulos (.json)** (persistidos en Postgres vía `/api/game/packs`) o compilar módulos desde PDF con `scripts/compile-adventure-pdf.mjs`.
 
 - **Motor de reglas determinista (`@dungeons/rules`):** El LLM nunca muta estado ni inventa resultados de dados; toda acción mecánica pasa por tools validadas con Zod, registro de eventos con concurrencia optimista (`logHeadSeq` / `StaleSeqError`) y rollback completo a cualquier secuencia anterior.
 - **Modo Digital y Modo Híbrido:** Alterná a nivel de mesa entre tiradas automáticas del motor o tiradas declaradas por los jugadores (con tarjeta interactiva de verificación, ventaja/desventaja y botón digital opcional *Tirar por mí*).
@@ -22,8 +24,9 @@ Incluye la campaña interactiva **Aguas Quietas**, soporte para mesa individual 
 ```text
 .
 ├── packages/
-│   ├── rules/          # Motor puro determinista, resolvers, combate, conjuros, grupos, lorebook y aventura Aguas Quietas
+│   ├── rules/          # Motor puro determinista, AdventurePackSchema, combate, conjuros, grupos, lorebook y campaña integrada
 │   └── srd/            # Catálogo SRD 5.2.1 validado con Zod, overrides 5.2.1 y traducciones al español
+├── scripts/            # Compilador CLI PDF -> AdventurePack JSON (compile-adventure-pdf.mjs)
 └── apps/
     └── web/            # Aplicación Next.js 16 (App Router), agente DM (AI SDK), Drizzle ORM (Postgres) y UI
 ```

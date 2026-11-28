@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import {
-  AGUAS_QUIETAS_SCENES,
   createDefaultAuthority,
   reduceEvents,
   rollbackToSeq,
+  type AdventurePack,
   type Character,
   type GameEvent,
   type GameState,
@@ -14,6 +14,7 @@ import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-or
 
 import { getDb, isDbConfigured } from "@/lib/db/client";
 import {
+  adventurePacks,
   campaignMembers,
   campaigns,
   characters,
@@ -23,6 +24,13 @@ import {
   messages,
   sessions,
 } from "@/lib/db/schema";
+import {
+  type AdventurePackSummary,
+  getBuiltinAdventurePack,
+  getFallbackAdventurePack,
+  listBuiltinAdventurePackSummaries,
+  summarizeAdventurePack,
+} from "@/lib/game/adventure-packs";
 import { buildSeededIntroParts } from "@/lib/game/intro";
 import {
   buildInitialPartyCampaignState,
@@ -118,6 +126,7 @@ export interface CampaignSummary {
   adventureId: string;
   ruleset: RulesetProfile;
   sceneId: string;
+  sceneTitleEs?: string;
   lastSeq: number;
   role: string;
   updatedAt: string;
@@ -136,6 +145,7 @@ export interface LoadedCampaign {
   sessionNumber: number;
   title: string;
   adventureId: string;
+  adventurePack?: AdventurePack;
   ruleset: RulesetProfile;
   worldSummary: string;
   initialState: GameState;
@@ -164,6 +174,7 @@ function sortMemoryFacts(facts: StoredMemoryFact[]): StoredMemoryFact[] {
 
 export interface CreateCampaignInput {
   guestId: string;
+  adventureId?: string;
   presetId?: string;
   party?: Array<{ presetId: string; playerName?: string }>;
   mode?: "digital" | "hybrid";
@@ -258,6 +269,13 @@ export interface GameStore {
     sessionId: string,
     facts: SaveMemoryFactInput[],
   ): Promise<StoredMemoryFact[]>;
+  upsertAdventurePack(
+    guestId: string,
+    pack: AdventurePack,
+  ): Promise<AdventurePackSummary>;
+  listAdventurePacks(guestId: string): Promise<AdventurePackSummary[]>;
+  getAdventurePack(id: string, guestId: string): Promise<AdventurePack | null>;
+  deleteAdventurePack(slug: string, guestId: string): Promise<boolean>;
 }
 
 function mapEventRow(row: typeof eventLog.$inferSelect): GameEvent {
@@ -301,7 +319,9 @@ function buildInitialFromRows(params: {
   campaign: typeof campaigns.$inferSelect;
   session: typeof sessions.$inferSelect;
   characterRows: Array<typeof characters.$inferSelect>;
+  adventurePack?: AdventurePack;
 }): GameState {
+  const pack = params.adventurePack ?? getFallbackAdventurePack();
   const charRecord: Record<string, Character> = {};
   for (const row of params.characterRows) {
     charRecord[row.actorId] = row.sheet;
@@ -310,29 +330,130 @@ function buildInitialFromRows(params: {
   return {
     campaignId: params.campaign.id,
     sessionId: params.session.id,
+    adventureId: params.campaign.adventureId || pack.id,
     ruleset: params.campaign.ruleset,
-    sceneId: "escena_01_orilla",
+    sceneId: pack.initialSceneId,
     lastSeq: 0,
     characters: charRecord,
     flags: {},
     unlockedClues: {},
-    scenes: AGUAS_QUIETAS_SCENES,
+    scenes: pack.scenes,
   };
 }
 
-const DEFAULT_WORLD_SUMMARY =
-  "Frontera pantanosa del norte tras la caída de la capital del sur.";
-
 export class SupabaseGameStore implements GameStore {
+  async upsertAdventurePack(
+    guestId: string,
+    pack: AdventurePack,
+  ): Promise<AdventurePackSummary> {
+    const db = getDb();
+    const now = new Date();
+    const [row] = await db
+      .insert(adventurePacks)
+      .values({
+        ownerGuestId: guestId,
+        slug: pack.id,
+        title: pack.titleEs,
+        rulesetRecommended: pack.recommendedRuleset,
+        pack,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [adventurePacks.ownerGuestId, adventurePacks.slug],
+        set: {
+          title: pack.titleEs,
+          rulesetRecommended: pack.recommendedRuleset,
+          pack,
+          updatedAt: now,
+        },
+      })
+      .returning({ updatedAt: adventurePacks.updatedAt });
+
+    return summarizeAdventurePack(pack, {
+      builtin: false,
+      updatedAt: (row?.updatedAt ?? now).toISOString(),
+    });
+  }
+
+  async listAdventurePacks(guestId: string): Promise<AdventurePackSummary[]> {
+    const db = getDb();
+    const rows = await db
+      .select({
+        pack: adventurePacks.pack,
+        updatedAt: adventurePacks.updatedAt,
+      })
+      .from(adventurePacks)
+      .where(eq(adventurePacks.ownerGuestId, guestId))
+      .orderBy(desc(adventurePacks.updatedAt));
+
+    return [
+      ...listBuiltinAdventurePackSummaries(),
+      ...rows.map((r) =>
+        summarizeAdventurePack(r.pack, {
+          builtin: false,
+          updatedAt: r.updatedAt.toISOString(),
+        }),
+      ),
+    ];
+  }
+
+  async getAdventurePack(
+    id: string,
+    guestId: string,
+  ): Promise<AdventurePack | null> {
+    const builtin = getBuiltinAdventurePack(id);
+    if (builtin) return builtin;
+
+    const db = getDb();
+    const [row] = await db
+      .select({ pack: adventurePacks.pack })
+      .from(adventurePacks)
+      .where(
+        and(
+          eq(adventurePacks.ownerGuestId, guestId),
+          eq(adventurePacks.slug, id),
+        ),
+      )
+      .limit(1);
+
+    return row?.pack ?? null;
+  }
+
+  async deleteAdventurePack(slug: string, guestId: string): Promise<boolean> {
+    const db = getDb();
+    const deleted = await db
+      .delete(adventurePacks)
+      .where(
+        and(
+          eq(adventurePacks.ownerGuestId, guestId),
+          eq(adventurePacks.slug, slug),
+        ),
+      )
+      .returning({ id: adventurePacks.id });
+    return deleted.length > 0;
+  }
+
   async createCampaign(input: CreateCampaignInput): Promise<LoadedCampaign> {
     const db = getDb();
     const campaignId = randomUUID();
     const sessionId = randomUUID();
     const party = normalizePartyInput(input);
     const mode = input.mode === "hybrid" ? "hybrid" : "digital";
+    const requestedAdventureId = input.adventureId?.trim() || "aguas-quietas";
+    const resolvedPack = await this.getAdventurePack(
+      requestedAdventureId,
+      input.guestId,
+    );
+    if (!resolvedPack && input.adventureId?.trim()) {
+      throw new Error(`ADVENTURE_PACK_NOT_FOUND:${requestedAdventureId}`);
+    }
+    const pack = resolvedPack ?? getFallbackAdventurePack();
     const ruleset: RulesetProfile =
-      input.ruleset === "5e-full" ? "5e-full" : "5e-lite";
-    const title = input.title?.trim() || "Aguas Inquietas";
+      input.ruleset === "5e-full" || input.ruleset === "5e-lite"
+        ? input.ruleset
+        : pack.recommendedRuleset;
+    const title = input.title?.trim() || pack.titleEs;
+    const worldSummary = pack.worldSummaryEs;
 
     const initialState = buildInitialPartyCampaignState({
       campaignId,
@@ -340,6 +461,7 @@ export class SupabaseGameStore implements GameStore {
       party,
       mode,
       ruleset,
+      adventurePack: pack,
     });
     const partyChars = Object.values(initialState.characters);
     const now = new Date();
@@ -349,9 +471,9 @@ export class SupabaseGameStore implements GameStore {
         id: campaignId,
         ownerGuestId: input.guestId,
         title,
-        adventureId: "aguas-quietas",
+        adventureId: pack.id,
         ruleset,
-        worldSummary: DEFAULT_WORLD_SUMMARY,
+        worldSummary,
       });
 
       await tx.insert(sessions).values({
@@ -395,9 +517,10 @@ export class SupabaseGameStore implements GameStore {
       sessionId,
       sessionNumber: 1,
       title,
-      adventureId: "aguas-quietas",
+      adventureId: pack.id,
+      adventurePack: pack,
       ruleset,
-      worldSummary: DEFAULT_WORLD_SUMMARY,
+      worldSummary,
       initialState,
       state: initialState,
       logHeadSeq: 0,
@@ -478,7 +601,7 @@ export class SupabaseGameStore implements GameStore {
     }
 
     const ids = rows.map((r) => r.id);
-    const [snapshots, memberRoles] = await Promise.all([
+    const [snapshots, memberRoles, customPackRows] = await Promise.all([
       db
         .select()
         .from(gameStateSnapshots)
@@ -492,22 +615,41 @@ export class SupabaseGameStore implements GameStore {
             eq(campaignMembers.guestId, guestId),
           ),
         ),
+      db
+        .select({
+          slug: adventurePacks.slug,
+          pack: adventurePacks.pack,
+        })
+        .from(adventurePacks)
+        .where(eq(adventurePacks.ownerGuestId, guestId)),
     ]);
 
     const snapByCampaign = new Map(snapshots.map((s) => [s.campaignId, s]));
     const roleByCampaign = new Map(
       memberRoles.map((m) => [m.campaignId, m.role]),
     );
+    const customPackBySlug = new Map(
+      customPackRows.map((p) => [p.slug, p.pack]),
+    );
 
     return {
       items: rows.map((c) => {
         const snap = snapByCampaign.get(c.id);
+        const pack =
+          getBuiltinAdventurePack(c.adventureId) ??
+          customPackBySlug.get(c.adventureId) ??
+          getFallbackAdventurePack();
+        const sceneId = snap?.sceneId ?? pack.initialSceneId;
+        const scene = pack.scenes[sceneId];
         return {
           campaignId: c.id,
           title: c.title,
           adventureId: c.adventureId,
           ruleset: c.ruleset,
-          sceneId: snap?.sceneId ?? "escena_01_orilla",
+          sceneId,
+          ...(scene
+            ? { sceneTitleEs: scene.shortLabelEs ?? scene.titleEs }
+            : {}),
           lastSeq: snap?.lastSeq ?? 0,
           role:
             c.ownerGuestId === guestId
@@ -675,10 +817,14 @@ export class SupabaseGameStore implements GameStore {
         .orderBy(desc(memoryFacts.importance), desc(memoryFacts.eventSeq)),
     ]);
 
+    const pack =
+      (await this.getAdventurePack(campaign.adventureId, guestId)) ??
+      getFallbackAdventurePack();
     const initialState = buildInitialFromRows({
       campaign,
       session: activeSession,
       characterRows: charRows,
+      adventurePack: pack,
     });
     const events = eventRows.map(mapEventRow);
     const state = reduceEvents(initialState, events);
@@ -689,6 +835,7 @@ export class SupabaseGameStore implements GameStore {
       sessionNumber: activeSession.sessionNumber,
       title: campaign.title,
       adventureId: campaign.adventureId,
+      adventurePack: pack,
       ruleset: campaign.ruleset,
       worldSummary: campaign.worldSummary,
       initialState,
@@ -774,7 +921,7 @@ export class SupabaseGameStore implements GameStore {
       return loaded;
     }
 
-    const introParts = buildSeededIntroParts(loaded.state);
+    const introParts = buildSeededIntroParts(loaded.state, loaded.adventurePack);
     const db = getDb();
     await db.insert(messages).values({
       campaignId: loaded.campaignId,
@@ -1159,6 +1306,7 @@ interface InMemoryCampaignRecord {
   sessionNumber: number;
   title: string;
   adventureId: string;
+  adventurePack: AdventurePack;
   ruleset: RulesetProfile;
   worldSummary: string;
   initialState: GameState;
@@ -1177,6 +1325,51 @@ interface InMemoryCampaignRecord {
  */
 export class InMemoryGameStore implements GameStore {
   private campaigns = new Map<string, InMemoryCampaignRecord>();
+  private packs = new Map<
+    string,
+    Map<string, { pack: AdventurePack; updatedAt: string }>
+  >();
+
+  async upsertAdventurePack(
+    guestId: string,
+    pack: AdventurePack,
+  ): Promise<AdventurePackSummary> {
+    let userPacks = this.packs.get(guestId);
+    if (!userPacks) {
+      userPacks = new Map();
+      this.packs.set(guestId, userPacks);
+    }
+    const updatedAt = new Date().toISOString();
+    userPacks.set(pack.id, { pack, updatedAt });
+    return summarizeAdventurePack(pack, { builtin: false, updatedAt });
+  }
+
+  async listAdventurePacks(guestId: string): Promise<AdventurePackSummary[]> {
+    const userPacks = this.packs.get(guestId);
+    const custom = userPacks
+      ? Array.from(userPacks.values())
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+          .map(({ pack, updatedAt }) =>
+            summarizeAdventurePack(pack, { builtin: false, updatedAt }),
+          )
+      : [];
+    return [...listBuiltinAdventurePackSummaries(), ...custom];
+  }
+
+  async getAdventurePack(
+    id: string,
+    guestId: string,
+  ): Promise<AdventurePack | null> {
+    const builtin = getBuiltinAdventurePack(id);
+    if (builtin) return builtin;
+    return this.packs.get(guestId)?.get(id)?.pack ?? null;
+  }
+
+  async deleteAdventurePack(slug: string, guestId: string): Promise<boolean> {
+    const userPacks = this.packs.get(guestId);
+    if (!userPacks) return false;
+    return userPacks.delete(slug);
+  }
 
   private hasAccess(record: InMemoryCampaignRecord, guestId: string): boolean {
     return (
@@ -1195,9 +1388,21 @@ export class InMemoryGameStore implements GameStore {
     const sessionId = randomUUID();
     const party = normalizePartyInput(input);
     const mode = input.mode === "hybrid" ? "hybrid" : "digital";
+    const requestedAdventureId = input.adventureId?.trim() || "aguas-quietas";
+    const resolvedPack = await this.getAdventurePack(
+      requestedAdventureId,
+      input.guestId,
+    );
+    if (!resolvedPack && input.adventureId?.trim()) {
+      throw new Error(`ADVENTURE_PACK_NOT_FOUND:${requestedAdventureId}`);
+    }
+    const pack = resolvedPack ?? getFallbackAdventurePack();
     const ruleset: RulesetProfile =
-      input.ruleset === "5e-full" ? "5e-full" : "5e-lite";
-    const title = input.title?.trim() || "Aguas Inquietas";
+      input.ruleset === "5e-full" || input.ruleset === "5e-lite"
+        ? input.ruleset
+        : pack.recommendedRuleset;
+    const title = input.title?.trim() || pack.titleEs;
+    const worldSummary = pack.worldSummaryEs;
 
     const initialState = buildInitialPartyCampaignState({
       campaignId,
@@ -1205,6 +1410,7 @@ export class InMemoryGameStore implements GameStore {
       party,
       mode,
       ruleset,
+      adventurePack: pack,
     });
     const nowIso = new Date().toISOString();
 
@@ -1215,9 +1421,10 @@ export class InMemoryGameStore implements GameStore {
       sessionId,
       sessionNumber: 1,
       title,
-      adventureId: "aguas-quietas",
+      adventureId: pack.id,
+      adventurePack: pack,
       ruleset,
-      worldSummary: DEFAULT_WORLD_SUMMARY,
+      worldSummary,
       initialState,
       state: initialState,
       logHeadSeq: 0,
@@ -1263,16 +1470,22 @@ export class InMemoryGameStore implements GameStore {
 
     const slice = accessible.slice(offset, offset + limit);
     return {
-      items: slice.map((c) => ({
-        campaignId: c.campaignId,
-        title: c.title,
-        adventureId: c.adventureId,
-        ruleset: c.ruleset,
-        sceneId: c.state.sceneId,
-        lastSeq: c.state.lastSeq,
-        role: this.getRole(c, guestId),
-        updatedAt: c.updatedAt,
-      })),
+      items: slice.map((c) => {
+        const scene = c.adventurePack.scenes[c.state.sceneId];
+        return {
+          campaignId: c.campaignId,
+          title: c.title,
+          adventureId: c.adventureId,
+          ruleset: c.ruleset,
+          sceneId: c.state.sceneId,
+          ...(scene
+            ? { sceneTitleEs: scene.shortLabelEs ?? scene.titleEs }
+            : {}),
+          lastSeq: c.state.lastSeq,
+          role: this.getRole(c, guestId),
+          updatedAt: c.updatedAt,
+        };
+      }),
       total: accessible.length,
       limit,
       offset,
@@ -1338,6 +1551,7 @@ export class InMemoryGameStore implements GameStore {
       sessionNumber: found.sessionNumber,
       title: found.title,
       adventureId: found.adventureId,
+      adventurePack: found.adventurePack,
       ruleset: found.ruleset,
       worldSummary: found.worldSummary,
       initialState: activeInitial,
@@ -1403,7 +1617,7 @@ export class InMemoryGameStore implements GameStore {
     }
 
     const loaded = (await this.loadCampaign(campaignId, guestId))!;
-    const introParts = buildSeededIntroParts(loaded.state);
+    const introParts = buildSeededIntroParts(loaded.state, loaded.adventurePack);
     found.messages.push({
       id: randomUUID(),
       role: "assistant",

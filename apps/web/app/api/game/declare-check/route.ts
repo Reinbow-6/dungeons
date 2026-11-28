@@ -225,6 +225,7 @@ export async function POST(req: Request) {
             dieResults,
             naturalRoll: invRes.naturalRoll,
             expectedModifier: invRes.modifier,
+            ...(invRes.breakdown ? { breakdown: invRes.breakdown } : {}),
             success,
             margin,
             unlockedClues: invRes.unlockedClues.map((c) => ({
@@ -337,6 +338,7 @@ export async function POST(req: Request) {
           dieResults: checkInput.dieResults,
           naturalRoll: result.naturalRoll,
           expectedModifier: result.expectedModifier,
+          ...(result.breakdown ? { breakdown: result.breakdown } : {}),
           success: result.success,
           margin: result.margin,
         },

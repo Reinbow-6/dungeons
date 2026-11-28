@@ -69,6 +69,7 @@ export function createResolveSaveTool(rt: DmToolRuntime) {
         rolls: res.rolls,
         naturalRoll: res.naturalRoll,
         modifier: res.modifier,
+        ...(res.breakdown ? { breakdown: res.breakdown } : {}),
         total: res.total,
         success: res.success,
         margin: res.margin,

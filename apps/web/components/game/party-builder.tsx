@@ -6,6 +6,7 @@ import * as React from "react";
 
 import { Button } from "@/components/ui/button";
 import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
+import type { AdventurePackSummary } from "@/lib/game/adventure-packs";
 import type {
   CharacterPresetId,
   CharacterPresetInfo,
@@ -20,6 +21,9 @@ export function PartyBuilder({
   initialParty,
   initialMode = "digital",
   initialRuleset = "5e-full",
+  adventurePacks,
+  selectedAdventureId,
+  onAdventureChange,
   busy = false,
   submitLabel = "Crear campaña",
   compact = false,
@@ -29,6 +33,9 @@ export function PartyBuilder({
   initialParty?: readonly PartyMemberSpec[];
   initialMode?: "digital" | "hybrid";
   initialRuleset?: RulesetProfile;
+  adventurePacks?: readonly AdventurePackSummary[];
+  selectedAdventureId?: string;
+  onAdventureChange?: (adventureId: string) => void;
   busy?: boolean;
   submitLabel?: string;
   compact?: boolean;
@@ -36,6 +43,7 @@ export function PartyBuilder({
     party: PartyMemberSpec[],
     mode: "digital" | "hybrid",
     ruleset: RulesetProfile,
+    adventureId?: string,
   ) => Promise<void>;
 }) {
   const { playSound } = useSensoryUI();
@@ -47,6 +55,10 @@ export function PartyBuilder({
   );
   const [mode, setMode] = React.useState<"digital" | "hybrid">(initialMode);
   const [ruleset, setRuleset] = React.useState<RulesetProfile>(initialRuleset);
+  const [localAdventureId, setLocalAdventureId] = React.useState<string>(
+    selectedAdventureId ?? adventurePacks?.[0]?.id ?? "aguas-quietas",
+  );
+  const effectiveAdventureId = selectedAdventureId ?? localAdventureId;
 
   function togglePreset(presetId: CharacterPresetId) {
     setSelectedParty((prev) => {
@@ -87,11 +99,41 @@ export function PartyBuilder({
         ...(playerName ? { playerName } : {}),
       };
     });
-    await onSubmit(cleaned, mode, ruleset);
+    await onSubmit(cleaned, mode, ruleset, effectiveAdventureId);
   }
 
   return (
     <div className="flex flex-col gap-2.5">
+      {adventurePacks && adventurePacks.length > 0 && (
+        <label className="flex flex-col gap-1 border-b border-border pb-2">
+          <span className="text-[11px] text-muted-foreground">
+            Módulo de aventura
+          </span>
+          <select
+            className="h-8 rounded-none border border-border bg-background px-2 text-xs"
+            value={effectiveAdventureId}
+            onChange={(e) => {
+              const nextId = e.target.value;
+              setLocalAdventureId(nextId);
+              onAdventureChange?.(nextId);
+              const found = adventurePacks.find((p) => p.id === nextId);
+              if (found) {
+                setRuleset(found.recommendedRuleset);
+              }
+            }}
+          >
+            {adventurePacks.map((pack) => (
+              <option key={pack.id} value={pack.id}>
+                {pack.titleEs}
+                {pack.recommendedLevels
+                  ? ` (Nv. ${pack.recommendedLevels.min}–${pack.recommendedLevels.max})`
+                  : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
       <div className="flex items-center justify-between gap-2 border-b border-border pb-1.5 text-[11px]">
         <span className="inline-flex items-center gap-1.5 font-medium text-foreground/90">
           <UsersIcon className="size-3.5 text-amber-500" />

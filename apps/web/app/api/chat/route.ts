@@ -342,6 +342,7 @@ export async function POST(req: Request) {
     campaignId,
     sessionId,
     guestId: guest.guestId,
+    adventurePack: loaded.adventurePack,
     getState: () => currentState,
     getInitialState: () => loaded.initialState,
     getEvents: () => currentEvents,
@@ -518,16 +519,21 @@ export async function POST(req: Request) {
         .map((p) => p.text)
         .join(" ")
     : "";
-  const promptLayers = buildDmPromptLayers(currentState, currentEvents, {
-    sessionNumber: loaded.sessionNumber,
-    worldSummary: loaded.worldSummary,
-    sessionSummaries: loaded.sessionSummaries,
-    memoryFacts: currentMemoryFacts,
-    olderTurnsDigest: compacted.olderTurnsDigest,
-    latestUserText,
-    recentConversationTexts,
-    activeActorId: requestedActiveActorId,
-  });
+  const promptLayers = buildDmPromptLayers(
+    currentState,
+    currentEvents,
+    {
+      sessionNumber: loaded.sessionNumber,
+      worldSummary: loaded.worldSummary,
+      sessionSummaries: loaded.sessionSummaries,
+      memoryFacts: currentMemoryFacts,
+      olderTurnsDigest: compacted.olderTurnsDigest,
+      latestUserText,
+      recentConversationTexts,
+      activeActorId: requestedActiveActorId,
+    },
+    loaded.adventurePack,
+  );
   const prunedRecentMessages = pruneHistoricalToolOutputs(expandedMessages);
   const wrappedModelMessages = wrapUserMessagesForModel(
     await convertToModelMessages(prunedRecentMessages),

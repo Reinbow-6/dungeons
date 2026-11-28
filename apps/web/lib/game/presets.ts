@@ -1,6 +1,7 @@
 import {
-  AGUAS_QUIETAS_SCENES,
+  AGUAS_QUIETAS_PACK,
   createDefaultAuthority,
+  type AdventurePack,
   type Character,
   type GameState,
   type RulesetProfile,
@@ -328,6 +329,7 @@ export function buildInitialPartyCampaignState(params: {
   party: readonly PartyMemberSpec[];
   mode: "digital" | "hybrid";
   ruleset: RulesetProfile;
+  adventurePack?: AdventurePack;
 }): GameState {
   const seen = new Set<CharacterPresetId>();
   const normalized: PartyMemberSpec[] = [];
@@ -350,16 +352,19 @@ export function buildInitialPartyCampaignState(params: {
     characters[ch.id] = ch;
   }
 
+  const pack = params.adventurePack ?? AGUAS_QUIETAS_PACK;
+
   return {
     campaignId: params.campaignId,
     sessionId: params.sessionId,
+    adventureId: pack.id,
     ruleset: params.ruleset,
-    sceneId: "escena_01_orilla",
+    sceneId: pack.initialSceneId,
     lastSeq: 0,
     characters,
     flags: {},
     unlockedClues: {},
-    scenes: AGUAS_QUIETAS_SCENES,
+    scenes: pack.scenes,
   };
 }
 
@@ -369,6 +374,7 @@ export function buildInitialCampaignState(params: {
   presetId: CharacterPresetId;
   mode: "digital" | "hybrid";
   ruleset: RulesetProfile;
+  adventurePack?: AdventurePack;
 }): GameState {
   return buildInitialPartyCampaignState({
     campaignId: params.campaignId,
@@ -376,5 +382,6 @@ export function buildInitialCampaignState(params: {
     party: [{ presetId: params.presetId }],
     mode: params.mode,
     ruleset: params.ruleset,
+    adventurePack: params.adventurePack,
   });
 }

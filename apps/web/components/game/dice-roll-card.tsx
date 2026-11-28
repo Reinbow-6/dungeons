@@ -2,6 +2,7 @@
 
 import { CheckCircle2Icon, DicesIcon, XCircleIcon } from "lucide-react";
 
+import type { ModifierBreakdownItem } from "@/agent/types";
 import { cn } from "@/lib/utils";
 import type { ChatMessagePart, DmToolPart } from "@/tools";
 
@@ -75,6 +76,7 @@ interface RollViewModel {
   rolls: number[];
   naturalRoll: number | null;
   modifier: number | null;
+  breakdown?: ModifierBreakdownItem[];
   total: number;
   success: boolean;
   statusLabel: string;
@@ -97,6 +99,7 @@ function buildRollViewModel(part: DiceRollToolPart): RollViewModel | null {
         rolls: out.rolls ?? (nat !== null ? [nat] : []),
         naturalRoll: nat,
         modifier: out.modifier ?? null,
+        breakdown: out.breakdown,
         total: out.total,
         success: Boolean(out.success),
         statusLabel: isCrit
@@ -120,6 +123,7 @@ function buildRollViewModel(part: DiceRollToolPart): RollViewModel | null {
         rolls: out.rolls ?? (nat !== null ? [nat] : []),
         naturalRoll: nat,
         modifier: out.modifier ?? null,
+        breakdown: out.breakdown,
         total: out.total,
         success: Boolean(out.success),
         statusLabel: nat === 20 ? "¡Crítico!" : out.success ? "Superada" : "Fallida",
@@ -140,6 +144,7 @@ function buildRollViewModel(part: DiceRollToolPart): RollViewModel | null {
         rolls: out.dieResults,
         naturalRoll: out.naturalRoll,
         modifier: out.expectedModifier,
+        breakdown: out.breakdown,
         total: out.declaredTotal,
         success: out.success,
         statusLabel: isInvestigate
@@ -169,6 +174,7 @@ function buildRollViewModel(part: DiceRollToolPart): RollViewModel | null {
         rolls: out.naturalRoll !== undefined ? [out.naturalRoll] : [],
         naturalRoll: out.naturalRoll ?? null,
         modifier: out.modifier ?? null,
+        breakdown: out.breakdown,
         total: out.total,
         success: clueCount > 0,
         statusLabel:
@@ -209,11 +215,7 @@ export function DiceRollCard({ part }: { part: DiceRollToolPart }) {
   const isCritical = vm.naturalRoll === 20;
   const isFumble = vm.naturalRoll === 1;
   const formulaLeft =
-    vm.rolls.length > 1
-      ? `2d20 [${vm.rolls.join(", ")}]`
-      : vm.naturalRoll !== null
-        ? `d20: ${vm.naturalRoll}`
-        : `Total`;
+    vm.naturalRoll !== null ? `d20: ${vm.naturalRoll}` : `Total`;
 
   return (
     <div className="my-1.5 flex justify-center">
@@ -249,6 +251,11 @@ export function DiceRollCard({ part }: { part: DiceRollToolPart }) {
                   isCritical && "font-semibold text-success",
                   isFumble && "font-semibold text-destructive",
                 )}
+                title={
+                  vm.rolls.length > 1
+                    ? `Dados lanzados: [${vm.rolls.join(", ")}]`
+                    : undefined
+                }
               >
                 {formulaLeft}
               </span>
@@ -280,6 +287,32 @@ export function DiceRollCard({ part }: { part: DiceRollToolPart }) {
             )}
           </div>
         </div>
+
+        {vm.breakdown && vm.breakdown.length > 0 && (
+          <div className="flex flex-wrap gap-1 border-t border-border/70 bg-secondary/20 px-3.5 py-1.5 font-mono text-[10px] tabular-nums">
+            {vm.breakdown.map((item, idx) => (
+              <span
+                key={`${item.slug}-${idx}`}
+                className={cn(
+                  "rounded-none border px-1.5 py-0.5",
+                  item.ignored
+                    ? "border-border/60 bg-muted/40 text-muted-foreground line-through opacity-60"
+                    : item.value >= 0
+                      ? "border-border bg-background/80 text-foreground"
+                      : "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+                )}
+                title={
+                  item.ignored
+                    ? `Anulado por apilamiento (${item.type})`
+                    : `${item.labelEs} (${item.type})`
+                }
+              >
+                {item.labelEs} {formatMod(item.value)}
+                {item.diceExpression ? ` (${item.diceExpression})` : ""}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

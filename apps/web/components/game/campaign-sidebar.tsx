@@ -7,12 +7,14 @@ import {
   ScrollTextIcon,
   SwordIcon,
   Trash2Icon,
+  UploadIcon,
 } from "lucide-react";
 import * as React from "react";
 
 import { PartyBuilder } from "@/components/game/party-builder";
 import { Button } from "@/components/ui/button";
 import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
+import type { AdventurePackSummary } from "@/lib/game/adventure-packs";
 import type { CharacterPresetInfo, PartyMemberSpec } from "@/lib/game/presets";
 import type { CampaignSummary } from "@/lib/game/store";
 import { cn } from "@/lib/utils";
@@ -48,6 +50,11 @@ export function CampaignSidebar({
   campaigns,
   loadingCampaigns = false,
   presets,
+  adventurePacks = [],
+  selectedAdventureId,
+  onSelectAdventure,
+  onImportPack,
+  onDeletePack,
   onSelectCampaign,
   onNewCampaign,
   onDeleteCampaign,
@@ -59,11 +66,19 @@ export function CampaignSidebar({
   campaigns: readonly CampaignSummary[];
   loadingCampaigns?: boolean;
   presets: readonly CharacterPresetInfo[];
+  adventurePacks?: readonly AdventurePackSummary[];
+  selectedAdventureId?: string;
+  onSelectAdventure?: (adventureId: string) => void;
+  onImportPack?: (
+    rawPack: unknown,
+  ) => Promise<{ ok: boolean; errorEs?: string }>;
+  onDeletePack?: (slug: string) => Promise<boolean>;
   onSelectCampaign: (campaignId: string) => Promise<void>;
   onNewCampaign: (
     party: PartyMemberSpec[],
     mode: "digital" | "hybrid",
     ruleset: RulesetProfile,
+    adventureId?: string,
   ) => Promise<string | null>;
   onDeleteCampaign: (campaignId: string) => Promise<void>;
   onDeleteAllCampaigns: () => Promise<void>;
@@ -78,19 +93,87 @@ export function CampaignSidebar({
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [confirmDeleteAll, setConfirmDeleteAll] = React.useState(false);
   const [deletingAll, setDeletingAll] = React.useState(false);
+  const [importingPack, setImportingPack] = React.useState(false);
+  const [importFeedback, setImportFeedback] = React.useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
+  const [confirmDeletePackSlug, setConfirmDeletePackSlug] = React.useState<
+    string | null
+  >(null);
+  const [deletingPackSlug, setDeletingPackSlug] = React.useState<string | null>(
+    null,
+  );
+  const packFileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   async function handleCreate(
     party: PartyMemberSpec[],
     mode: "digital" | "hybrid",
     ruleset: RulesetProfile,
+    adventureId?: string,
   ) {
     setCreating(true);
     try {
-      await onNewCampaign(party, mode, ruleset);
+      await onNewCampaign(party, mode, ruleset, adventureId);
       playSound("notification.success");
       setShowNewForm(false);
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !onImportPack || importingPack) return;
+
+    setImportingPack(true);
+    setImportFeedback(null);
+    try {
+      const text = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        playSound("notification.warning");
+        setImportFeedback({
+          ok: false,
+          text: "El archivo no es un JSON válido.",
+        });
+        return;
+      }
+
+      const result = await onImportPack(parsed);
+      if (result.ok) {
+        playSound("notification.success");
+        setImportFeedback({
+          ok: true,
+          text: `Módulo "${file.name}" importado.`,
+        });
+        setShowNewForm(true);
+      } else {
+        playSound("notification.warning");
+        setImportFeedback({
+          ok: false,
+          text: result.errorEs ?? "El pack no pasó la validación.",
+        });
+      }
+    } finally {
+      setImportingPack(false);
+    }
+  }
+
+  async function handleConfirmDeletePack(slug: string) {
+    if (!onDeletePack || deletingPackSlug) return;
+    setDeletingPackSlug(slug);
+    try {
+      const ok = await onDeletePack(slug);
+      if (ok) {
+        playSound("interaction.tap");
+        setConfirmDeletePackSlug(null);
+      }
+    } finally {
+      setDeletingPackSlug(null);
     }
   }
 
@@ -205,11 +288,145 @@ export function CampaignSidebar({
             <div className="max-h-[54vh] overflow-y-auto rounded-none border-b border-sidebar-border bg-card/85 p-2.5">
               <PartyBuilder
                 presets={presets}
+                adventurePacks={adventurePacks}
+                selectedAdventureId={selectedAdventureId}
+                onAdventureChange={onSelectAdventure}
                 busy={creating}
                 compact
                 submitLabel="Crear campaña"
                 onSubmit={handleCreate}
               />
+            </div>
+          )}
+
+          {onImportPack && (
+            <div className="border-b border-sidebar-border px-2.5 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  Módulos (.json)
+                </span>
+                <input
+                  ref={packFileInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={(e) => void handleFileChange(e)}
+                />
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={importingPack}
+                  onClick={() => {
+                    playSound("interaction.subtle");
+                    packFileInputRef.current?.click();
+                  }}
+                  className="h-6 gap-1 rounded-none px-2 text-[10.5px]"
+                >
+                  <UploadIcon className="size-3" />
+                  <span>{importingPack ? "Importando…" : "Importar JSON"}</span>
+                </Button>
+              </div>
+
+              {importFeedback && (
+                <p
+                  className={cn(
+                    "mt-1.5 rounded-none border px-2 py-1 text-[10.5px]",
+                    importFeedback.ok
+                      ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      : "border-destructive/35 bg-destructive/10 text-destructive",
+                  )}
+                >
+                  {importFeedback.text}
+                </p>
+              )}
+
+              {adventurePacks.some((p) => !p.builtin) && (
+                <ul className="mt-2 flex flex-col divide-y divide-sidebar-border/60 border border-sidebar-border/70">
+                  {adventurePacks
+                    .filter((p) => !p.builtin)
+                    .map((pack) => {
+                      const isConfirmingPack = confirmDeletePackSlug === pack.id;
+                      const isDeletingPack = deletingPackSlug === pack.id;
+                      const isSelected = selectedAdventureId === pack.id;
+
+                      if (isConfirmingPack) {
+                        return (
+                          <li
+                            key={pack.id}
+                            className="flex items-center justify-between gap-1.5 bg-destructive/10 px-2 py-1.5 text-[10.5px]"
+                          >
+                            <span className="truncate font-medium text-destructive">
+                              ¿Borrar {pack.titleEs}?
+                            </span>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <button
+                                type="button"
+                                disabled={isDeletingPack}
+                                onClick={() =>
+                                  void handleConfirmDeletePack(pack.id)
+                                }
+                                className="rounded-none border border-destructive/45 bg-destructive/15 px-1.5 py-0.5 font-semibold text-destructive hover:bg-destructive/25 disabled:opacity-50"
+                              >
+                                {isDeletingPack ? "…" : "Sí"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isDeletingPack}
+                                onClick={() => setConfirmDeletePackSlug(null)}
+                                className="rounded-none border border-border bg-background px-1.5 py-0.5 font-medium text-foreground hover:bg-muted"
+                              >
+                                No
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      }
+
+                      return (
+                        <li
+                          key={pack.id}
+                          className={cn(
+                            "flex items-center justify-between gap-1 px-2 py-1 text-[10.5px]",
+                            isSelected ? "bg-primary/10" : "bg-background/40",
+                          )}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              playSound("interaction.tap");
+                              onSelectAdventure?.(pack.id);
+                              setShowNewForm(true);
+                            }}
+                            className="min-w-0 flex-1 text-left"
+                            title={`${pack.titleEs} · ${pack.sceneCount} escenas · ${pack.creatureCount} criaturas`}
+                          >
+                            <span className="block truncate font-medium text-foreground">
+                              {pack.titleEs}
+                            </span>
+                            <span className="block text-[9.5px] text-muted-foreground">
+                              {pack.sceneCount} esc. · {pack.creatureCount} criat.
+                            </span>
+                          </button>
+                          {onDeletePack && (
+                            <button
+                              type="button"
+                              aria-label={`Borrar módulo ${pack.titleEs}`}
+                              title="Borrar módulo"
+                              onClick={() => {
+                                playSound("interaction.subtle");
+                                setConfirmDeletePackSlug(pack.id);
+                              }}
+                              className="rounded-none p-1 text-muted-foreground hover:text-destructive"
+                            >
+                              <Trash2Icon className="size-3" />
+                            </button>
+                          )}
+                        </li>
+                      );
+                    })}
+                </ul>
+              )}
             </div>
           )}
 
@@ -276,7 +493,9 @@ export function CampaignSidebar({
                 campaigns.map((camp) => {
                   const isActive = camp.campaignId === activeCampaignId;
                   const sceneShort =
-                    SCENE_SHORT_LABELS[camp.sceneId] ?? camp.sceneId;
+                    camp.sceneTitleEs ??
+                    SCENE_SHORT_LABELS[camp.sceneId] ??
+                    camp.sceneId;
                   const isConfirming = confirmDeleteId === camp.campaignId;
                   const isDeleting = deletingId === camp.campaignId;
                   const isOwner = camp.role === "owner";

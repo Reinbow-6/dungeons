@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { doubleDiceExpression } from './combat.js';
 import {
+  buildRollTags,
+  buildSpellActiveEffect,
+  collectConcentrationPurge,
+  getEffectiveAc,
+  resolveModifiers,
+} from './effects.js';
+import {
   applyDelta,
   type GameEvent,
   type GameStateDelta,
@@ -28,6 +35,7 @@ import {
   AbilitySchema,
   VisibilitySchema,
   type Ability,
+  type ActiveEffect,
   type Character,
   type CombatState,
   type Condition5e,
@@ -673,7 +681,19 @@ export function resolveCastSpell(
       ? activeCombat.combatants[targetCombatantIdx]
       : undefined;
   const targetName = targetChar?.name ?? targetCombatant?.name;
-  const targetAc = targetChar?.ac ?? targetCombatant?.ac ?? 12;
+  const targetActiveEffects =
+    targetChar?.activeEffects ?? targetCombatant?.activeEffects ?? [];
+  const targetBaseAc = targetChar?.ac ?? targetCombatant?.ac ?? 12;
+  const effectiveTargetAc = getEffectiveAc(
+    { ac: targetBaseAc, activeEffects: targetActiveEffects },
+    buildRollTags({
+      kind: 'ac',
+      attackKind: spec.attackType,
+      conditions: targetChar?.conditions ?? targetCombatant?.conditions ?? [],
+      inCombat: Boolean(activeCombat),
+      sceneId: input.sceneId,
+    }),
+  ).effectiveAc;
 
   const extraUpcastLevels =
     spec.level >= 1 ? Math.max(0, slotLevelUsed - spec.level) : 0;
@@ -710,6 +730,7 @@ export function resolveCastSpell(
   let healingApplied: number | undefined;
   let targetConditionApplied: Condition5e | undefined;
   let dieResults: number[] | null = null;
+  const consumedAttackEffects: Array<{ targetId: string; effectId: string }> = [];
 
   const computeEffectiveDice = (): string | undefined => {
     if (!spec.baseDice) return undefined;
@@ -727,27 +748,74 @@ export function resolveCastSpell(
     const targetEffects = targetChar
       ? getConditionPenalty(targetChar, state.ruleset)
       : getConditionsEffects(targetCombatant?.conditions ?? [], 0);
+    const spellAttackTags = buildRollTags({
+      kind: 'attack',
+      attackKind: spec.attackType,
+      conditions: caster.conditions,
+      inCombat: Boolean(activeCombat),
+      sceneId: input.sceneId,
+    });
+    const spellAttackRes = resolveModifiers({
+      baseModifiers: [
+        {
+          slug: 'spell:attack',
+          labelEs: 'Atq. conjuro',
+          target: 'attack',
+          value: stats.spellAttackBonus,
+          type: 'untyped',
+        },
+        ...(casterEffects.effectiveExhaustionLevel > 0
+          ? [
+              {
+                slug: 'exhaustion',
+                labelEs: `Agotamiento Nv.${casterEffects.effectiveExhaustionLevel}`,
+                target: 'attack' as const,
+                value: casterEffects.d20Modifier,
+                type: 'status' as const,
+              },
+            ]
+          : []),
+      ],
+      activeEffects: caster.activeEffects,
+      opponentEffects: targetActiveEffects,
+      target: 'attack',
+      tags: spellAttackTags,
+      rng: ctx.rng,
+    });
+    for (const effId of spellAttackRes.consumedEffectIds) {
+      if ((caster.activeEffects ?? []).some((e) => e.id === effId)) {
+        consumedAttackEffects.push({ targetId: caster.id, effectId: effId });
+      } else if (targetActiveEffects.some((e) => e.id === effId)) {
+        consumedAttackEffects.push({
+          targetId: targetChar?.id ?? targetCombatant?.id ?? resolvedTargetId!,
+          effectId: effId,
+        });
+      }
+    }
+
     const effectiveMode = resolveRollMode({
       requested: input.mode ?? 'normal',
       hasAdvantage:
         casterEffects.grantsAdvantageOnAttacks ||
-        targetEffects.grantsAdvantageToAttackers,
+        targetEffects.grantsAdvantageToAttackers ||
+        spellAttackRes.grantsAdvantage,
       hasDisadvantage:
         casterEffects.imposesDisadvantageOnAttacks ||
-        targetEffects.imposesDisadvantageToAttackers,
+        targetEffects.imposesDisadvantageToAttackers ||
+        spellAttackRes.imposesDisadvantage,
     });
     const roll = rollD20(ctx.rng, effectiveMode);
     dieResults = roll.rolls;
     const isCritical = roll.chosen === 20;
     const isAutoMiss = roll.chosen === 1;
-    const total = roll.chosen + stats.spellAttackBonus + casterEffects.d20Modifier;
-    const hit = !isAutoMiss && (isCritical || total >= targetAc);
+    const total = roll.chosen + spellAttackRes.totalMod;
+    const hit = !isAutoMiss && (isCritical || total >= effectiveTargetAc);
 
     attackRollSummary = {
       rolls: roll.rolls,
       naturalRoll: roll.chosen,
       total,
-      targetAc,
+      targetAc: effectiveTargetAc,
       hit,
       isCritical,
       effectiveMode,
@@ -798,16 +866,40 @@ export function resolveCastSpell(
     const targetEffects = targetChar
       ? getConditionPenalty(targetChar, state.ruleset)
       : getConditionsEffects(targetCombatant?.conditions ?? [], 0);
-    const saveMod = targetChar
-      ? getSavingThrowModifier(targetChar, saveAbility, state.ruleset).totalMod
-      : 0;
+    const targetSaveTags = buildRollTags({
+      kind: 'save',
+      ability: saveAbility,
+      conditions: targetChar?.conditions ?? targetCombatant?.conditions ?? [],
+      inCombat: Boolean(activeCombat),
+      sceneId: input.sceneId,
+    });
+    const targetSaveRes = targetChar
+      ? getSavingThrowModifier(targetChar, saveAbility, state.ruleset, {
+          rng: ctx.rng,
+          tags: targetSaveTags,
+        })
+      : resolveModifiers({
+          activeEffects: targetCombatant?.activeEffects,
+          target: 'save',
+          tags: targetSaveTags,
+          rng: ctx.rng,
+        });
+    const saveMod = targetSaveRes.totalMod;
+    for (const effId of targetSaveRes.consumedEffectIds) {
+      consumedAttackEffects.push({
+        targetId: targetChar?.id ?? targetCombatant?.id ?? resolvedTargetId!,
+        effectId: effId,
+      });
+    }
     const autoFail =
       targetEffects.autoFailStrDexSaves &&
       (saveAbility === 'str' || saveAbility === 'dex');
     const effectiveSaveMode = resolveRollMode({
       requested: input.mode ?? 'normal',
+      hasAdvantage: targetSaveRes.grantsAdvantage,
       hasDisadvantage:
-        saveAbility === 'dex' && targetEffects.disadvantageOnDexSaves,
+        targetSaveRes.imposesDisadvantage ||
+        (saveAbility === 'dex' && targetEffects.disadvantageOnDexSaves),
     });
     const roll = autoFail
       ? { rolls: [1], chosen: 1 }
@@ -876,7 +968,22 @@ export function resolveCastSpell(
     ];
   }
 
+  const effectsRemovedAcc: Array<{ targetId: string; effectId: string }> = [
+    ...consumedAttackEffects,
+  ];
+  const conditionsRemovedAcc: Array<{ actorId: string; condition: Condition5e }> =
+    [];
+
   if (spec.concentration && caster.concentratingOn !== spec.nameEs) {
+    if (caster.concentratingOn) {
+      const prevPurge = collectConcentrationPurge(
+        state,
+        caster.id,
+        caster.concentratingOn,
+      );
+      effectsRemovedAcc.push(...prevPurge.effectsRemoved);
+      conditionsRemovedAcc.push(...prevPurge.conditionsRemoved);
+    }
     stateDelta.concentrationChanges = [
       {
         actorId: caster.id,
@@ -884,6 +991,30 @@ export function resolveCastSpell(
         after: spec.nameEs,
       },
     ];
+  }
+
+  // Attach tactical ActiveEffect when spell hits / target fails save / utility buff
+  const shouldApplySpellEffect =
+    (spec.kind === 'utility' && Boolean(targetChar || targetCombatant || !resolvedTargetId)) ||
+    (spec.kind === 'attack' && Boolean(attackRollSummary?.hit)) ||
+    (spec.kind === 'save' && Boolean(savingThrowSummary && !savingThrowSummary.saved));
+  const effectsAddedAcc: Array<{ targetId: string; effect: ActiveEffect }> = [];
+
+  if (shouldApplySpellEffect) {
+    const effectTargetId =
+      targetChar?.id ?? targetCombatant?.id ?? resolvedTargetId ?? caster.id;
+    const builtEffect = buildSpellActiveEffect({
+      spellId: spec.id,
+      effectId: ctx.createId(),
+      sourceActorId: caster.id,
+      targetNameEs: targetName ?? caster.name,
+    });
+    if (builtEffect) {
+      effectsAddedAcc.push({
+        targetId: effectTargetId,
+        effect: builtEffect,
+      });
+    }
   }
 
   let targetHpBefore: number | undefined;
@@ -982,6 +1113,13 @@ export function resolveCastSpell(
         !targetConcentrationCheck.maintained &&
         targetChar.concentratingOn
       ) {
+        const tgtPurge = collectConcentrationPurge(
+          state,
+          targetChar.id,
+          targetChar.concentratingOn,
+        );
+        effectsRemovedAcc.push(...tgtPurge.effectsRemoved);
+        conditionsRemovedAcc.push(...tgtPurge.conditionsRemoved);
         stateDelta.concentrationChanges = [
           ...(stateDelta.concentrationChanges ?? []),
           {
@@ -1075,6 +1213,19 @@ export function resolveCastSpell(
       updatedCombatant.conditions = Array.from(conds);
       stateDelta.combat = nextCombat;
     }
+  }
+
+  if (effectsAddedAcc.length > 0) {
+    stateDelta.effectsAdded = effectsAddedAcc;
+  }
+  if (effectsRemovedAcc.length > 0) {
+    stateDelta.effectsRemoved = effectsRemovedAcc;
+  }
+  if (conditionsRemovedAcc.length > 0) {
+    stateDelta.conditionsRemoved = [
+      ...(stateDelta.conditionsRemoved ?? []),
+      ...conditionsRemovedAcc,
+    ];
   }
 
   const nextSeq = state.lastSeq + 1;
