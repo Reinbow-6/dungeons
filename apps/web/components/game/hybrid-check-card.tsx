@@ -16,6 +16,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider"
+import { cn } from "@/lib/utils"
 
 export interface HybridCheckCardProps {
   campaignId: string
@@ -402,6 +403,32 @@ export function HybridCheckCard({
                 </p>
               </div>
             </div>
+            {verifiedCheck.result.breakdown &&
+              verifiedCheck.result.breakdown.length > 0 && (
+                <div className="flex flex-wrap gap-1 border border-border bg-muted/15 px-2.5 py-1.5 font-mono text-[10px] tabular-nums">
+                  {verifiedCheck.result.breakdown.map((item, idx) => (
+                    <span
+                      key={`${item.slug}-${idx}`}
+                      className={cn(
+                        "rounded-none border px-1.5 py-0.5",
+                        item.ignored
+                          ? "border-border/60 bg-muted/40 text-muted-foreground line-through opacity-60"
+                          : item.value >= 0
+                            ? "border-border bg-background/80 text-foreground"
+                            : "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+                      )}
+                      title={
+                        item.ignored
+                          ? `Anulado por apilamiento (${item.type})`
+                          : `${item.labelEs} (${item.type})`
+                      }
+                    >
+                      {item.labelEs} {item.value >= 0 ? `+${item.value}` : item.value}
+                      {item.diceExpression ? ` (${item.diceExpression})` : ""}
+                    </span>
+                  ))}
+                </div>
+              )}
           </div>
 
           {needsTwoDice && (

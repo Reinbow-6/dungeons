@@ -652,6 +652,7 @@ export function declareCheck(
     sceneId: input.sceneId,
   });
   const modBreakdown = getCheckModifier(actor, input.skill, state.ruleset, {
+    ...(input.declaredTotal === undefined ? { rng: ctx.rng } : {}),
     tags: declareTags,
   });
   const effectiveMode = combineRollMode(

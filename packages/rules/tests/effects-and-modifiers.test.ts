@@ -221,6 +221,26 @@ describe('SourcedModifiers, declarative predicates, stacking & ActiveEffects lif
     expect(decRes.nextState.characters.pc_kael?.activeEffects ?? []).toHaveLength(0);
     expect(decRes.nextState.characters.pc_seraphina?.concentratingOn).toBeNull();
 
+    // Hybrid declareCheck without declaredTotal (UI flow) rolls 1d4=3 automatically and adds it to total/expectedModifier
+    const decAutoRes = declareCheck(
+      paperState,
+      {
+        sceneId: paperState.sceneId,
+        actorId: 'pc_kael',
+        skill: 'investigation',
+        dc: 15,
+        dieResults: [12],
+      },
+      makeFixedCtx([3]),
+    );
+    expect(decAutoRes.ok).toBe(true);
+    if (!decAutoRes.ok) return;
+    expect(decAutoRes.expectedModifier).toBe(7);
+    expect(decAutoRes.total).toBe(19);
+    expect(decAutoRes.breakdown?.some((b) => b.slug === 'spell:guidance:check' && b.value === 3)).toBe(true);
+    expect(decAutoRes.nextState.characters.pc_kael?.activeEffects ?? []).toHaveLength(0);
+    expect(decAutoRes.nextState.characters.pc_seraphina?.concentratingOn).toBeNull();
+
     // Engine-rolled resolveCheck rolls d20=10 and guidance +1d4=3 -> +4 base +3 guidance = +7 -> total 17
     const checkRes = resolveCheck(
       castRes.nextState,
