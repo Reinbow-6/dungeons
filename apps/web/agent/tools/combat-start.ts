@@ -133,6 +133,9 @@ export function createCombatStartTool(rt: DmToolRuntime) {
             attacks,
             vulnerabilities: [...statBlock.vulnerabilities],
             immunities: [...statBlock.immunities],
+            ...(statBlock.resistances && statBlock.resistances.length > 0
+              ? { resistances: [...statBlock.resistances] }
+              : {}),
           });
         }
       }

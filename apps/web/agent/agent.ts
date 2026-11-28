@@ -78,11 +78,20 @@ const KEY_SKILLS: Skill[] = [
 const FALLBACK_INSTRUCTIONS =
   "Sos el Dungeon Master de una partida D&D 5e (SRD 5.2.1) en español. El motor decide mediante tools; vos narrás el mundo y respetás el modo híbrido cuando rollAuthority es player-declared.";
 
+let cachedInstructionsMarkdown: string | null = null;
+
 function loadInstructionsMarkdown(): string {
+  if (
+    cachedInstructionsMarkdown !== null &&
+    process.env.NODE_ENV !== "development"
+  ) {
+    return cachedInstructionsMarkdown;
+  }
   try {
     const filePath = path.join(process.cwd(), "agent", "instructions.md");
     const content = readFileSync(filePath, "utf8").trim();
     if (content.length > 0) {
+      cachedInstructionsMarkdown = content;
       return content;
     }
   } catch {

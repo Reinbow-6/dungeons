@@ -1,9 +1,7 @@
 import type { DmChatMessagePart, DmChatUIMessage } from "@/agent/types";
 import { askUser } from "./ask_user";
-import { githubRepo } from "./github_repo";
 
 const baseTools = {
-  github_repo: githubRepo,
   ask_user: askUser,
 };
 
@@ -20,17 +18,9 @@ export type ReasoningMessagePart = Extract<
   { type: "reasoning" }
 >;
 export type SourceUrlPart = Extract<ChatMessagePart, { type: "source-url" }>;
-export type GithubRepoToolPart = Extract<
-  ChatMessagePart,
-  { type: "tool-github_repo" }
->;
 export type AskUserToolPart = Extract<
   ChatMessagePart,
   { type: "tool-ask_user" }
->;
-export type WebSearchToolPart = Extract<
-  ChatMessagePart,
-  { type: "tool-web_search" }
 >;
 
 export type SuggestActionsToolPart = Extract<

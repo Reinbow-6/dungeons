@@ -32,6 +32,18 @@ function resolveSafeNextPath(rawNext: string | null, origin: string): string {
 }
 
 function resolveRedirectOrigin(request: Request, urlOrigin: string): string {
+  const configuredSiteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (configuredSiteUrl) {
+    try {
+      const parsed = new URL(configuredSiteUrl);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        return parsed.origin;
+      }
+    } catch {
+      // Ignore invalid NEXT_PUBLIC_SITE_URL
+    }
+  }
+
   if (process.env.NODE_ENV === "development") {
     return urlOrigin;
   }
@@ -46,8 +58,15 @@ function resolveRedirectOrigin(request: Request, urlOrigin: string): string {
 
   const forwardedProto =
     request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || "https";
+  if (forwardedProto !== "http" && forwardedProto !== "https") {
+    return urlOrigin;
+  }
 
   try {
+    const requestHost = new URL(urlOrigin).host.toLowerCase();
+    if (forwardedHost.toLowerCase() !== requestHost) {
+      return urlOrigin;
+    }
     return new URL(`${forwardedProto}://${forwardedHost}`).origin;
   } catch {
     return urlOrigin;

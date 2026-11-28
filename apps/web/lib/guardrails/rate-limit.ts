@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { lt, sql } from "drizzle-orm";
 
 import { getDb, isDbConfigured } from "@/lib/db/client";
 import { rateLimitBuckets } from "@/lib/db/schema";
@@ -171,6 +171,12 @@ export async function checkRateLimitPersistent(
   }
 
   const windowStart = Math.floor(now / config.windowMs);
+  if (Math.random() < 0.02) {
+    void getDb()
+      .delete(rateLimitBuckets)
+      .where(lt(rateLimitBuckets.windowStart, windowStart - 5))
+      .catch(() => {});
+  }
   const [guestCount, ipCount] = await Promise.all([
     incrementBucket(`guest:${guestId}`, windowStart),
     incrementBucket(`ip:${ip}`, windowStart),

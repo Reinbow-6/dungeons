@@ -7,6 +7,7 @@ import {
   createDefaultAuthority,
   declareCheck,
   endCombat,
+  evaluateConcentrationCheck,
   evaluatePredicate,
   getEffectiveAc,
   getEffectiveSpeed,
@@ -577,5 +578,103 @@ describe('SourcedModifiers, declarative predicates, stacking & ActiveEffects lif
     if (!rested.ok) return;
     const afterIds = (rested.nextState.characters.pc_kael?.activeEffects ?? []).map((e) => e.id);
     expect(afterIds).toEqual(['eff_permanent_boon']);
+  });
+
+  it('applies Bless dice and save advantage in concentration checks, and grantsAdvantage in declareCheck', () => {
+    const base = makePartyState();
+    const blessEff = buildSpellActiveEffect({
+      spellId: 'bless',
+      effectId: 'eff_conc_bless',
+      sourceActorId: 'pc_seraphina',
+    })!;
+    const advSaveEff: ActiveEffect = {
+      id: 'eff_adv_save',
+      slug: 'boon:focus',
+      labelEs: 'Mente Férrea',
+      sourceActorId: 'pc_seraphina',
+      durationRounds: null,
+      remainingRounds: null,
+      expiryTiming: 'end_of_owner_turn',
+      expiresOnCombatEnd: false,
+      expiresOnRest: 'long',
+      modifiers: [
+        {
+          slug: 'boon:focus:save',
+          labelEs: 'Mente Férrea',
+          target: 'save',
+          type: 'circumstance',
+          grantsAdvantage: true,
+        },
+        {
+          slug: 'boon:focus:check',
+          labelEs: 'Mente Férrea',
+          target: 'check',
+          type: 'circumstance',
+          grantsAdvantage: true,
+        },
+      ],
+    };
+
+    const charWithBuffs: Character = {
+      ...base.characters.pc_seraphina!,
+      concentratingOn: 'Bendición',
+      activeEffects: [blessEff, advSaveEff],
+    };
+
+    // CON save mod is +2. Bless rolls 3 -> +5. Advantage d20 rolls [4, 12] -> picks 12. Total 17 >= DC 10.
+    const conc = evaluateConcentrationCheck({
+      character: charWithBuffs,
+      damageApplied: 10,
+      hpAfter: 12,
+      ruleset: '5e-full',
+      rng: makeFixedRng([3, 4, 12]),
+    });
+    expect(conc).toEqual({
+      spell: 'Bendición',
+      dc: 10,
+      naturalRoll: 12,
+      modifier: 5,
+      total: 17,
+      maintained: true,
+    });
+
+    // Hybrid declareCheck respects grantsAdvantage from activeEffects (requires 2 d20s even with mode: 'normal')
+    const hybridState: GameState = {
+      ...base,
+      characters: {
+        ...base.characters,
+        pc_seraphina: {
+          ...charWithBuffs,
+          rollAuthority: 'player-declared',
+        },
+      },
+    };
+    const oneDie = declareCheck(
+      hybridState,
+      {
+        sceneId: hybridState.sceneId,
+        actorId: 'pc_seraphina',
+        skill: 'insight',
+        dc: 12,
+        dieResults: [15],
+      },
+      makeFixedCtx([]),
+    );
+    expect(oneDie.ok).toBe(false);
+    if (!oneDie.ok) expect(oneDie.code).toBe('IMPOSSIBLE_DIE');
+
+    const twoDice = declareCheck(
+      hybridState,
+      {
+        sceneId: hybridState.sceneId,
+        actorId: 'pc_seraphina',
+        skill: 'insight',
+        dc: 12,
+        dieResults: [6, 15],
+      },
+      makeFixedCtx([]),
+    );
+    expect(twoDice.ok).toBe(true);
+    if (twoDice.ok) expect(twoDice.naturalRoll).toBe(15);
   });
 });

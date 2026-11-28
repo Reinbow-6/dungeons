@@ -609,15 +609,6 @@ export type DmToolSetTypes = {
     };
     output: Array<{ question: string; answer: string }>;
   };
-  // Retained for backward compatibility with template trace components
-  github_repo: {
-    input: { owner: string; repo: string };
-    output: { error: string } | { stars: number; name?: string; description?: string };
-  };
-  web_search: {
-    input: { query?: string };
-    output: unknown;
-  };
 };
 
 export interface ContextUsageMetadata {

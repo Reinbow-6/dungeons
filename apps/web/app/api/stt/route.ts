@@ -1,14 +1,21 @@
 import {
+  STT_MAX_AUDIO_BYTES,
+  STT_MIN_AUDIO_BYTES,
   STT_MODEL_ID,
   STT_PROVIDER,
   SttError,
   transcribeAudioWithGroq,
 } from "@/lib/ai/stt";
 import { resolveGuestSessionFromRequest } from "@/lib/auth/guest-session";
+import { resolveRequestAccess } from "@/lib/auth/whitelist";
 import {
   checkRateLimitPersistent,
   extractClientIp,
 } from "@/lib/guardrails/rate-limit";
+import {
+  checkSpendCapPersistent,
+  recordSpendUsagePersistent,
+} from "@/lib/guardrails/spend-cap";
 import { createCorrelationId, serverErrorResponse } from "@/lib/http/errors";
 import {
   hashGuestId,
@@ -66,6 +73,7 @@ export async function POST(req: Request) {
 
   const guestIdHash = hashGuestId(guest.guestId);
   const clientIp = extractClientIp(req);
+  const access = await resolveRequestAccess();
 
   let rateCheck;
   try {
@@ -105,6 +113,37 @@ export async function POST(req: Request) {
     );
   }
 
+  if (access.tier !== "whitelisted") {
+    let capCheck;
+    try {
+      capCheck = await checkSpendCapPersistent(guest.guestId);
+    } catch (err) {
+      return serverErrorResponse({
+        route: "/api/stt",
+        err,
+        publicMessageEs: "Error interno al verificar el cupo de uso.",
+        status: 500,
+        errorCode: "USAGE_CHECK_ERROR",
+        setCookieHeader: guest.setCookieHeader,
+        correlationId: requestId,
+        guestIdHash,
+      });
+    }
+    if (!capCheck.allowed) {
+      return jsonWithGuestCookie(
+        {
+          ok: false,
+          code: "SPEND_CAP_REACHED",
+          error:
+            capCheck.reasonEs ??
+            "Alcanzaste el límite diario de uso para esta sesión.",
+        },
+        429,
+        guest.setCookieHeader,
+      );
+    }
+  }
+
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -127,6 +166,29 @@ export async function POST(req: Request) {
         ok: false,
         code: "INVALID_AUDIO",
         error: "Falta el archivo de audio para transcribir.",
+      },
+      400,
+      guest.setCookieHeader,
+    );
+  }
+
+  if (rawAudio.size > STT_MAX_AUDIO_BYTES) {
+    return jsonWithGuestCookie(
+      {
+        ok: false,
+        code: "AUDIO_TOO_LARGE",
+        error: "El archivo de audio supera el límite máximo de 10 MB.",
+      },
+      413,
+      guest.setCookieHeader,
+    );
+  }
+  if (rawAudio.size < STT_MIN_AUDIO_BYTES) {
+    return jsonWithGuestCookie(
+      {
+        ok: false,
+        code: "AUDIO_TOO_SHORT",
+        error: "La grabación es demasiado corta para transcribir.",
       },
       400,
       guest.setCookieHeader,
@@ -171,6 +233,9 @@ export async function POST(req: Request) {
       ok: true,
       latencyMs,
     });
+    if (access.tier !== "whitelisted") {
+      void recordSpendUsagePersistent(guest.guestId, { requests: 1 });
+    }
 
     return jsonWithGuestCookie(
       {

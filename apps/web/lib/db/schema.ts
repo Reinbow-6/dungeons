@@ -40,20 +40,29 @@ export const messageRoleEnum = pgEnum("message_role", [
   "system",
 ]);
 
-export const campaigns = pgTable("campaigns", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  ownerGuestId: text("owner_guest_id").notNull(),
-  title: text("title").notNull(),
-  adventureId: text("adventure_id").notNull().default("aguas-quietas"),
-  ruleset: rulesetProfileEnum("ruleset").notNull().default("5e-lite"),
-  worldSummary: text("world_summary").notNull().default(""),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const campaigns = pgTable(
+  "campaigns",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    ownerGuestId: text("owner_guest_id").notNull(),
+    title: text("title").notNull(),
+    adventureId: text("adventure_id").notNull().default("aguas-quietas"),
+    ruleset: rulesetProfileEnum("ruleset").notNull().default("5e-lite"),
+    worldSummary: text("world_summary").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("campaigns_owner_updated_idx").on(
+      table.ownerGuestId,
+      table.updatedAt,
+    ),
+  ],
+);
 
 export const sessions = pgTable(
   "sessions",
@@ -77,22 +86,26 @@ export const sessions = pgTable(
   ],
 );
 
-export const characters = pgTable("characters", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  campaignId: uuid("campaign_id")
-    .notNull()
-    .references(() => campaigns.id, { onDelete: "cascade" }),
-  actorId: text("actor_id").notNull(),
-  ownerGuestId: text("owner_guest_id").notNull(),
-  name: text("name").notNull(),
-  sheet: jsonb("sheet").$type<Character>().notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const characters = pgTable(
+  "characters",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    actorId: text("actor_id").notNull(),
+    ownerGuestId: text("owner_guest_id").notNull(),
+    name: text("name").notNull(),
+    sheet: jsonb("sheet").$type<Character>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("characters_campaign_idx").on(table.campaignId)],
+);
 
 export const campaignMembers = pgTable(
   "campaign_members",
@@ -201,22 +214,31 @@ export const memoryFacts = pgTable(
   ],
 );
 
-export const messages = pgTable("messages", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  campaignId: uuid("campaign_id")
-    .notNull()
-    .references(() => campaigns.id, { onDelete: "cascade" }),
-  sessionId: uuid("session_id").references(() => sessions.id, {
-    onDelete: "set null",
-  }),
-  role: messageRoleEnum("role").notNull(),
-  parts: jsonb("parts").$type<unknown[]>().notNull(),
-  eventSeq: integer("event_seq"),
-  revertedBySeq: integer("reverted_by_seq"),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const messages = pgTable(
+  "messages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    sessionId: uuid("session_id").references(() => sessions.id, {
+      onDelete: "set null",
+    }),
+    role: messageRoleEnum("role").notNull(),
+    parts: jsonb("parts").$type<unknown[]>().notNull(),
+    eventSeq: integer("event_seq"),
+    revertedBySeq: integer("reverted_by_seq"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("messages_campaign_created_idx").on(
+      table.campaignId,
+      table.createdAt,
+    ),
+  ],
+);
 
 export const guestUsage = pgTable(
   "guest_usage",

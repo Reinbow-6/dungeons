@@ -191,22 +191,26 @@ export async function recordSpendUsagePersistent(
   );
 
   const db = getDb();
-  await db
-    .insert(guestUsage)
-    .values({
-      guestId,
-      dayKey,
-      requestCount: reqInc,
-      estimatedTokens: tokInc,
-      estimatedCostMicros: costMicrosInc,
-    })
-    .onConflictDoUpdate({
-      target: [guestUsage.guestId, guestUsage.dayKey],
-      set: {
-        requestCount: sql`${guestUsage.requestCount} + ${reqInc}`,
-        estimatedTokens: sql`${guestUsage.estimatedTokens} + ${tokInc}`,
-        estimatedCostMicros: sql`${guestUsage.estimatedCostMicros} + ${costMicrosInc}`,
-        updatedAt: new Date(),
-      },
-    });
+  try {
+    await db
+      .insert(guestUsage)
+      .values({
+        guestId,
+        dayKey,
+        requestCount: reqInc,
+        estimatedTokens: tokInc,
+        estimatedCostMicros: costMicrosInc,
+      })
+      .onConflictDoUpdate({
+        target: [guestUsage.guestId, guestUsage.dayKey],
+        set: {
+          requestCount: sql`${guestUsage.requestCount} + ${reqInc}`,
+          estimatedTokens: sql`${guestUsage.estimatedTokens} + ${tokInc}`,
+          estimatedCostMicros: sql`${guestUsage.estimatedCostMicros} + ${costMicrosInc}`,
+          updatedAt: new Date(),
+        },
+      });
+  } catch {
+    // Non-fatal usage telemetry write
+  }
 }

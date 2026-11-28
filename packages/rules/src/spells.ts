@@ -24,6 +24,7 @@ import {
   type ConcentrationCheckOutcome,
   type DamageRelation,
 } from './modifiers.js';
+import { isCharacterDead } from './rest-and-death.js';
 import type { ResolverContext } from './resolvers.js';
 import {
   RollModeSchema,
@@ -445,7 +446,8 @@ export type CastSpellErrorCode =
   | 'INVALID_SLOT_LEVEL'
   | 'NO_SPELL_SLOTS'
   | 'TARGET_REQUIRED'
-  | 'UNKNOWN_TARGET';
+  | 'UNKNOWN_TARGET'
+  | 'ALREADY_DEAD';
 
 export type ResolveCastSpellResult =
   | {
@@ -673,6 +675,14 @@ export function resolveCastSpell(
       ok: false,
       code: 'TARGET_REQUIRED',
       messageEs: `${spec.nameEs} requiere especificar un objetivo (targetId).`,
+    };
+  }
+
+  if (spec.kind === 'heal' && targetChar && isCharacterDead(targetChar)) {
+    return {
+      ok: false,
+      code: 'ALREADY_DEAD',
+      messageEs: `${targetChar.name} ya murió (3 fallos de salvación contra la muerte); ${spec.nameEs} no puede revivir a los muertos.`,
     };
   }
 

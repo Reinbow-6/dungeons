@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createRng } from "@dungeons/rules";
+import { after } from "next/server";
 import {
   convertToModelMessages,
   createUIMessageStreamResponse,
@@ -76,6 +77,15 @@ function jsonWithGuestCookie(
     headers.set("Set-Cookie", setCookieHeader);
   }
   return Response.json(body, { status, headers });
+}
+
+function scheduleAfter(task: () => Promise<void>) {
+  try {
+    after(task);
+  } catch {
+    // Fallback when executed outside Next.js request scope (e.g. unit tests)
+    void task();
+  }
 }
 
 export async function POST(req: Request) {
@@ -305,12 +315,24 @@ export async function POST(req: Request) {
   try {
     store = getDefaultGameStore();
     const requestedCampaignId = (body as { campaignId?: unknown })?.campaignId;
-    loaded =
-      typeof requestedCampaignId === "string"
-        ? await store.loadCampaign(requestedCampaignId, guest.guestId)
-        : await store.getLatestCampaignForGuest(guest.guestId);
+    const hasExplicitCampaignId =
+      typeof requestedCampaignId === "string" &&
+      requestedCampaignId.trim().length > 0;
+    loaded = hasExplicitCampaignId
+      ? await store.loadCampaign(requestedCampaignId.trim(), guest.guestId)
+      : await store.getLatestCampaignForGuest(guest.guestId);
 
     if (!loaded) {
+      if (hasExplicitCampaignId) {
+        return jsonWithGuestCookie(
+          {
+            error: "La campaña solicitada no existe o fue eliminada.",
+            code: "CAMPAIGN_NOT_FOUND",
+          },
+          404,
+          guest.setCookieHeader,
+        );
+      }
       loaded = await store.createCampaign({
         guestId: guest.guestId,
         presetId: "pc_kael",
@@ -588,30 +610,36 @@ export async function POST(req: Request) {
       );
       const latencyMs = Date.now() - startedAt;
 
-      if (access.tier !== "whitelisted") {
-        void recordSpendUsagePersistent(guest.guestId, {
-          requests: 0,
-          totalTokens,
-        });
-      }
-      void recordModelUsage({
-        guestId: guest.guestId,
-        userId: access.userId,
-        accessTier: access.tier,
-        provider: resolved.provider,
-        modelId: resolved.modelId,
-        promptTokens,
-        completionTokens,
-        cachedTokens,
-      });
-      void recordProviderHealth({
-        provider: resolved.provider,
-        modelId: resolved.modelId,
-        ok: true,
-        latencyMs,
-        promptTokens,
-        completionTokens,
-        cachedTokens,
+      scheduleAfter(async () => {
+        await Promise.allSettled([
+          ...(access.tier !== "whitelisted"
+            ? [
+                recordSpendUsagePersistent(guest.guestId, {
+                  requests: 0,
+                  totalTokens,
+                }),
+              ]
+            : []),
+          recordModelUsage({
+            guestId: guest.guestId,
+            userId: access.userId,
+            accessTier: access.tier,
+            provider: resolved.provider,
+            modelId: resolved.modelId,
+            promptTokens,
+            completionTokens,
+            cachedTokens,
+          }),
+          recordProviderHealth({
+            provider: resolved.provider,
+            modelId: resolved.modelId,
+            ok: true,
+            latencyMs,
+            promptTokens,
+            completionTokens,
+            cachedTokens,
+          }),
+        ]);
       });
       logServerEvent({
         level: "info",
@@ -773,12 +801,14 @@ export async function POST(req: Request) {
           guestIdHash,
           detail,
         });
-        void recordProviderHealth({
-          provider: resolved.provider,
-          modelId: resolved.modelId,
-          ok: false,
-          latencyMs,
-          errorCode: "PROVIDER_UNAVAILABLE",
+        scheduleAfter(async () => {
+          await recordProviderHealth({
+            provider: resolved.provider,
+            modelId: resolved.modelId,
+            ok: false,
+            latencyMs,
+            errorCode: "PROVIDER_UNAVAILABLE",
+          });
         });
         return "El proveedor de IA no pudo completar la respuesta. Intentá de nuevo o cambiá de modelo.";
       },

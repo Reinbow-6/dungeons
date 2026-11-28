@@ -36,6 +36,13 @@
       "when": 1795860000000,
       "tag": "0004_adventure_packs",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795890000000,
+      "tag": "0005_audit_indexes_and_telemetry",
+      "breakpoints": true
     }
   ]
 }

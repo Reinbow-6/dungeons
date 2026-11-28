@@ -29,7 +29,8 @@ export function getDb(): DungeonsDb {
 
   cachedClient = postgres(connectionString, {
     prepare: false, // Requerido por Supavisor/PgBouncer Transaction Mode (puerto 6543)
-    max: 1,
+    max: 5,
+    idle_timeout: 20,
   });
   cachedDb = drizzle(cachedClient, { schema });
   return cachedDb;

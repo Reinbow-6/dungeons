@@ -105,6 +105,12 @@ interface CharacterRestOutcome {
   delta: GameStateDelta;
 }
 
+export function isCharacterDead(
+  character: Pick<Character, 'hp' | 'deathSaves'>,
+): boolean {
+  return character.hp.current === 0 && (character.deathSaves?.failures ?? 0) >= 3;
+}
+
 function computeCharacterRestOutcome(
   actor: Character,
   restType: 'short' | 'long',
@@ -115,6 +121,23 @@ function computeCharacterRestOutcome(
   const hpBefore = actor.hp.current;
   const exhaustionBefore = actor.exhaustionLevel;
   const stateDelta: GameStateDelta = {};
+
+  if (isCharacterDead(actor)) {
+    return {
+      actorId: actor.id,
+      actorName: actor.name,
+      hpBefore,
+      hpAfter: hpBefore,
+      hpHealed: 0,
+      hitDiceSpent: 0,
+      hitDiceRolls: [],
+      hitDiceAfter: { ...poolBefore },
+      slotsRestored: false,
+      exhaustionBefore,
+      exhaustionAfter: exhaustionBefore,
+      delta: stateDelta,
+    };
+  }
 
   let hpAfter = hpBefore;
   let hitDiceSpent = 0;
@@ -817,6 +840,7 @@ export type HealErrorCode =
   | 'INVALID_INPUT'
   | 'INVALID_SCENE'
   | 'UNKNOWN_ACTOR'
+  | 'ALREADY_DEAD'
   | 'ITEM_NOT_FOUND'
   | 'NOT_DYING'
   | 'INVALID_DICE_EXPRESSION';
@@ -888,6 +912,14 @@ export function resolveHeal(
       ok: false,
       code: 'UNKNOWN_ACTOR',
       messageEs: `No existe el personaje objetivo "${input.targetId}".`,
+    };
+  }
+
+  if (isCharacterDead(target)) {
+    return {
+      ok: false,
+      code: 'ALREADY_DEAD',
+      messageEs: `${target.name} ya murió (3 fallos de salvación contra la muerte) y no puede ser curado ni estabilizado por medios ordinarios.`,
     };
   }
 

@@ -247,12 +247,6 @@ export interface GameStore {
     guestId: string,
     targetSeq: number,
   ): Promise<RollbackResult>;
-  updateCharacterMode(
-    campaignId: string,
-    guestId: string,
-    actorId: string,
-    mode: "digital" | "hybrid",
-  ): Promise<LoadedCampaign | null>;
   updateTableMode(
     campaignId: string,
     guestId: string,
@@ -601,6 +595,7 @@ export class SupabaseGameStore implements GameStore {
     }
 
     const ids = rows.map((r) => r.id);
+    const ownerGuestIds = Array.from(new Set(rows.map((r) => r.ownerGuestId)));
     const [snapshots, memberRoles, customPackRows] = await Promise.all([
       db
         .select()
@@ -617,19 +612,20 @@ export class SupabaseGameStore implements GameStore {
         ),
       db
         .select({
+          ownerGuestId: adventurePacks.ownerGuestId,
           slug: adventurePacks.slug,
           pack: adventurePacks.pack,
         })
         .from(adventurePacks)
-        .where(eq(adventurePacks.ownerGuestId, guestId)),
+        .where(inArray(adventurePacks.ownerGuestId, ownerGuestIds)),
     ]);
 
     const snapByCampaign = new Map(snapshots.map((s) => [s.campaignId, s]));
     const roleByCampaign = new Map(
       memberRoles.map((m) => [m.campaignId, m.role]),
     );
-    const customPackBySlug = new Map(
-      customPackRows.map((p) => [p.slug, p.pack]),
+    const customPackByOwnerAndSlug = new Map(
+      customPackRows.map((p) => [`${p.ownerGuestId}:${p.slug}`, p.pack]),
     );
 
     return {
@@ -637,7 +633,7 @@ export class SupabaseGameStore implements GameStore {
         const snap = snapByCampaign.get(c.id);
         const pack =
           getBuiltinAdventurePack(c.adventureId) ??
-          customPackBySlug.get(c.adventureId) ??
+          customPackByOwnerAndSlug.get(`${c.ownerGuestId}:${c.adventureId}`) ??
           getFallbackAdventurePack();
         const sceneId = snap?.sceneId ?? pack.initialSceneId;
         const scene = pack.scenes[sceneId];
@@ -818,7 +814,7 @@ export class SupabaseGameStore implements GameStore {
     ]);
 
     const pack =
-      (await this.getAdventurePack(campaign.adventureId, guestId)) ??
+      (await this.getAdventurePack(campaign.adventureId, campaign.ownerGuestId)) ??
       getFallbackAdventurePack();
     const initialState = buildInitialFromRows({
       campaign,
@@ -956,11 +952,7 @@ export class SupabaseGameStore implements GameStore {
             .from(eventLog)
             .where(eq(eventLog.campaignId, campaignId));
           const currentMax = Number(row?.maxSeq ?? 0);
-          if (
-            expectedSeq !== undefined &&
-            expectedSeq !== currentMax &&
-            !retriedUniqueConflict
-          ) {
+          if (expectedSeq !== undefined && expectedSeq !== currentMax) {
             throw new StaleSeqError(expectedSeq, currentMax);
           }
 
@@ -997,9 +989,14 @@ export class SupabaseGameStore implements GameStore {
         });
         return;
       } catch (err) {
-        if (!retriedUniqueConflict && isUniqueSeqViolation(err)) {
-          retriedUniqueConflict = true;
-          continue;
+        if (isUniqueSeqViolation(err)) {
+          if (expectedSeq !== undefined) {
+            throw new StaleSeqError(expectedSeq, expectedSeq + 1);
+          }
+          if (!retriedUniqueConflict) {
+            retriedUniqueConflict = true;
+            continue;
+          }
         }
         throw err;
       }
@@ -1099,67 +1096,6 @@ export class SupabaseGameStore implements GameStore {
     });
 
     return rb;
-  }
-
-  async updateCharacterMode(
-    campaignId: string,
-    guestId: string,
-    actorId: string,
-    mode: "digital" | "hybrid",
-  ): Promise<LoadedCampaign | null> {
-    const loaded = await this.loadCampaign(campaignId, guestId);
-    if (!loaded) {
-      return null;
-    }
-    const baseChar = loaded.initialState.characters[actorId];
-    if (!baseChar) {
-      return null;
-    }
-
-    const updatedBaseChar: Character = {
-      ...baseChar,
-      authority: createDefaultAuthority(mode),
-      rollAuthority: mode === "hybrid" ? "player-declared" : "engine-rolled",
-    };
-
-    const updatedInitial: GameState = {
-      ...loaded.initialState,
-      characters: {
-        ...loaded.initialState.characters,
-        [actorId]: updatedBaseChar,
-      },
-    };
-    const nextState = reduceEvents(updatedInitial, loaded.events);
-
-    const db = getDb();
-    await db.transaction(async (tx) => {
-      await tx
-        .update(characters)
-        .set({
-          sheet: updatedBaseChar,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(characters.campaignId, campaignId),
-            eq(characters.actorId, actorId),
-          ),
-        );
-
-      await tx
-        .update(gameStateSnapshots)
-        .set({
-          state: nextState,
-          updatedAt: new Date(),
-        })
-        .where(eq(gameStateSnapshots.campaignId, campaignId));
-    });
-
-    return {
-      ...loaded,
-      initialState: updatedInitial,
-      state: nextState,
-    };
   }
 
   async updateTableMode(
@@ -1694,36 +1630,6 @@ export class InMemoryGameStore implements GameStore {
       }
     }
     return rb;
-  }
-
-  async updateCharacterMode(
-    campaignId: string,
-    guestId: string,
-    actorId: string,
-    mode: "digital" | "hybrid",
-  ): Promise<LoadedCampaign | null> {
-    const found = this.campaigns.get(campaignId);
-    if (!found || !this.hasAccess(found, guestId)) return null;
-    const baseChar = found.initialState.characters[actorId];
-    if (!baseChar) return null;
-
-    const updatedBase: Character = {
-      ...baseChar,
-      authority: createDefaultAuthority(mode),
-      rollAuthority: mode === "hybrid" ? "player-declared" : "engine-rolled",
-    };
-
-    found.initialState = {
-      ...found.initialState,
-      characters: {
-        ...found.initialState.characters,
-        [actorId]: updatedBase,
-      },
-    };
-    found.state = reduceEvents(found.initialState, found.events);
-    found.logHeadSeq = computeLogHeadSeq(found.events);
-    found.updatedAt = new Date().toISOString();
-    return this.loadCampaign(campaignId, guestId);
   }
 
   async updateTableMode(

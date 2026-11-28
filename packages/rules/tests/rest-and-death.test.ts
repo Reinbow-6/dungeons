@@ -4,6 +4,7 @@ import {
   createAguasQuietasInitialState,
   createDefaultAuthority,
   reduceEvents,
+  resolveCastSpell,
   resolveCombatAttack,
   resolveDeathSave,
   resolveHeal,
@@ -298,5 +299,71 @@ describe('5e-full 0 HP, death saves (resolveDeathSave) and deterministic healing
     expect(
       potRes.nextState.characters.pc_kael?.inventory.find((i) => i.itemId === 'potion-of-healing'),
     ).toBeUndefined();
+  });
+
+  it('blocks healing/spells on dead PCs (3 death save failures) and skips them during rests', () => {
+    const deadPc = makeFullState({
+      hp: { current: 0, max: 11, temp: 0 },
+      conditions: ['unconscious'],
+      exhaustionLevel: 0,
+      deathSaves: { successes: 1, failures: 3, stable: false },
+      spellSlots: { '1': { current: 1, max: 2 } },
+      knownSpells: ['cure-wounds'],
+    });
+    const cleric: Character = {
+      ...deadPc.characters.pc_kael!,
+      id: 'pc_cleric',
+      name: 'Seraphina',
+      hp: { current: 8, max: 10, temp: 0 },
+      conditions: [],
+      deathSaves: undefined,
+      spellcastingAbility: 'wis',
+      spellSlots: { '1': { current: 2, max: 2 } },
+      knownSpells: ['cure-wounds'],
+    };
+    const state: GameState = {
+      ...deadPc,
+      characters: {
+        pc_kael: deadPc.characters.pc_kael!,
+        pc_cleric: cleric,
+      },
+    };
+
+    const healPotion = resolveHeal(
+      state,
+      {
+        sceneId: state.sceneId,
+        actorId: 'pc_cleric',
+        targetId: 'pc_kael',
+        source: 'potion',
+        reason: 'Intentar revivir con poción',
+      },
+      makeFixedCtx([4, 4]),
+    );
+    expect(healPotion.ok).toBe(false);
+    if (!healPotion.ok) expect(healPotion.code).toBe('ALREADY_DEAD');
+
+    const castHeal = resolveCastSpell(
+      state,
+      {
+        sceneId: state.sceneId,
+        casterId: 'pc_cleric',
+        spellId: 'cure-wounds',
+        targetId: 'pc_kael',
+      },
+      makeFixedCtx([6]),
+    );
+    expect(castHeal.ok).toBe(false);
+    if (!castHeal.ok) expect(castHeal.code).toBe('ALREADY_DEAD');
+
+    const longRest = resolveTakeRest(
+      state,
+      { sceneId: state.sceneId, actorId: 'pc_kael', restType: 'long' },
+      makeFixedCtx([]),
+    );
+    expect(longRest.ok).toBe(true);
+    if (!longRest.ok) return;
+    expect(longRest.nextState.characters.pc_kael?.hp.current).toBe(0);
+    expect(longRest.nextState.characters.pc_kael?.deathSaves?.failures).toBe(3);
   });
 });

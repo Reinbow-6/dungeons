@@ -22,11 +22,9 @@ import {
 } from "@/components/game/tool-parts";
 import { MessageActions } from "@/components/message-actions";
 import { AskUserPart } from "@/components/parts/ask-user-part";
-import { GithubRepoPart } from "@/components/parts/github-repo-part";
 import { NarrativeText } from "@/components/parts/narrative-text";
 import { ReasoningPart } from "@/components/parts/reasoning-part";
 import { SourcesPart } from "@/components/parts/sources-part";
-import { WebSearchPart } from "@/components/parts/web-search-part";
 import { Message, MessageContent } from "@/components/ui/message";
 import { useSensoryUI } from "@/components/ui/sensory-ui/config/provider";
 import { Trace } from "@/components/ui/trace";
@@ -46,9 +44,7 @@ type StepPart = Extract<
   {
     type:
       | "reasoning"
-      | "tool-github_repo"
       | "tool-ask_user"
-      | "tool-web_search"
       | "tool-resolve_check"
       | "tool-resolve_save"
       | "tool-declare_check"
@@ -162,24 +158,8 @@ function CollapsibleEngineTrace({
                 }
               />
             );
-          case "tool-github_repo":
-            return (
-              <GithubRepoPart
-                key={part.toolCallId}
-                part={part}
-                isStreaming={isStreaming}
-              />
-            );
           case "tool-ask_user":
             return <AskUserPart key={part.toolCallId} part={part} />;
-          case "tool-web_search":
-            return (
-              <WebSearchPart
-                key={part.toolCallId}
-                part={part}
-                isStreaming={isStreaming}
-              />
-            );
         }
       })}
     </Trace>
@@ -558,8 +538,6 @@ function isStepPart(part: ChatMessagePart): part is StepPart {
 
   return (
     part.type === "reasoning" ||
-    part.type === "tool-github_repo" ||
-    part.type === "tool-web_search" ||
     part.type === "tool-resolve_check" ||
     part.type === "tool-resolve_save" ||
     part.type === "tool-investigate" ||

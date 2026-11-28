@@ -655,10 +655,11 @@ export function declareCheck(
     ...(input.declaredTotal === undefined ? { rng: ctx.rng } : {}),
     tags: declareTags,
   });
-  const effectiveMode = combineRollMode(
-    input.mode ?? 'normal',
-    modBreakdown.imposesDisadvantage,
-  );
+  const effectiveMode = resolveRollMode({
+    requested: input.mode ?? 'normal',
+    hasAdvantage: modBreakdown.grantsAdvantage,
+    hasDisadvantage: modBreakdown.imposesDisadvantage,
+  });
   const expectedDieCount = effectiveMode === 'normal' ? 1 : 2;
 
   if (input.dieResults.length !== expectedDieCount) {

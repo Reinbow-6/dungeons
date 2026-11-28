@@ -405,7 +405,9 @@ export function evaluateConcentrationCheck(params: {
 
   const spell = character.concentratingOn;
   const dc = Math.max(10, Math.floor(damageApplied / 2));
-  const saveBreakdown = getSavingThrowModifier(character, 'con', ruleset);
+  const saveBreakdown = getSavingThrowModifier(character, 'con', ruleset, {
+    rng,
+  });
   const effects = getConditionPenalty(character, ruleset);
 
   if (hpAfter <= 0 || effects.isIncapacitated) {
@@ -419,7 +421,12 @@ export function evaluateConcentrationCheck(params: {
     };
   }
 
-  const roll = rollD20(rng, 'normal');
+  const rollMode = resolveRollMode({
+    requested: 'normal',
+    hasAdvantage: saveBreakdown.grantsAdvantage,
+    hasDisadvantage: saveBreakdown.imposesDisadvantage,
+  });
+  const roll = rollD20(rng, rollMode);
   const total = roll.chosen + saveBreakdown.totalMod;
   return {
     spell,

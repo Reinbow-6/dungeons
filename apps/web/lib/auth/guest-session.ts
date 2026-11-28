@@ -70,7 +70,11 @@ function parseCookieValue(cookieHeader: string | null, name: string): string | n
   for (const part of cookieHeader.split(";")) {
     const trimmed = part.trim();
     if (trimmed.startsWith(`${name}=`)) {
-      return decodeURIComponent(trimmed.slice(name.length + 1));
+      try {
+        return decodeURIComponent(trimmed.slice(name.length + 1));
+      } catch {
+        return null;
+      }
     }
   }
   return null;

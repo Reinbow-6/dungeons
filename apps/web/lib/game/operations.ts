@@ -2,7 +2,6 @@ import type { GameEvent, GameState, RollbackResult } from "@dungeons/rules";
 
 import {
   getDefaultGameStore,
-  isStaleSeqError,
   type GameStore,
   type StoredMemoryFact,
   type StoredMessage,
@@ -18,10 +17,9 @@ export type CommitOutcome =
     };
 
 /**
- * Commit optimista con `expectedSeq` (referido a `logHeadSeq`, el máximo `seq`
- * real de `event_log`). Ante un `STALE_SEQ`, recarga desde el store, reintenta
- * una vez usando `fresh.logHeadSeq` (evitando falsos `STALE_SEQ` tras rollback)
- * y devuelve el estado y eventos autoritativos releídos del store.
+ * Commit optimista estricto con `expectedSeq` (referido a `logHeadSeq`, el máximo `seq`
+ * real de `event_log`). Ante concurrencia (`StaleSeqError`), propaga el error para que el
+ * caller recargue y re-resuelva en lugar de sobrescribir estado con una mutación vieja.
  */
 export async function commitEventWithRetry(params: {
   store: GameStore;
@@ -32,37 +30,15 @@ export async function commitEventWithRetry(params: {
   nextState: GameState;
   expectedSeq?: number;
 }): Promise<CommitOutcome> {
-  const { store, campaignId, sessionId, guestId, event, nextState, expectedSeq } =
-    params;
-  try {
-    await store.appendEvent(
-      campaignId,
-      sessionId,
-      event,
-      nextState,
-      expectedSeq,
-    );
-    return { reloaded: false, logHeadSeq: event.seq };
-  } catch (err) {
-    if (!isStaleSeqError(err)) throw err;
-    const fresh = await store.loadCampaign(campaignId, guestId);
-    if (!fresh) throw err;
-    await store.appendEvent(
-      fresh.campaignId,
-      fresh.sessionId,
-      event,
-      nextState,
-      fresh.logHeadSeq,
-    );
-    const finalLoaded = await store.loadCampaign(campaignId, guestId);
-    if (!finalLoaded) throw err;
-    return {
-      reloaded: true,
-      state: finalLoaded.state,
-      events: finalLoaded.events,
-      logHeadSeq: finalLoaded.logHeadSeq,
-    };
-  }
+  const { store, campaignId, sessionId, event, nextState, expectedSeq } = params;
+  await store.appendEvent(
+    campaignId,
+    sessionId,
+    event,
+    nextState,
+    expectedSeq,
+  );
+  return { reloaded: false, logHeadSeq: event.seq };
 }
 
 export type PerformRollbackOutcome =

@@ -466,30 +466,43 @@ function repairAdventurePackShape(raw, { id, title }) {
       allowedTransitions,
       clues,
     };
-    if (sc.transitionRequirements && typeof sc.transitionRequirements === "object") {
-      const cleanedReqs = {};
-      for (const [targetKey, req] of Object.entries(sc.transitionRequirements)) {
-        const mappedTarget = idMap.get(targetKey);
-        if (!mappedTarget || !cleanScene.allowedTransitions.includes(mappedTarget)) {
-          continue;
-        }
-        const entry = {};
-        if (Array.isArray(req.requiredClues) && req.requiredClues.length > 0) {
-          const validClues = req.requiredClues.filter((cid) => seenClueIds.has(cid));
-          if (validClues.length > 0) entry.requiredClues = validClues;
-        }
-        if (Array.isArray(req.requiredFlags) && req.requiredFlags.length > 0) {
-          entry.requiredFlags = req.requiredFlags.map((f) => String(f));
-        }
-        if (Object.keys(entry).length > 0) {
-          cleanedReqs[mappedTarget] = entry;
-        }
+    normalizedScenes[cleanId] = cleanScene;
+  }
+
+  // Second pass once all clue IDs across all scenes are known
+  for (let idx = 0; idx < sceneEntries.length; idx += 1) {
+    const [origKey, sc] = sceneEntries[idx];
+    if (!sc || typeof sc !== "object") continue;
+    if (!sc.transitionRequirements || typeof sc.transitionRequirements !== "object") continue;
+    const cleanId = idMap.get(origKey);
+    const cleanScene = normalizedScenes[cleanId];
+    if (!cleanScene) continue;
+
+    const cleanedReqs = {};
+    for (const [targetKey, req] of Object.entries(sc.transitionRequirements)) {
+      if (!req || typeof req !== "object") continue;
+      const rawTarget = targetKey.includes(">")
+        ? targetKey.split(">").pop()
+        : targetKey;
+      const mappedTarget = idMap.get(rawTarget) ?? slugifyId(rawTarget, "");
+      if (!mappedTarget || !cleanScene.allowedTransitions.includes(mappedTarget)) {
+        continue;
       }
-      if (Object.keys(cleanedReqs).length > 0) {
-        cleanScene.transitionRequirements = cleanedReqs;
+      const entry = {};
+      if (Array.isArray(req.requiredClues) && req.requiredClues.length > 0) {
+        const validClues = req.requiredClues.filter((cid) => seenClueIds.has(cid));
+        if (validClues.length > 0) entry.requiredClues = validClues;
+      }
+      if (Array.isArray(req.requiredFlags) && req.requiredFlags.length > 0) {
+        entry.requiredFlags = req.requiredFlags.map((f) => String(f));
+      }
+      if (Object.keys(entry).length > 0) {
+        cleanedReqs[`${cleanId}>${mappedTarget}`] = entry;
       }
     }
-    normalizedScenes[cleanId] = cleanScene;
+    if (Object.keys(cleanedReqs).length > 0) {
+      cleanScene.transitionRequirements = cleanedReqs;
+    }
   }
 
   const allSceneIds = Object.keys(normalizedScenes);

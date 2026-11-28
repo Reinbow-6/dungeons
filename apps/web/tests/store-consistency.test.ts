@@ -142,34 +142,29 @@ describe("seq atómico y logHeadSeq (P0 fix 4 + post-rollback)", () => {
       concurrent.nextState,
     );
 
-    // Segundo commit calculado sobre el snapshot viejo (expectedSeq=0).
+    // Segundo commit calculado sobre el snapshot viejo (expectedSeq=0) debe rechazarse con STALE_SEQ.
     const staleNext = transitionScene(
       first.nextState,
       { targetSceneId: "escena_04_campamento", reason: "Dos" },
       ctx,
     );
     if (!staleNext.ok) throw new Error(staleNext.messageEs);
-    const outcome = await commitEventWithRetry({
-      store,
-      campaignId: loaded.campaignId,
-      sessionId: loaded.sessionId,
-      guestId: GUEST,
-      event: staleNext.event,
-      nextState: staleNext.nextState,
-      expectedSeq: 0,
-    });
-    expect(outcome.reloaded).toBe(true);
-    if (!outcome.reloaded) return;
+    await expect(
+      commitEventWithRetry({
+        store,
+        campaignId: loaded.campaignId,
+        sessionId: loaded.sessionId,
+        guestId: GUEST,
+        event: staleNext.event,
+        nextState: staleNext.nextState,
+        expectedSeq: 0,
+      }),
+    ).rejects.toThrow(StaleSeqError);
 
     const reloaded = await store.loadCampaign(loaded.campaignId, GUEST);
-    expect(outcome.state).toEqual(reloaded?.state);
-    expect(outcome.events).toEqual(reloaded?.events);
-    expect(outcome.logHeadSeq).toBe(3);
-    expect(outcome.events.map((e) => e.seq)).toEqual([1, 2, 3]);
-    expect(outcome.state.flags["check:check_concurrente:success"]).toBeDefined();
-    expect(
-      staleNext.nextState.flags["check:check_concurrente:success"],
-    ).toBeUndefined();
+    expect(reloaded?.logHeadSeq).toBe(2);
+    expect(reloaded?.events.map((e) => e.seq)).toEqual([1, 2]);
+    expect(reloaded?.state.flags["check:check_concurrente:success"]).toBeDefined();
   });
 
   it("tras rollback a seq 0, commitEventWithRetry usa logHeadSeq sin falsos STALE_SEQ", async () => {
@@ -231,8 +226,8 @@ describe("seq atómico y logHeadSeq (P0 fix 4 + post-rollback)", () => {
     expect(direct.reloaded).toBe(false);
     expect(direct.logHeadSeq).toBe(3);
 
-    // 2) Incluso si un caller antiguo pasara expectedSeq=0 (state.lastSeq tras rollback),
-    //    el retry recarga fresh.logHeadSeq y commitea sin estallar.
+    // 2) Si un caller antiguo pasara expectedSeq=0 (state.lastSeq tras rollback),
+    //    el commit estricto rechaza con StaleSeqError para evitar sobrescribir estado.
     const another = resolveCheck(
       nextAfterRb.nextState,
       {
@@ -244,17 +239,17 @@ describe("seq atómico y logHeadSeq (P0 fix 4 + post-rollback)", () => {
       ctx,
     );
     if (!another.ok) throw new Error(another.messageEs);
-    const recovered = await commitEventWithRetry({
-      store,
-      campaignId: loaded.campaignId,
-      sessionId: loaded.sessionId,
-      guestId: GUEST,
-      event: another.event,
-      nextState: another.nextState,
-      expectedSeq: 0,
-    });
-    expect(recovered.reloaded).toBe(true);
-    expect(recovered.logHeadSeq).toBe(4);
+    await expect(
+      commitEventWithRetry({
+        store,
+        campaignId: loaded.campaignId,
+        sessionId: loaded.sessionId,
+        guestId: GUEST,
+        event: another.event,
+        nextState: another.nextState,
+        expectedSeq: 0,
+      }),
+    ).rejects.toThrow(StaleSeqError);
   });
 
   it("el tool resolve_check devuelve STALE_SEQ structured cuando el commit falla por seq viejo", async () => {

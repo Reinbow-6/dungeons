@@ -9,7 +9,6 @@ export const runtime = "nodejs";
 
 const ModePatchSchema = z.object({
   campaignId: z.string().min(1),
-  actorId: z.string().min(1).optional(),
   mode: z.enum(["digital", "hybrid"]),
 });
 
