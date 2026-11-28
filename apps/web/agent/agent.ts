@@ -242,11 +242,16 @@ export function buildDmDynamicTurnContext(
       if (char.activeEffects && char.activeEffects.length > 0) {
         extrasHp.push(
           `Efectos: ${char.activeEffects
-            .map((e) =>
-              e.remainingRounds !== null
-                ? `${e.labelEs} (${e.remainingRounds}r)`
-                : e.labelEs,
-            )
+            .map((e) => {
+              const diceTag = e.modifiers
+                .map((m) => m.dice ?? (m.value ? `${m.value > 0 ? `+${m.value}` : m.value} ${m.target.toUpperCase()}` : m.grantsAdvantage || m.grantsAdvantageAgainst ? "ventaja" : ""))
+                .filter(Boolean)
+                .join(", ");
+              const detail = diceTag ? ` [${diceTag}, auto en motor]` : "";
+              return e.remainingRounds !== null
+                ? `${e.labelEs}${detail} (${e.remainingRounds}r)`
+                : `${e.labelEs}${detail}`;
+            })
             .join(", ")}`,
         );
       }

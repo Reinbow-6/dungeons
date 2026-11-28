@@ -11,7 +11,7 @@ import { CheckTargetZod, RollModeZod } from "./runtime";
  */
 export const declareCheckTool = tool({
   description:
-    "Solicita al jugador que tire su dado físico real e ingrese el resultado por teclado (Modo Híbrido). Nunca envíes números de dado ni totales. Usá purpose: 'investigate' cuando el jugador inspecciona o escudriña una escena en busca de pistas.",
+    "Solicita al jugador que tire su dado físico real e ingrese el resultado por teclado (Modo Híbrido). Nunca envíes números de dado ni totales. Usá purpose: 'investigate' cuando el jugador inspecciona o escudriña una escena en busca de pistas. IMPORTANTE: bonificadores de dados/números como Guía (+1d4) o Bendición (+1d4) los suma el motor automáticamente y NO dan ventaja (dejá mode: 'normal').",
   inputSchema: z
     .object({
       sceneId: z.string().min(1),
@@ -36,7 +36,7 @@ export const declareCheckTool = tool({
         .string()
         .min(1)
         .describe(
-          "Instrucción breve en español indicando qué tirar en la mesa física.",
+          "Instrucción breve en español indicando qué d20 tirar en la mesa física (no digas 'sumá +X' ni 'con ventaja' por Guía/Bendición, el motor suma los modificadores y +1d4 automáticamente).",
         ),
     })
     .strict()

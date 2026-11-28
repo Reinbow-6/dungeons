@@ -167,7 +167,9 @@ describe("Web DM tools & prompt layers for SourcedModifiers + ActiveEffects (P2)
     expect(promptLayers.dynamicTurnContext).toContain(
       `CA: ${baseAc + shieldBoost} (base ${baseAc})`,
     );
-    expect(promptLayers.dynamicTurnContext).toContain("Efectos: Escudo arcano (1r)");
+    expect(promptLayers.dynamicTurnContext).toContain(
+      "Efectos: Escudo arcano [+5 AC, auto en motor] (1r)",
+    );
 
     const enemyId = rt
       .getState()
